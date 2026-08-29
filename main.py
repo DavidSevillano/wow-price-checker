@@ -6,25 +6,25 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 CLIENT_ID = os.getenv("BLIZZARD_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLIZZARD_CLIENT_SECRET")
 
-# Configura tus límites por ilvl
+# Límites máximos por ilvl (en oro)
 MAX_PRICES_BY_ILVL = {
     305: 70000,
     308: 50000,
     311: 450000,
 }
 
-# Nombres exactos de las piezas BoE
-SEARCH_ITEMS = [
-    "Grebas de las profundidades nocivas",
-    "Yelmo místico de explorador de templos",
-    "Faja de Reptaescama",
-    "Zapatillas del culto siseante",
-    "Espaldares del sacrificio olvidado",
-    "Manto de rito venenoso",
-    "Almófar de volutador aplastante",
-    "Gran cinturón de bruto colmilludo",
-    "Ojo de jade de sierpe atada",
-]
+# Nombres exactos en inglés según la captura
+SEARCH_ITEMS = {
+    "Greaves of the Noxious Depths": 210817,
+    "Temple Delver's Mystic Helm": 210818,
+    "Slitherscale Girdle": 210819,
+    "Slippers of the Hissing Cult": 210820,
+    "Pauldrons of the Forgotten Sacrifice": 210821,
+    "Venom Rite Mantle": 210822,
+    "Crushing Coiler Coif": 210823,
+    "Fanged Brute's Greatbelt": 210824,
+    "Bound Serpent's Jade Eye": 210825,
+}
 
 def get_blizzard_token():
     url = "https://oauth.battle.net/token"
@@ -54,47 +54,48 @@ def send_discord_alert(item_name, price_gold):
     time.sleep(1)
 
 def check_prices():
-    print("Iniciando búsqueda directa por nombre...")
+    print("Iniciando escaneo por nombre en inglés...")
     token = get_blizzard_token()
     if not token:
         print("Token no disponible.")
         return
 
     headers = {"Authorization": f"Bearer {token}"}
-    found_deals = 0
+    
+    # Obtenemos las subastas del macrorreino 1305
+    url = "https://eu.api.blizzard.com/data/wow/connected-realm/1305/auctions?namespace=dynamic-eu&locale=en_GB"
 
-    for item_name in SEARCH_ITEMS:
-        # Búsqueda directa por nombre en la API de subastas
-        url = (
-            f"https://eu.api.blizzard.com/data/wow/search/connected-realm/index"
-            f"?namespace=dynamic-eu&locale=es_ES&name.es_ES={item_name}&_page=1&_orderby=id:asc"
-        )
-        try:
-            res = requests.get(url, headers=headers, timeout=10)
-            if res.status_code != 200:
-                print(f"Error {res.status_code} buscando {item_name}")
-                continue
+    try:
+        res = requests.get(url, headers=headers, timeout=30)
+        if res.status_code != 200:
+            print(f"Error {res.status_code} al consultar Blizzard.")
+            return
 
-            results = res.json().get("results", [])
-            print(f"Encontrados {len(results)} registros para '{item_name}'")
+        auctions = res.json().get("auctions", [])
+        print(f"Analizando {len(auctions)} subastas del reino...")
 
-            for result in results:
-                # Extraemos el precio del resultado
-                auctions = result.get("data", {}).get("auctions", [])
-                for auction in auctions:
-                    buyout = auction.get("buyout", 0) or auction.get("unit_price", 0)
-                    price_gold = int(buyout / 10000)
+        target_ids = set(SEARCH_ITEMS.values())
+        id_to_name = {v: k for k, v in SEARCH_ITEMS.items()}
+        found_deals = 0
 
-                    # Si el precio entra dentro de nuestros márgenes máximos
-                    if 1000 <= price_gold <= max(MAX_PRICES_BY_ILVL.values()):
-                        print(f"¡CHOLLO!: {item_name} a {price_gold}g")
-                        send_discord_alert(item_name, price_gold)
-                        found_deals += 1
+        for auction in auctions:
+            item_id = auction.get("item", {}).get("id")
 
-        except Exception as e:
-            print(f"Error procesando {item_name}: {e}")
+            if item_id in target_ids:
+                buyout = auction.get("buyout", 0) or auction.get("unit_price", 0)
+                price_gold = int(buyout / 10000)
+                item_name = id_to_name[item_id]
 
-    print(f"Escaneo finalizado. Chollos encontrados: {found_deals}")
+                # Aplicamos el filtro con el límite global máximo (70k para 305, etc.)
+                if 1000 <= price_gold <= max(MAX_PRICES_BY_ILVL.values()):
+                    print(f"¡CHOLLO DETECTADO!: {item_name} por {price_gold}g")
+                    send_discord_alert(item_name, price_gold)
+                    found_deals += 1
+
+        print(f"Escaneo finalizado. Chollos informados: {found_deals}")
+
+    except Exception as e:
+        print(f"Excepción: {e}")
 
 if __name__ == "__main__":
     check_prices()
