@@ -5,7 +5,7 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 # Umbrales máximos de precio según el ilvl
 MAX_PRICES_BY_ILVL = {
-    305: 40000,
+    305: 80000,
     308: 50000,
     311: 450000,
 }
