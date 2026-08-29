@@ -6,9 +6,13 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 CLIENT_ID = os.getenv("BLIZZARD_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLIZZARD_CLIENT_SECRET")
 
-MAX_ALERT_PRICE_GOLD = 100000
+# Límites máximos por ilvl (en oro)
+MAX_PRICES_BY_ILVL = {
+    305: 70000,
+    308: 50000,
+    311: 450000,
+}
 
-# Nombres en inglés que queremos buscar
 TARGET_NAMES = {
     "greaves of the noxious depths",
     "temple delver's mystic helm",
@@ -21,8 +25,8 @@ TARGET_NAMES = {
     "bound serpent's jade eye",
 }
 
-# Caché en memoria para no pedir el nombre del mismo item varias veces
-ITEM_NAME_CACHE = {}
+ITEM_DATA_CACHE = {}
+REALM_NAME_CACHE = {}
 
 def get_blizzard_token():
     url = "https://oauth.battle.net/token"
@@ -39,32 +43,67 @@ def get_blizzard_token():
         print(f"❌ Error token: {e}")
     return None
 
-def get_item_name(item_id, headers):
-    """Consulta a la API de Blizzard el nombre real de cualquier ID desconocida."""
-    if item_id in ITEM_NAME_CACHE:
-        return ITEM_NAME_CACHE[item_id]
+def get_all_eu_connected_realms(headers):
+    """Obtiene la lista completa de todos los reinos conectados de Europa."""
+    url = "https://eu.api.blizzard.com/data/wow/connected-realm/index?namespace=dynamic-eu&locale=en_GB"
+    try:
+        res = requests.get(url, headers=headers, timeout=15)
+        if res.status_code == 200:
+            realms_data = res.json().get("connected_realms", [])
+            return [int(r["href"].split("connected-realm/")[1].split("?")[0]) for r in realms_data]
+    except Exception as e:
+        print(f"❌ Error obteniendo lista de reinos: {e}")
+    return [1305, 1403, 581, 1303, 1402]
 
-    url = f"https://eu.api.blizzard.com/data/wow/item/{item_id}?namespace=static-eu&locale=en_GB"
+def get_realm_name(realm_id, headers):
+    if realm_id in REALM_NAME_CACHE:
+        return REALM_NAME_CACHE[realm_id]
+
+    url = f"https://eu.api.blizzard.com/data/wow/connected-realm/{realm_id}?namespace=dynamic-eu&locale=en_GB"
     try:
         res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
-            name = res.json().get("name", "")
-            ITEM_NAME_CACHE[item_id] = name
-            return name
+            realms = res.json().get("realms", [])
+            names = [r.get("name") for r in realms if r.get("name")]
+            full_name = " / ".join(names) if names else f"Reino {realm_id}"
+            REALM_NAME_CACHE[realm_id] = full_name
+            return full_name
+    except Exception:
+        pass
+
+    fallback = f"Reino {realm_id}"
+    REALM_NAME_CACHE[realm_id] = fallback
+    return fallback
+
+def get_item_info(item_id, headers):
+    """Obtiene el nombre y el ilvl del objeto desde Blizzard."""
+    if item_id in ITEM_DATA_CACHE:
+        return ITEM_DATA_CACHE[item_id]
+
+    url = f"https://eu.api.blizzard.com/data/wow/item/{item_id}?namespace=static-eu&locale=en_GB"
+    try:
+        res = requests.get(url, headers=headers, timeout=3)
+        if res.status_code == 200:
+            data = res.json()
+            name = data.get("name", "")
+            ilvl = data.get("level", 0)
+            result = (name, ilvl)
+            ITEM_DATA_CACHE[item_id] = result
+            return result
     except Exception:
         pass
     
-    ITEM_NAME_CACHE[item_id] = None
-    return None
+    ITEM_DATA_CACHE[item_id] = (None, 0)
+    return (None, 0)
 
-def send_discord_alert(item_name, price_gold, realm_id):
+def send_discord_alert(item_name, price_gold, realm_name, ilvl):
     if not DISCORD_WEBHOOK_URL:
         return
     msg = (
-        f"🚨 **¡CHOLLO DETECTADO!** 🚨\n"
-        f"**Objeto:** {item_name}\n"
+        f"🚨 **¡CHOLLO DETECTADO EN EU!** 🚨\n"
+        f"**Objeto:** {item_name} (ilvl {ilvl})\n"
         f"**Precio:** {price_gold:,} oro\n"
-        f"**ID Reino:** {realm_id}\n"
+        f"**Reino:** {realm_name}\n"
         f"-----------------------------------"
     )
     requests.post(DISCORD_WEBHOOK_URL, json={"content": msg})
@@ -76,43 +115,51 @@ def check_prices():
         return
 
     headers = {"Authorization": f"Bearer {token}"}
-    main_realms = [1305, 1403, 581, 1303, 1402]
     
-    print(f"Buscando objetos por nombre real en {len(main_realms)} reinos...\n")
+    print("Obteniendo la lista completa de reinos de Europa...")
+    all_realms = get_all_eu_connected_realms(headers)
+    print(f"Se escanearán {len(all_realms)} reinos conectados de EU.\n")
+
+    max_global_price = max(MAX_PRICES_BY_ILVL.values())
     total_found = 0
 
-    for realm_id in main_realms:
+    for realm_id in all_realms:
+        realm_name = get_realm_name(realm_id, headers)
         url = f"https://eu.api.blizzard.com/data/wow/connected-realm/{realm_id}/auctions?namespace=dynamic-eu&locale=en_GB"
-        print(f"🔍 Escaneando reino {realm_id}...")
+        print(f"🔍 Escaneando {realm_name}...")
 
         try:
-            res = requests.get(url, headers=headers, timeout=15)
+            res = requests.get(url, headers=headers, timeout=10)
             if res.status_code != 200:
                 continue
 
             auctions = res.json().get("auctions", [])
-            print(f"   ↳ Subastas analizadas: {len(auctions)}")
 
             for auction in auctions:
                 buyout = auction.get("buyout", 0) or auction.get("unit_price", 0)
                 price_gold = int(buyout / 10000)
 
-                # Solo inspeccionamos objetos cuyo precio sea relevante para ahorrar peticiones
-                if 1000 <= price_gold <= MAX_ALERT_PRICE_GOLD:
+                # Filtro primario rápido por precio global para no sobrecargar
+                if 1000 <= price_gold <= max_global_price:
                     item_id = auction.get("item", {}).get("id")
-                    item_name = get_item_name(item_id, headers)
+                    item_name, item_level = get_item_info(item_id, headers)
 
                     if item_name and item_name.lower() in TARGET_NAMES:
-                        print(f"  🎯 ¡MATCH ENCONTRADO!: {item_name} a {price_gold}g en Realm {realm_id}")
-                        send_discord_alert(item_name, price_gold, realm_id)
-                        total_found += 1
+                        # Comprobación de límite por ilvl específico
+                        max_allowed = MAX_PRICES_BY_ILVL.get(item_level, max_global_price)
+
+                        if price_gold <= max_allowed:
+                            print(f"  🎯 ¡CHOLLO!: {item_name} (ilvl {item_level}) por {price_gold}g en {realm_name}")
+                            send_discord_alert(item_name, price_gold, realm_name, item_level)
+                            total_found += 1
 
         except Exception as e:
             print(f"❌ Error en reino {realm_id}: {e}")
 
-        time.sleep(1)
+        # Pequeña pausa para evitar que Blizzard bloquee por Rate Limit en 90+ peticiones
+        time.sleep(0.3)
 
-    print(f"\nEscaneo finalizado. Total chollos detectados: {total_found}")
+    print(f"\nEscaneo finalizado. Total chollos detectados en Europa: {total_found}")
 
 if __name__ == "__main__":
     check_prices()
