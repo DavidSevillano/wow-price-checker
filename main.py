@@ -1,12 +1,12 @@
 import os
-import time
 import requests
+from concurrent.futures import ThreadPoolExecutor
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 CLIENT_ID = os.getenv("BLIZZARD_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLIZZARD_CLIENT_SECRET")
 
-# Límites de precio según ilvl
+# Límites máximos por ilvl (en oro)
 MAX_PRICES_BY_ILVL = {
     298: 9999,
     305: 70000,
@@ -27,7 +27,6 @@ TARGET_NAMES = {
 }
 
 ITEM_DATA_CACHE = {}
-REALM_NAME_CACHE = {}
 
 def get_blizzard_token():
     url = "https://oauth.battle.net/token"
@@ -45,35 +44,16 @@ def get_blizzard_token():
     return None
 
 def get_all_eu_connected_realms(headers):
+    """Obtiene rápidamente la lista de IDs de reinos conectados."""
     url = "https://eu.api.blizzard.com/data/wow/connected-realm/index?namespace=dynamic-eu&locale=en_GB"
     try:
-        res = requests.get(url, headers=headers, timeout=15)
+        res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
             realms_data = res.json().get("connected_realms", [])
             return [int(r["href"].split("connected-realm/")[1].split("?")[0]) for r in realms_data]
     except Exception as e:
         print(f"❌ Error reinos: {e}")
     return [1305, 1403, 581, 1303, 1402]
-
-def get_realm_name(realm_id, headers):
-    if realm_id in REALM_NAME_CACHE:
-        return REALM_NAME_CACHE[realm_id]
-
-    url = f"https://eu.api.blizzard.com/data/wow/connected-realm/{realm_id}?namespace=dynamic-eu&locale=en_GB"
-    try:
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code == 200:
-            realms = res.json().get("realms", [])
-            names = [r.get("name") for r in realms if r.get("name")]
-            full_name = " / ".join(names) if names else f"Reino {realm_id}"
-            REALM_NAME_CACHE[realm_id] = full_name
-            return full_name
-    except Exception:
-        pass
-
-    fallback = f"Reino {realm_id}"
-    REALM_NAME_CACHE[realm_id] = fallback
-    return fallback
 
 def get_item_base_data(item_id, headers):
     if item_id in ITEM_DATA_CACHE:
@@ -96,31 +76,60 @@ def get_item_base_data(item_id, headers):
     return (None, 0)
 
 def calculate_real_ilvl(item_data, base_ilvl):
-    """Calcula el ilvl basándose en modificadores o asume 305 si entra en rango de precio."""
-    # 1. Inspeccionar si trae modificador de nivel explícito (Bonus modifier type 9)
     modifiers = item_data.get("modifiers", [])
     for mod in modifiers:
         if mod.get("type") == 9:
             return mod.get("value", base_ilvl)
 
-    # 2. Si no especifica modificador pero es uno de nuestros objetos BoE de raid,
-    # la versión estándar comerciable de esta temporada suele ser ilvl 305.
-    if base_ilvl > 0:
-        return 305
+    return 305 if base_ilvl > 0 else base_ilvl
 
-    return base_ilvl
-
-def send_discord_alert(item_name, price_gold, realm_name, ilvl):
+def send_discord_alert(item_name, price_gold, realm_id, ilvl):
     if not DISCORD_WEBHOOK_URL:
         return
     msg = (
         f"🚨 **¡CHOLLO DETECTADO EN EU!** 🚨\n"
         f"**Objeto:** {item_name} (ilvl {ilvl})\n"
         f"**Precio:** {price_gold:,} oro\n"
-        f"**Reino:** {realm_name}\n"
+        f"**Reino ID:** {realm_id}\n"
         f"-----------------------------------"
     )
     requests.post(DISCORD_WEBHOOK_URL, json={"content": msg})
+
+def scan_realm(realm_id, headers, max_global_price):
+    """Escanea un reino individual de forma independiente para ejecución paralela."""
+    url = f"https://eu.api.blizzard.com/data/wow/connected-realm/{realm_id}/auctions?namespace=dynamic-eu&locale=en_GB"
+    found_count = 0
+
+    try:
+        res = requests.get(url, headers=headers, timeout=8)
+        if res.status_code != 200:
+            return 0
+
+        auctions = res.json().get("auctions", [])
+
+        for auction in auctions:
+            buyout = auction.get("buyout", 0) or auction.get("unit_price", 0)
+            price_gold = int(buyout / 10000)
+
+            if 1000 <= price_gold <= max_global_price:
+                item_obj = auction.get("item", {})
+                item_id = item_obj.get("id")
+                
+                item_name, base_ilvl = get_item_base_data(item_id, headers)
+
+                if item_name and item_name.lower() in TARGET_NAMES:
+                    real_ilvl = calculate_real_ilvl(item_obj, base_ilvl)
+                    max_allowed = MAX_PRICES_BY_ILVL.get(real_ilvl, MAX_PRICES_BY_ILVL[305])
+
+                    if price_gold <= max_allowed:
+                        print(f"  🎯 ¡MATCH!: {item_name} (ilvl {real_ilvl}) por {price_gold}g en Reino ID {realm_id}")
+                        send_discord_alert(item_name, price_gold, realm_id, real_ilvl)
+                        found_count += 1
+
+    except Exception:
+        pass
+
+    return found_count
 
 def check_prices():
     token = get_blizzard_token()
@@ -130,45 +139,16 @@ def check_prices():
 
     headers = {"Authorization": f"Bearer {token}"}
     all_realms = get_all_eu_connected_realms(headers)
-    print(f"⚡ Escaneando los {len(all_realms)} reinos de EU a máxima velocidad...\n")
+    print(f"🚀 Escaneando los {len(all_realms)} reinos de EU en paralelo...")
 
     max_global_price = max(MAX_PRICES_BY_ILVL.values())
-    total_found = 0
 
-    for realm_id in all_realms:
-        url = f"https://eu.api.blizzard.com/data/wow/connected-realm/{realm_id}/auctions?namespace=dynamic-eu&locale=en_GB"
+    # Usar 15 hilos concurrentes para procesar Europa en segundos
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        results = list(executor.map(lambda r_id: scan_realm(r_id, headers, max_global_price), all_realms))
 
-        try:
-            res = requests.get(url, headers=headers, timeout=10)
-            if res.status_code != 200:
-                continue
-
-            auctions = res.json().get("auctions", [])
-
-            for auction in auctions:
-                buyout = auction.get("buyout", 0) or auction.get("unit_price", 0)
-                price_gold = int(buyout / 10000)
-
-                if 1000 <= price_gold <= max_global_price:
-                    item_obj = auction.get("item", {})
-                    item_id = item_obj.get("id")
-                    
-                    item_name, base_ilvl = get_item_base_data(item_id, headers)
-
-                    if item_name and item_name.lower() in TARGET_NAMES:
-                        real_ilvl = calculate_real_ilvl(item_obj, base_ilvl)
-                        max_allowed = MAX_PRICES_BY_ILVL.get(real_ilvl, MAX_PRICES_BY_ILVL[305])
-
-                        if price_gold <= max_allowed:
-                            realm_name = get_realm_name(realm_id, headers)
-                            print(f"  🎯 ¡CHOLLO ENVIADO!: {item_name} (ilvl {real_ilvl}) por {price_gold}g en {realm_name}")
-                            send_discord_alert(item_name, price_gold, realm_name, real_ilvl)
-                            total_found += 1
-
-        except Exception as e:
-            continue
-
-    print(f"\n⚡ Escaneo completado. Total chollos enviados: {total_found}")
+    total_found = sum(results)
+    print(f"\n✅ Escaneo completado. Total chollos enviados: {total_found}")
 
 if __name__ == "__main__":
     check_prices()
