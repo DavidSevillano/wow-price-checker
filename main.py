@@ -1,16 +1,15 @@
 import os
+import time
 import requests
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
-# Umbrales máximos de precio según el ilvl
 MAX_PRICES_BY_ILVL = {
     305: 80000,
     308: 50000,
     311: 450000,
 }
 
-# Objetos a monitorear en EU
 ITEMS_TO_WATCH = [
     {"name": "Grebas de las profundidades nocivas", "id": 210817},
     {"name": "Yelmo místico de explorador de templos", "id": 210818},
@@ -23,45 +22,58 @@ ITEMS_TO_WATCH = [
     {"name": "Ojo de jade de sierpe atada", "id": 210825},
 ]
 
-def send_discord_alert(item_name, ilvl, price, realm):
-    message = {
-        "content": (
-            f"🚨 **¡CHOLLO DETECTADO EN EU!** 🚨\n"
-            f"**Objeto:** {item_name} (ilvl {ilvl})\n"
-            f"**Precio:** {price:,} oro\n"
-            f"**Reino:** {realm}\n"
-            f"-----------------------------------"
-        )
-    }
-    requests.post(DISCORD_WEBHOOK_URL, json=message)
+def send_discord_alert(message_text):
+    if not DISCORD_WEBHOOK_URL:
+        print("Error: No hay URL de Webhook configurada.")
+        return
+    requests.post(DISCORD_WEBHOOK_URL, json={"content": message_text})
+    time.sleep(1)  # Evita bloqueos por Rate Limit de Discord
 
 def check_prices():
-    if not DISCORD_WEBHOOK_URL:
-        print("Error: No se ha encontrado la variable DISCORD_WEBHOOK_URL")
-        return
+    print("Iniciando escaneo de precios...")
+    found_deals = 0
 
     for item in ITEMS_TO_WATCH:
         url = f"https://api.undermine.exchange/api/item/{item['id']}?region=eu"
         try:
             response = requests.get(url, timeout=10)
             if response.status_code != 200:
+                print(f"Error {response.status_code} al consultar {item['name']}")
                 continue
                 
             data = response.json()
+            auctions = data.get("auctions", [])
+            print(f"Procesando {item['name']}: {len(auctions)} subastas encontradas.")
             
-            for auction in data.get("auctions", []):
-                ilvl = auction.get("bonusStats", {}).get("itemLevel")
+            for auction in auctions:
+                # Intenta obtener el ilvl de varias estructuras posibles de la API
+                ilvl = (
+                    auction.get("bonusStats", {}).get("itemLevel") or 
+                    auction.get("stats", {}).get("itemLevel") or
+                    auction.get("itemLevel")
+                )
                 
+                # Si el ilvl coincide con nuestras reglas
                 if ilvl in MAX_PRICES_BY_ILVL:
-                    max_allowed_price = MAX_PRICES_BY_ILVL[ilvl]
-                    buyout = auction.get("buyout", 0) / 10000
+                    max_allowed = MAX_PRICES_BY_ILVL[ilvl]
+                    buyout = auction.get("buyout", 0) / 10000  # Cobre a Oro
                     
-                    if buyout <= max_allowed_price:
+                    if 0 < buyout <= max_allowed:
                         realm = auction.get("realmName", "Desconocido")
-                        send_discord_alert(item["name"], ilvl, int(buyout), realm)
-                        
+                        msg = (
+                            f"🚨 **¡CHOLLO DETECTADO!** 🚨\n"
+                            f"**Objeto:** {item['name']} (ilvl {ilvl})\n"
+                            f"**Precio:** {int(buyout):,} oro\n"
+                            f"**Reino:** {realm}"
+                        )
+                        print(f"¡CHOLLO!: {item['name']} (ilvl {ilvl}) por {int(buyout)}g en {realm}")
+                        send_discord_alert(msg)
+                        found_deals += 1
+
         except Exception as e:
-            print(f"Error procesando {item['name']}: {e}")
+            print(f"Excepción procesando {item['name']}: {e}")
+
+    print(f"Escaneo finalizado. Chollos encontrados e informados: {found_deals}")
 
 if __name__ == "__main__":
     check_prices()
