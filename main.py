@@ -27,41 +27,53 @@ def send_discord_alert(message_text):
         print("Error: No hay URL de Webhook configurada.")
         return
     requests.post(DISCORD_WEBHOOK_URL, json={"content": message_text})
-    time.sleep(1)  # Evita bloqueos por Rate Limit de Discord
+    time.sleep(1)
 
 def check_prices():
     print("Iniciando escaneo de precios...")
     found_deals = 0
 
+    # Headers para simular una petición válida de cliente
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+
     for item in ITEMS_TO_WATCH:
-        url = f"https://api.undermine.exchange/api/item/{item['id']}?region=eu"
+        # Endpoint directo de consulta de item por ID en Undermine
+        url = f"https://undermine.exchange/api/item?house=eu&item={item['id']}"
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, headers=headers, timeout=10)
+            
+            # Si falla la llamada principal, intentamos con el endpoint alternativo regional
             if response.status_code != 200:
-                print(f"Error {response.status_code} al consultar {item['name']}")
+                url = f"https://api.undermine.exchange/item/{item['id']}?region=eu"
+                response = requests.get(url, headers=headers, timeout=10)
+
+            if response.status_code != 200:
+                print(f"Error {response.status_code} al consultar {item['name']} (ID: {item['id']})")
                 continue
                 
             data = response.json()
-            auctions = data.get("auctions", [])
+            auctions = data.get("auctions", []) or data.get("current", [])
             print(f"Procesando {item['name']}: {len(auctions)} subastas encontradas.")
             
             for auction in auctions:
-                # Intenta obtener el ilvl de varias estructuras posibles de la API
+                # Extraemos el nivel de objeto (ilvl)
                 ilvl = (
                     auction.get("bonusStats", {}).get("itemLevel") or 
                     auction.get("stats", {}).get("itemLevel") or
-                    auction.get("itemLevel")
+                    auction.get("itemLevel") or
+                    auction.get("ilvl")
                 )
                 
-                # Si el ilvl coincide con nuestras reglas
                 if ilvl in MAX_PRICES_BY_ILVL:
                     max_allowed = MAX_PRICES_BY_ILVL[ilvl]
-                    buyout = auction.get("buyout", 0) / 10000  # Cobre a Oro
+                    buyout = (auction.get("buyout", 0) or auction.get("price", 0)) / 10000
                     
                     if 0 < buyout <= max_allowed:
-                        realm = auction.get("realmName", "Desconocido")
+                        realm = auction.get("realmName") or auction.get("realm") or "Desconocido"
                         msg = (
-                            f"🚨 **¡CHOLLO DETECTADO!** 🚨\n"
+                            f"🚨 **¡CHOLLO DETECTADO EN EU!** 🚨\n"
                             f"**Objeto:** {item['name']} (ilvl {ilvl})\n"
                             f"**Precio:** {int(buyout):,} oro\n"
                             f"**Reino:** {realm}"
