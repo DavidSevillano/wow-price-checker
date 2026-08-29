@@ -7,7 +7,7 @@ CLIENT_ID = os.getenv("BLIZZARD_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLIZZARD_CLIENT_SECRET")
 
 # Solo los ilvl deseados con sus precios máximos en oro.
-# Cualquier ilvl que no esté aquí (como 279 o 292) será ignorado.
+# Cualquier ilvl que no esté aquí (como 219, 279 o 292) será ignorado.
 MAX_PRICES_BY_ILVL = {
     298: 9999,
     305: 70000,
@@ -191,19 +191,19 @@ def get_item_base_data(item_id, headers):
     return (None, 0)
 
 def extract_exact_ilvl(item_obj, base_ilvl):
-    # 1. Buscar modificador de ilvl explícito (type 9)
+    # 1. Modificador explícito en la API (type 9)
     modifiers = item_obj.get("modifiers", [])
     for mod in modifiers:
         if mod.get("type") == 9:
             return mod.get("value")
 
-    # 2. Buscar en la lista de bonus mapeados
+    # 2. Mapeo de bonus_lists conocidos
     bonus_lists = item_obj.get("bonus_lists", [])
     for b_id in bonus_lists:
         if b_id in BONUS_TO_ILVL:
             return BONUS_TO_ILVL[b_id]
 
-    # 3. Devuelve el nivel base real sin inventar un 305 por defecto
+    # 3. Retorna el ilvl base original sin inventar un 305
     return base_ilvl
 
 def send_discord_alert(item_name, price_gold, realm_str, ilvl):
@@ -242,15 +242,18 @@ def scan_realm(realm_id, headers, max_global_price):
                 if item_name and item_name.lower() in TARGET_NAMES:
                     exact_ilvl = extract_exact_ilvl(item_obj, base_ilvl)
 
-                    # FILTRO ESTRICTO: Solo si el ilvl exacto existe en tu diccionario de precios
-                    if exact_ilvl in MAX_PRICES_BY_ILVL:
-                        max_allowed = MAX_PRICES_BY_ILVL[exact_ilvl]
+                    # Si entra en el rango de precio pero no se reconoce su ilvl de la lista,
+                    # se imprime en consola para capturar nuevos bonus_ids sin enviar alerta falsa
+                    if exact_ilvl not in MAX_PRICES_BY_ILVL:
+                        print(f"  🔍 Ignorado por ilvl ({exact_ilvl}): {item_name} | Pre: {price_gold}g | Bonus: {item_obj.get('bonus_lists')}")
+                        continue
 
-                        if price_gold <= max_allowed:
-                            realm_str = REALM_NAMES_STATIC.get(realm_id, f"EU - Reino ID {realm_id}")
-                            print(f"  🎯 ¡CHOLLO!: {item_name} (ilvl {exact_ilvl}) por {price_gold}g en {realm_str}")
-                            send_discord_alert(item_name, price_gold, realm_str, exact_ilvl)
-                            found_count += 1
+                    max_allowed = MAX_PRICES_BY_ILVL[exact_ilvl]
+                    if price_gold <= max_allowed:
+                        realm_str = REALM_NAMES_STATIC.get(realm_id, f"EU - Reino ID {realm_id}")
+                        print(f"  🎯 ¡CHOLLO!: {item_name} (ilvl {exact_ilvl}) por {price_gold}g en {realm_str}")
+                        send_discord_alert(item_name, price_gold, realm_str, exact_ilvl)
+                        found_count += 1
 
     except Exception:
         pass
