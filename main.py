@@ -6,7 +6,7 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 CLIENT_ID = os.getenv("BLIZZARD_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLIZZARD_CLIENT_SECRET")
 
-# Límites máximos permitidos por ilvl real (en oro)
+# Límites de precio según ilvl
 MAX_PRICES_BY_ILVL = {
     298: 9999,
     305: 70000,
@@ -24,16 +24,6 @@ TARGET_NAMES = {
     "crushing coiler coif",
     "fanged brute's greatbelt",
     "bound serpent's jade eye",
-}
-
-# Mapa de bonus_list IDs conocidos de Blizzard a su incremento o ilvl exacto
-# Para ítems de raid BoE, si no hay bonus especial se asume el ilvl base de la dificultad
-BONUS_ILVL_MAP = {
-    # Mapeo estándar de bonus IDs a ilvls/modificadores
-    10887: 298,
-    10888: 305,
-    10889: 308,
-    10890: 311,
 }
 
 ITEM_DATA_CACHE = {}
@@ -62,7 +52,7 @@ def get_all_eu_connected_realms(headers):
             realms_data = res.json().get("connected_realms", [])
             return [int(r["href"].split("connected-realm/")[1].split("?")[0]) for r in realms_data]
     except Exception as e:
-        print(f"❌ Error obteniendo lista de reinos: {e}")
+        print(f"❌ Error reinos: {e}")
     return [1305, 1403, 581, 1303, 1402]
 
 def get_realm_name(realm_id, headers):
@@ -86,7 +76,6 @@ def get_realm_name(realm_id, headers):
     return fallback
 
 def get_item_base_data(item_id, headers):
-    """Obtiene el nombre en inglés del objeto."""
     if item_id in ITEM_DATA_CACHE:
         return ITEM_DATA_CACHE[item_id]
 
@@ -107,22 +96,19 @@ def get_item_base_data(item_id, headers):
     return (None, 0)
 
 def calculate_real_ilvl(item_data, base_ilvl):
-    """Calcula el ilvl real del objeto inspeccionando sus bonus_lists."""
-    bonus_lists = item_data.get("bonus_lists", [])
-    
-    # 1. Buscar coincidencia directa de bonus conocidos
-    for b_id in bonus_lists:
-        if b_id in BONUS_ILVL_MAP:
-            return BONUS_ILVL_MAP[b_id]
-
-    # 2. Si no encuentra bonus conocidos, intenta extraer modificadores de contexto
+    """Calcula el ilvl basándose en modificadores o asume 305 si entra en rango de precio."""
+    # 1. Inspeccionar si trae modificador de nivel explícito (Bonus modifier type 9)
     modifiers = item_data.get("modifiers", [])
     for mod in modifiers:
-        if mod.get("type") == 9: # Type 9 suele representar el nivel de objeto forzado
+        if mod.get("type") == 9:
             return mod.get("value", base_ilvl)
 
-    # 3. Fallback: Si no tiene bonus registrados que alteren nivel, devolver el base
-    return base_ilvl if base_ilvl > 250 else 298
+    # 2. Si no especifica modificador pero es uno de nuestros objetos BoE de raid,
+    # la versión estándar comerciable de esta temporada suele ser ilvl 305.
+    if base_ilvl > 0:
+        return 305
+
+    return base_ilvl
 
 def send_discord_alert(item_name, price_gold, realm_name, ilvl):
     if not DISCORD_WEBHOOK_URL:
@@ -144,13 +130,12 @@ def check_prices():
 
     headers = {"Authorization": f"Bearer {token}"}
     all_realms = get_all_eu_connected_realms(headers)
-    print(f"Escaneando {len(all_realms)} reinos de Europa...\n")
+    print(f"⚡ Escaneando los {len(all_realms)} reinos de EU a máxima velocidad...\n")
 
     max_global_price = max(MAX_PRICES_BY_ILVL.values())
     total_found = 0
 
     for realm_id in all_realms:
-        realm_name = get_realm_name(realm_id, headers)
         url = f"https://eu.api.blizzard.com/data/wow/connected-realm/{realm_id}/auctions?namespace=dynamic-eu&locale=en_GB"
 
         try:
@@ -164,7 +149,6 @@ def check_prices():
                 buyout = auction.get("buyout", 0) or auction.get("unit_price", 0)
                 price_gold = int(buyout / 10000)
 
-                # Comprobación de precio antes de hacer consultas HTTP
                 if 1000 <= price_gold <= max_global_price:
                     item_obj = auction.get("item", {})
                     item_id = item_obj.get("id")
@@ -172,23 +156,19 @@ def check_prices():
                     item_name, base_ilvl = get_item_base_data(item_id, headers)
 
                     if item_name and item_name.lower() in TARGET_NAMES:
-                        # Calcular el ilvl real del ítem instanciado
                         real_ilvl = calculate_real_ilvl(item_obj, base_ilvl)
-
-                        # Verificar si el precio entra en el tope para su ilvl
-                        max_allowed = MAX_PRICES_BY_ILVL.get(real_ilvl, max_global_price)
+                        max_allowed = MAX_PRICES_BY_ILVL.get(real_ilvl, MAX_PRICES_BY_ILVL[305])
 
                         if price_gold <= max_allowed:
-                            print(f"  🎯 ¡CHOLLO!: {item_name} (ilvl {real_ilvl}) por {price_gold}g en {realm_name}")
+                            realm_name = get_realm_name(realm_id, headers)
+                            print(f"  🎯 ¡CHOLLO ENVIADO!: {item_name} (ilvl {real_ilvl}) por {price_gold}g en {realm_name}")
                             send_discord_alert(item_name, price_gold, realm_name, real_ilvl)
                             total_found += 1
 
         except Exception as e:
-            print(f"❌ Error en reino {realm_id}: {e}")
+            continue
 
-        time.sleep(0.3)
-
-    print(f"\nEscaneo finalizado. Total chollos detectados: {total_found}")
+    print(f"\n⚡ Escaneo completado. Total chollos enviados: {total_found}")
 
 if __name__ == "__main__":
     check_prices()
