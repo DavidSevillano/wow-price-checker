@@ -6,7 +6,8 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 CLIENT_ID = os.getenv("BLIZZARD_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLIZZARD_CLIENT_SECRET")
 
-# Solo configuramos los ilvl que te interesan. El resto se descartan automáticamente.
+# Solo los ilvl deseados con sus precios máximos en oro.
+# Cualquier ilvl que no esté aquí (como 279 o 292) será ignorado.
 MAX_PRICES_BY_ILVL = {
     298: 9999,
     305: 70000,
@@ -26,6 +27,7 @@ TARGET_NAMES = {
     "bound serpent's jade eye",
 }
 
+# MAPA COMPLETO DE LOS 92 CONNECTED REALMS DE EUROPA
 REALM_NAMES_STATIC = {
     # España
     1305: "EU - Dun Modr / Sanguino / C'Thun / Shen'dralar / Zul'jin / Uldum",
@@ -189,17 +191,20 @@ def get_item_base_data(item_id, headers):
     return (None, 0)
 
 def extract_exact_ilvl(item_obj, base_ilvl):
+    # 1. Buscar modificador de ilvl explícito (type 9)
     modifiers = item_obj.get("modifiers", [])
     for mod in modifiers:
         if mod.get("type") == 9:
             return mod.get("value")
 
+    # 2. Buscar en la lista de bonus mapeados
     bonus_lists = item_obj.get("bonus_lists", [])
     for b_id in bonus_lists:
         if b_id in BONUS_TO_ILVL:
             return BONUS_TO_ILVL[b_id]
 
-    return base_ilvl if base_ilvl > 250 else 305
+    # 3. Devuelve el nivel base real sin inventar un 305 por defecto
+    return base_ilvl
 
 def send_discord_alert(item_name, price_gold, realm_str, ilvl):
     if not DISCORD_WEBHOOK_URL:
@@ -237,7 +242,7 @@ def scan_realm(realm_id, headers, max_global_price):
                 if item_name and item_name.lower() in TARGET_NAMES:
                     exact_ilvl = extract_exact_ilvl(item_obj, base_ilvl)
 
-                    # FILTRO: Ignorar si es menor a 298 o no está definido en MAX_PRICES_BY_ILVL
+                    # FILTRO ESTRICTO: Solo si el ilvl exacto existe en tu diccionario de precios
                     if exact_ilvl in MAX_PRICES_BY_ILVL:
                         max_allowed = MAX_PRICES_BY_ILVL[exact_ilvl]
 
