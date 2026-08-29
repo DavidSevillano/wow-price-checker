@@ -6,20 +6,25 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 CLIENT_ID = os.getenv("BLIZZARD_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLIZZARD_CLIENT_SECRET")
 
-# Límite máximo general en oro para avisar si encontramos algún chollo de estos items
-MAX_PRICE_GOLD = 70000
-
-ITEMS_TO_WATCH = {
-    210817: "Grebas de las profundidades nocivas",
-    210818: "Yelmo místico de explorador de templos",
-    210819: "Faja de Reptaescama",
-    210820: "Zapatillas del culto siseante",
-    210821: "Espaldares del sacrificio olvidado",
-    210822: "Manto de rito venenoso",
-    210823: "Almófar de volutador aplastante",
-    210824: "Gran cinturón de bruto colmilludo",
-    210825: "Ojo de jade de sierpe atada",
+# Configura tus límites por ilvl
+MAX_PRICES_BY_ILVL = {
+    305: 70000,
+    308: 50000,
+    311: 450000,
 }
+
+# Nombres exactos de las piezas BoE
+SEARCH_ITEMS = [
+    "Grebas de las profundidades nocivas",
+    "Yelmo místico de explorador de templos",
+    "Faja de Reptaescama",
+    "Zapatillas del culto siseante",
+    "Espaldares del sacrificio olvidado",
+    "Manto de rito venenoso",
+    "Almófar de volutador aplastante",
+    "Gran cinturón de bruto colmilludo",
+    "Ojo de jade de sierpe atada",
+]
 
 def get_blizzard_token():
     url = "https://oauth.battle.net/token"
@@ -36,65 +41,60 @@ def get_blizzard_token():
         print(f"Error obteniendo token: {e}")
     return None
 
-def send_discord_alert(item_name, item_id, price_gold, bonus_lists):
+def send_discord_alert(item_name, price_gold):
     if not DISCORD_WEBHOOK_URL:
         return
     msg = (
-        f"🚨 **¡CHOLLO DETECTADO!** 🚨\n"
-        f"**Objeto:** {item_name} (ID: {item_id})\n"
+        f"🚨 **¡CHOLLO DETECTADO EN EU!** 🚨\n"
+        f"**Objeto:** {item_name}\n"
         f"**Precio:** {price_gold:,} oro\n"
-        f"**Bonus IDs:** {bonus_lists}\n"
         f"-----------------------------------"
     )
     requests.post(DISCORD_WEBHOOK_URL, json={"content": msg})
     time.sleep(1)
 
 def check_prices():
-    print("Iniciando escaneo de prueba...")
+    print("Iniciando búsqueda directa por nombre...")
     token = get_blizzard_token()
     if not token:
         print("Token no disponible.")
         return
 
     headers = {"Authorization": f"Bearer {token}"}
-    url = "https://eu.api.blizzard.com/data/wow/connected-realm/1305/auctions?namespace=dynamic-eu&locale=es_ES"
+    found_deals = 0
 
-    try:
-        res = requests.get(url, headers=headers, timeout=30)
-        if res.status_code != 200:
-            print(f"Error {res.status_code} al consultar Blizzard.")
-            return
+    for item_name in SEARCH_ITEMS:
+        # Búsqueda directa por nombre en la API de subastas
+        url = (
+            f"https://eu.api.blizzard.com/data/wow/search/connected-realm/index"
+            f"?namespace=dynamic-eu&locale=es_ES&name.es_ES={item_name}&_page=1&_orderby=id:asc"
+        )
+        try:
+            res = requests.get(url, headers=headers, timeout=10)
+            if res.status_code != 200:
+                print(f"Error {res.status_code} buscando {item_name}")
+                continue
 
-        auctions = res.json().get("auctions", [])
-        print(f"Analizando {len(auctions)} subastas del reino 1305...")
-        
-        found_deals = 0
-        matching_items_debug = 0
+            results = res.json().get("results", [])
+            print(f"Encontrados {len(results)} registros para '{item_name}'")
 
-        for auction in auctions:
-            item_info = auction.get("item", {})
-            item_id = item_info.get("id")
+            for result in results:
+                # Extraemos el precio del resultado
+                auctions = result.get("data", {}).get("auctions", [])
+                for auction in auctions:
+                    buyout = auction.get("buyout", 0) or auction.get("unit_price", 0)
+                    price_gold = int(buyout / 10000)
 
-            if item_id in ITEMS_TO_WATCH:
-                buyout = auction.get("buyout", 0) or auction.get("unit_price", 0)
-                price_gold = int(buyout / 10000)
-                bonus_lists = item_info.get("bonus_lists", [])
-                item_name = ITEMS_TO_WATCH[item_id]
+                    # Si el precio entra dentro de nuestros márgenes máximos
+                    if 1000 <= price_gold <= max(MAX_PRICES_BY_ILVL.values()):
+                        print(f"¡CHOLLO!: {item_name} a {price_gold}g")
+                        send_discord_alert(item_name, price_gold)
+                        found_deals += 1
 
-                # Imprimir en la consola los primeros 5 encontrados para ver sus datos reales
-                if matching_items_debug < 5:
-                    print(f"[DEBUG] {item_name} encontrado a {price_gold}g | Bonus: {bonus_lists}")
-                    matching_items_debug += 1
+        except Exception as e:
+            print(f"Error procesando {item_name}: {e}")
 
-                # Filtrar descartando recetas/patrones muy baratos (menores a 1,000g)
-                if 1000 <= price_gold <= MAX_PRICE_GOLD:
-                    send_discord_alert(item_name, item_id, price_gold, bonus_lists)
-                    found_deals += 1
-
-        print(f"Escaneo finalizado. Chollos informados: {found_deals}")
-
-    except Exception as e:
-        print(f"Excepción: {e}")
+    print(f"Escaneo finalizado. Chollos encontrados: {found_deals}")
 
 if __name__ == "__main__":
     check_prices()
