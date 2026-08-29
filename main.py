@@ -6,11 +6,8 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 CLIENT_ID = os.getenv("BLIZZARD_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLIZZARD_CLIENT_SECRET")
 
-MAX_PRICES_BY_ILVL = {
-    305: 70000,
-    308: 50000,
-    311: 450000,
-}
+# Límite máximo general en oro para avisar si encontramos algún chollo de estos items
+MAX_PRICE_GOLD = 70000
 
 ITEMS_TO_WATCH = {
     210817: "Grebas de las profundidades nocivas",
@@ -39,38 +36,27 @@ def get_blizzard_token():
         print(f"Error obteniendo token: {e}")
     return None
 
-def extract_ilvl(item_info):
-    # En la API de Blizzard, los modificadores de tipo 9 indican el nivel de objeto dinámico
-    modifiers = item_info.get("modifiers", [])
-    for mod in modifiers:
-        if mod.get("type") == 9:
-            return mod.get("value")
-    
-    # Si no tiene modificador explícito de ilvl, no es una pieza equipable válida
-    return None
-
-def send_discord_alert(item_name, ilvl, price_gold):
+def send_discord_alert(item_name, item_id, price_gold, bonus_lists):
     if not DISCORD_WEBHOOK_URL:
         return
     msg = (
-        f"🚨 **¡CHOLLO DETECTADO EN EU!** 🚨\n"
-        f"**Objeto:** {item_name} (ilvl {ilvl})\n"
+        f"🚨 **¡CHOLLO DETECTADO!** 🚨\n"
+        f"**Objeto:** {item_name} (ID: {item_id})\n"
         f"**Precio:** {price_gold:,} oro\n"
+        f"**Bonus IDs:** {bonus_lists}\n"
         f"-----------------------------------"
     )
     requests.post(DISCORD_WEBHOOK_URL, json={"content": msg})
     time.sleep(1)
 
 def check_prices():
-    print("Iniciando escaneo dinámico...")
+    print("Iniciando escaneo de prueba...")
     token = get_blizzard_token()
     if not token:
         print("Token no disponible.")
         return
 
     headers = {"Authorization": f"Bearer {token}"}
-    
-    # Consultamos las subastas del macrorreino 1305
     url = "https://eu.api.blizzard.com/data/wow/connected-realm/1305/auctions?namespace=dynamic-eu&locale=es_ES"
 
     try:
@@ -80,29 +66,32 @@ def check_prices():
             return
 
         auctions = res.json().get("auctions", [])
-        print(f"Analizando {len(auctions)} subastas totales...")
+        print(f"Analizando {len(auctions)} subastas del reino 1305...")
+        
         found_deals = 0
+        matching_items_debug = 0
 
         for auction in auctions:
             item_info = auction.get("item", {})
             item_id = item_info.get("id")
 
             if item_id in ITEMS_TO_WATCH:
-                ilvl = extract_ilvl(item_info)
+                buyout = auction.get("buyout", 0) or auction.get("unit_price", 0)
+                price_gold = int(buyout / 10000)
+                bonus_lists = item_info.get("bonus_lists", [])
+                item_name = ITEMS_TO_WATCH[item_id]
 
-                # Si el ilvl detectado coincide exactamente con nuestras reglas
-                if ilvl in MAX_PRICES_BY_ILVL:
-                    buyout = auction.get("buyout", 0) or auction.get("unit_price", 0)
-                    price_gold = int(buyout / 10000)
-                    max_price = MAX_PRICES_BY_ILVL[ilvl]
+                # Imprimir en la consola los primeros 5 encontrados para ver sus datos reales
+                if matching_items_debug < 5:
+                    print(f"[DEBUG] {item_name} encontrado a {price_gold}g | Bonus: {bonus_lists}")
+                    matching_items_debug += 1
 
-                    if 1000 <= price_gold <= max_price:
-                        item_name = ITEMS_TO_WATCH[item_id]
-                        print(f"¡ENCONTRADO!: {item_name} (ilvl {ilvl}) a {price_gold}g (Máx: {max_price}g)")
-                        send_discord_alert(item_name, ilvl, price_gold)
-                        found_deals += 1
+                # Filtrar descartando recetas/patrones muy baratos (menores a 1,000g)
+                if 1000 <= price_gold <= MAX_PRICE_GOLD:
+                    send_discord_alert(item_name, item_id, price_gold, bonus_lists)
+                    found_deals += 1
 
-        print(f"Escaneo finalizado. Chollos reales informados: {found_deals}")
+        print(f"Escaneo finalizado. Chollos informados: {found_deals}")
 
     except Exception as e:
         print(f"Excepción: {e}")
