@@ -162,3 +162,11 @@ def test_slug_del_reino(nombre, esperado):
 )
 def test_cuenta_deducida_de_la_carpeta(ruta, esperado):
     assert cuenta_de_ruta(ruta) == esperado
+
+
+def test_la_cuenta_se_deduce_igual_con_barras_de_cualquier_tipo():
+    """CI lo encontro: Path.parts depende del sistema, y en Linux una ruta de
+    Windows entera es un solo componente."""
+    assert cuenta_de_ruta("D:/Juegos/WoW/WTF/Account/403840080#2/SavedVariables/W.lua") == 2
+    assert cuenta_de_ruta(r"D:\Juegos\WoW\WTF\Account\403840080#2\SavedVariables\W.lua") == 2
+    assert cuenta_de_ruta("403840080#2") == 2

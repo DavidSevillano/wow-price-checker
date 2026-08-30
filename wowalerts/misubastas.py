@@ -21,6 +21,10 @@ SNAPSHOT_VERSION = 1
 
 PAYLOAD_RE = re.compile(r'\["payload"\]\s*=\s*"')
 
+# El sufijo de la carpeta de cuenta, con barra de cualquier tipo detras o nada:
+# '403840080#2/', '403840080#2\' o '403840080#2' al final de la ruta.
+CUENTA_RE = re.compile(r"#(\d+)(?=[\\/]|$)")
+
 # WoW escapa asi los caracteres especiales dentro de una cadena guardada.
 ESCAPES = {"n": "\n", "r": "\r", "t": "\t", '"': '"', "\\": "\\"}
 
@@ -72,13 +76,13 @@ def cuenta_de_ruta(path: str | Path) -> int | None:
     WoW guarda cada cuenta del juego en su propia carpeta bajo WTF/Account, con
     el numero al final: '403840080#2' es la WoW 2 del selector de cuentas. Es un
     dato mas fiable que cualquier tabla escrita a mano, y se mantiene solo.
+
+    Se busca sobre el texto de la ruta y no con Path.parts porque este ultimo
+    depende del sistema: en Linux, una ruta de Windows entera es un solo
+    componente y no encontraria nada.
     """
-    for parte in reversed(Path(path).parts):
-        if "#" in parte:
-            sufijo = parte.rsplit("#", 1)[1]
-            if sufijo.isdigit():
-                return int(sufijo)
-    return None
+    numeros = CUENTA_RE.findall(str(path))
+    return int(numeros[-1]) if numeros else None
 
 
 def extraer_payload(texto: str) -> str:
