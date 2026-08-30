@@ -125,6 +125,15 @@ def build_embed(
     return embed
 
 
+def deals_to_send(deals: Sequence[Deal]) -> list[Deal]:
+    """Los chollos que caben en un aviso.
+
+    Lo que sobre NO se pierde: al no marcarse como avisado, la pasada siguiente
+    lo vuelve a encontrar y lo envia entonces.
+    """
+    return list(deals[:MAX_DEALS_PER_RUN])
+
+
 def build_messages(
     deals: Sequence[Deal],
     realm_names: Mapping[int, str],
@@ -134,18 +143,18 @@ def build_messages(
     """Convierte los chollos en mensajes listos para el webhook.
 
     Se agrupan de diez en diez (el maximo que admite Discord por mensaje) y se
-    recorta a `MAX_DEALS_PER_RUN`, avisando de cuantos se han omitido.
+    recorta a `MAX_DEALS_PER_RUN`, avisando de cuantos quedan pendientes.
     """
     if not deals:
         return []
 
-    shown = list(deals[:MAX_DEALS_PER_RUN])
+    shown = deals_to_send(deals)
     omitted = len(deals) - len(shown)
 
     plural = "chollos" if len(shown) != 1 else "chollo"
     header = f"🚨 **{len(shown)} {plural}** por debajo de tus precios"
     if omitted:
-        header += f" (y {omitted} mas que no caben en el aviso)"
+        header += f" (y {omitted} mas que te envio en la proxima pasada)"
 
     messages: list[dict[str, Any]] = []
     for start in range(0, len(shown), MAX_EMBEDS_PER_MESSAGE):
@@ -198,12 +207,17 @@ class DiscordNotifier:
         realm_names: Mapping[int, str],
         icon_urls: Mapping[int, str] | None = None,
         snapshot_at: datetime | None = None,
-    ) -> int:
-        """Envia los chollos. Devuelve cuantos mensajes se han entregado."""
+    ) -> list[Deal]:
+        """Envia los chollos y devuelve exactamente los que se han entregado.
+
+        Devolver la lista, y no un simple recuento, es lo que permite a quien
+        llama marcar como avisados solo los que de verdad han salido. Marcarlos
+        todos haria desaparecer para siempre los que no cupieron en el aviso.
+        """
         messages = build_messages(deals, realm_names, icon_urls, snapshot_at)
         for message in messages:
             self._post(message)
-        return len(messages)
+        return deals_to_send(deals)
 
     def send_warning(self, title: str, text: str) -> None:
         """Aviso sobre el estado del propio bot, no sobre precios."""

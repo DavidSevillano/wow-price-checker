@@ -249,12 +249,23 @@ def run(args: argparse.Namespace) -> int:
         else:
             icon_urls = resolve_icons(client, icon_cache, fresh)
             icon_cache.save()
-            messages = notifier.send_deals(
+            sent = notifier.send_deals(
                 fresh, realm_names, icon_urls, result.snapshot_at
             )
-            log.info("📨 Enviado a Discord en %s mensaje(s).", messages)
-            for deal in fresh:
+            log.info("📨 Enviados a Discord %s chollo(s).", len(sent))
+
+            # Solo se marcan los que han salido de verdad. Si algo no cupo en
+            # el aviso, sigue sin marcar y la proxima pasada lo enviara.
+            for deal in sent:
                 notified.mark(deal.realm_id, deal.auction_id)
+
+            pendientes = len(fresh) - len(sent)
+            if pendientes:
+                log.warning(
+                    "⏭️  %s chollo(s) no caben en este aviso; se enviaran en la "
+                    "proxima pasada.",
+                    pendientes,
+                )
     else:
         log.info("😴 Ningun chollo nuevo esta vez.")
 

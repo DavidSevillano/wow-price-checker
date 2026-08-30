@@ -136,8 +136,26 @@ def test_envio_correcto(requests_mock):
     requests_mock.post(WEBHOOK, status_code=204)
     notifier = DiscordNotifier(WEBHOOK, session=requests.Session())
 
-    assert notifier.send_deals([make_deal()], REALMS) == 1
+    deal = make_deal()
+    assert notifier.send_deals([deal], REALMS) == [deal]
     assert requests_mock.call_count == 1
+
+
+def test_send_deals_devuelve_solo_lo_que_ha_salido(requests_mock):
+    """Con mas chollos de los que caben, devuelve unicamente los enviados.
+
+    Quien llama marca como avisados los devueltos: si devolviera todos, los
+    que no cupieron quedarian marcados sin haberse enviado y no volverian a
+    notificarse nunca.
+    """
+    requests_mock.post(WEBHOOK, status_code=204)
+    notifier = DiscordNotifier(WEBHOOK, session=requests.Session())
+    deals = [make_deal(auction_id=i) for i in range(MAX_DEALS_PER_RUN + 7)]
+
+    enviados = notifier.send_deals(deals, REALMS)
+
+    assert len(enviados) == MAX_DEALS_PER_RUN
+    assert enviados == deals[:MAX_DEALS_PER_RUN]
 
 
 def test_reintenta_cuando_discord_limita_los_envios(requests_mock):

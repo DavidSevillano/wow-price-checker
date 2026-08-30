@@ -138,6 +138,29 @@ def test_un_fallo_al_pedir_el_icono_no_impide_el_aviso(entorno):
     assert embed["title"] == "Greaves of the Noxious Depths"
 
 
+def test_ningun_chollo_se_pierde_cuando_hay_mas_de_los_que_caben(entorno):
+    """Lo que no cabe en un aviso se envia en la pasada siguiente.
+
+    El fallo que esto evita: marcar como avisados los que no se enviaron, con
+    lo que desaparecerian para siempre.
+    """
+    from wowalerts.notifier import MAX_DEALS_PER_RUN
+
+    total = MAX_DEALS_PER_RUN + 7
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": [subasta(i, (30_000 + i) * 10_000) for i in range(total)]},
+    )
+
+    ejecutar(entorno)
+    primera = sum(len(m["embeds"]) for m in mensajes_discord(entorno["mock"]))
+    assert primera == MAX_DEALS_PER_RUN
+
+    ejecutar(entorno)
+    total_enviado = sum(len(m["embeds"]) for m in mensajes_discord(entorno["mock"]))
+    assert total_enviado == total, "los 7 sobrantes tienen que llegar en la 2a pasada"
+
+
 def test_la_segunda_pasada_no_repite_el_mismo_chollo(entorno):
     entorno["mock"].get(
         f"{BASE}/connected-realm/1305/auctions",
