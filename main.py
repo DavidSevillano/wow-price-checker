@@ -279,14 +279,18 @@ def run_undercut(
 
     log.info("⚔️ Te han adelantado en %s subasta(s):", len(frescos))
     for undercut in frescos:
+        cuenta = (
+            f"WoW {undercut.mine.account}"
+            if undercut.mine.account is not None
+            else undercut.mine.realm
+        )
         log.info(
-            "  %s | tuya %s g vs %s g | ilvl %s | %s en %s",
+            "  %s | tuya %s g vs %s g | %s (%s)",
             undercut.mine.item_name,
             format_gold(undercut.my_price_gold),
             format_gold(undercut.rival_price_gold),
-            undercut.mine.ilvl,
             undercut.mine.character,
-            undercut.mine.realm,
+            cuenta,
         )
 
     if dry_run:

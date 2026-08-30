@@ -42,6 +42,9 @@ class MyAuction:
     character: str
     realm: str
     realm_slug: str
+    # Numero de cuenta de WoW (la "WoW 2" del selector), deducido de la carpeta
+    # de WTF de la que salio el volcado. None si no se ha podido saber.
+    account: int | None = None
     # Los bonus ids identifican la version exacta del objeto (ilvl, calidad,
     # afijos). Dos subastas del mismo objeto con los mismos bonus ids son el
     # mismo producto; con distintos, no compiten entre si.
@@ -61,6 +64,21 @@ def slugify_realm(name: str) -> str:
     )
     sin_apostrofos = re.sub(r"['‘’]", "", sin_tildes)
     return re.sub(r"[^a-zA-Z0-9]+", "-", sin_apostrofos).strip("-").lower()
+
+
+def cuenta_de_ruta(path: str | Path) -> int | None:
+    """Numero de cuenta a partir de la ruta del volcado.
+
+    WoW guarda cada cuenta del juego en su propia carpeta bajo WTF/Account, con
+    el numero al final: '403840080#2' es la WoW 2 del selector de cuentas. Es un
+    dato mas fiable que cualquier tabla escrita a mano, y se mantiene solo.
+    """
+    for parte in reversed(Path(path).parts):
+        if "#" in parte:
+            sufijo = parte.rsplit("#", 1)[1]
+            if sufijo.isdigit():
+                return int(sufijo)
+    return None
 
 
 def extraer_payload(texto: str) -> str:
@@ -145,8 +163,9 @@ def subastas_de_payloads(personajes: Mapping[str, Mapping]) -> list[MyAuction]:
     for entrada in personajes.values():
         character = str(entrada.get("character") or "")
         realm = str(entrada.get("realm") or "")
+        cuenta = entrada.get("account")
         for cruda in entrada.get("auctions") or []:
-            subasta = _to_auction(cruda, character, realm)
+            subasta = _to_auction(cruda, character, realm, cuenta)
             if subasta is not None:
                 subastas.append(subasta)
     subastas.sort(key=lambda s: (s.realm, s.character, s.auction_id))
@@ -169,7 +188,18 @@ def leer_de_wow(wow_root: str | Path) -> list[MyAuction]:
             "activado al menos una vez."
         )
     log.info("Leyendo %s volcado(s) del addon.", len(ficheros))
-    return subastas_de_payloads(fusionar_payloads(leer_payload(f) for f in ficheros))
+
+    payloads = []
+    for fichero in ficheros:
+        payload = leer_payload(fichero)
+        cuenta = cuenta_de_ruta(fichero)
+        # Cada personaje se queda con la cuenta de la carpeta donde vivia.
+        for entrada in (payload.get("personajes") or {}).values():
+            if isinstance(entrada, dict):
+                entrada["account"] = cuenta
+        payloads.append(payload)
+
+    return subastas_de_payloads(fusionar_payloads(payloads))
 
 
 def escribir_snapshot(path: str | Path, subastas: Sequence[MyAuction]) -> bool:
@@ -217,7 +247,9 @@ def leer_snapshot(path: str | Path) -> list[MyAuction]:
 
     subastas: list[MyAuction] = []
     for cruda in datos.get("auctions") or []:
-        subasta = _to_auction(cruda, cruda.get("character", ""), cruda.get("realm", ""))
+        subasta = _to_auction(
+            cruda, cruda.get("character", ""), cruda.get("realm", "")
+        )
         if subasta is not None:
             subastas.append(subasta)
     return subastas
@@ -228,7 +260,9 @@ def _exported_at(entrada: Mapping) -> int:
     return valor if isinstance(valor, int) and not isinstance(valor, bool) else 0
 
 
-def _to_auction(cruda: Any, character: str, realm: str) -> MyAuction | None:
+def _to_auction(
+    cruda: Any, character: str, realm: str, cuenta: Any = None
+) -> MyAuction | None:
     """Convierte una entrada cruda, o None si le falta algo imprescindible."""
     if not isinstance(cruda, Mapping):
         return None
@@ -258,7 +292,12 @@ def _to_auction(cruda: Any, character: str, realm: str) -> MyAuction | None:
         character=str(cruda.get("character") or character),
         realm=str(cruda.get("realm") or realm),
         realm_slug=slugify_realm(str(cruda.get("realm") or realm)),
+        account=_cuenta_valida(cruda.get("account", cuenta)),
     )
+
+
+def _cuenta_valida(valor: Any) -> int | None:
+    return valor if isinstance(valor, int) and not isinstance(valor, bool) else None
 
 
 def _to_json(subasta: MyAuction) -> dict:
@@ -272,4 +311,5 @@ def _to_json(subasta: MyAuction) -> dict:
         "quantity": subasta.quantity,
         "character": subasta.character,
         "realm": subasta.realm,
+        "account": subasta.account,
     }

@@ -232,19 +232,26 @@ def build_undercut_messages(undercuts: Sequence[Undercut]) -> list[dict[str, Any
 
     # dict normal: conserva el orden de llegada, que ya viene por diferencia de
     # precio, asi que el personaje con el undercut mas gordo sale primero.
-    por_personaje: dict[tuple[str, str], list[Undercut]] = {}
+    por_personaje: dict[tuple[str, str, object], list[Undercut]] = {}
     for undercut in shown:
-        clave = (undercut.mine.character, undercut.mine.realm)
+        clave = (
+            undercut.mine.character,
+            undercut.mine.realm,
+            undercut.mine.account,
+        )
         por_personaje.setdefault(clave, []).append(undercut)
 
     messages: list[dict[str, Any]] = []
-    for (character, realm), suyas in por_personaje.items():
+    for (character, _realm, account), suyas in por_personaje.items():
+        # El reino no hace falta: lo que necesitas para ir a cambiarlo es a que
+        # cuenta entrar y con que personaje.
+        quien = f"**{character}**"
+        if account is not None:
+            quien += f" · WoW {account}"
+
         plural = "subastas" if len(suyas) != 1 else "subasta"
-        cabecera = (
-            f"⚔️ **{character}** · {realm} — te han adelantado en "
-            f"{len(suyas)} {plural}"
-        )
-        continuacion = f"⚔️ **{character}** · sigue"
+        cabecera = f"⚔️ {quien} — te han adelantado en {len(suyas)} {plural}"
+        continuacion = f"⚔️ {quien} · sigue"
         presupuesto = MAX_DISCORD_CONTENT - max(len(cabecera), len(continuacion)) - 1
 
         grupos = _repartir([_undercut_line(u) for u in suyas], presupuesto)

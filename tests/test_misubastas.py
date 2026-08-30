@@ -7,6 +7,7 @@ import pytest
 from wowalerts.misubastas import (
     MisSubastasError,
     MyAuction,
+    cuenta_de_ruta,
     extraer_payload,
     fusionar_payloads,
     slugify_realm,
@@ -143,3 +144,21 @@ def test_descarta_entradas_incompletas_sin_romper():
 )
 def test_slug_del_reino(nombre, esperado):
     assert slugify_realm(nombre) == esperado
+
+
+# -- Numero de cuenta de WoW ------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ruta,esperado",
+    [
+        (r"D:\WoW\_retail_\WTF\Account\403840080#2\SavedVariables\W.lua", 2),
+        (r"D:\WoW\_retail_\WTF\Account\403840080#1\SavedVariables\W.lua", 1),
+        ("/wow/WTF/Account/403840080#3/SavedVariables/W.lua", 3),
+        # Una cuenta sin sufijo no dice de cual se trata: mejor no inventarlo.
+        ("/wow/WTF/Account/MICUENTA/SavedVariables/W.lua", None),
+        ("/wow/WTF/Account/RARO#X/SavedVariables/W.lua", None),
+    ],
+)
+def test_cuenta_deducida_de_la_carpeta(ruta, esperado):
+    assert cuenta_de_ruta(ruta) == esperado

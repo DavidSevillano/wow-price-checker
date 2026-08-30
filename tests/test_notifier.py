@@ -215,6 +215,7 @@ def un_undercut(
     oro_rival=8000,
     personaje="Pepe",
     reino="Sanguino",
+    cuenta=2,
     auction_id=1,
 ):
     mine = MyAuction(
@@ -227,6 +228,7 @@ def un_undercut(
         character=personaje,
         realm=reino,
         realm_slug=reino.lower(),
+        account=cuenta,
     )
     return Undercut(
         mine=mine,
@@ -241,10 +243,31 @@ def test_sin_undercuts_no_hay_mensajes():
     assert build_undercut_messages([]) == []
 
 
-def test_la_cabecera_lleva_personaje_y_reino():
+def test_la_cabecera_lleva_personaje_y_cuenta():
     contenido = build_undercut_messages([un_undercut()])[0]["content"]
     assert "Pepe" in contenido
-    assert "Sanguino" in contenido
+    assert "WoW 2" in contenido
+
+
+def test_la_cabecera_no_lleva_el_reino():
+    contenido = build_undercut_messages([un_undercut()])[0]["content"]
+    assert "Sanguino" not in contenido
+
+
+def test_sin_cuenta_conocida_solo_va_el_personaje():
+    contenido = build_undercut_messages([un_undercut(cuenta=None)])[0]["content"]
+    assert "Pepe" in contenido
+    assert "WoW" not in contenido
+
+
+def test_el_mismo_personaje_en_cuentas_distintas_son_mensajes_distintos():
+    mensajes = build_undercut_messages(
+        [
+            un_undercut(personaje="Pepe", cuenta=1, auction_id=1),
+            un_undercut(personaje="Pepe", cuenta=3, auction_id=2),
+        ]
+    )
+    assert len(mensajes) == 2
 
 
 def test_un_mensaje_por_personaje():
