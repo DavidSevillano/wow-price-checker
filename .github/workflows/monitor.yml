@@ -2,12 +2,35 @@ name: WoW Price Monitor
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    # Blizzard regenera los datos de la casa de subastas una vez por hora, y
+    # toda la region EU a la vez: el 2026-08-30 el volcado fue a las 11:31 UTC
+    # y los 30 reinos comprobados compartian esa misma hora exacta.
+    #
+    # Se lanza a y 35 por dos motivos: deja unos minutos de margen tras el
+    # volcado, y evita el minuto en punto, que es el mas congestionado de
+    # GitHub Actions y donde mas se retrasan las ejecuciones programadas.
+    #
+    # Si en los logs ves que la antiguedad del volcado se acerca a 60 minutos,
+    # es que Blizzard ha movido su horario: retrasa este minuto en consecuencia.
+    - cron: '35 * * * *'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Solo mostrar los chollos, sin avisar por Discord'
+        type: boolean
+        default: false
+
+# Si una pasada se alarga, la siguiente espera en vez de solaparse: dos
+# ejecuciones a la vez se pisarian la memoria de avisos.
+concurrency:
+  group: wow-price-monitor
+  cancel-in-progress: false
 
 jobs:
   check-prices:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v4
@@ -15,14 +38,35 @@ jobs:
       - name: Instalar Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
+          cache: pip
 
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Ejecutar bot de precios
+      - name: Recuperar memoria de avisos anteriores
+        uses: actions/cache/restore@v4
+        with:
+          path: .state
+          # La clave lleva el id de ejecucion porque las caches de GitHub son
+          # inmutables: cada pasada guarda una nueva y restore-keys recupera la
+          # mas reciente.
+          key: wow-alerts-state-${{ github.run_id }}
+          restore-keys: |
+            wow-alerts-state-
+
+      - name: Buscar chollos
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
           BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
-        run: python main.py
+        run: python main.py ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Guardar memoria de avisos
+        # Tambien cuando el escaneo va mal: lo ya avisado sigue siendo valido y
+        # no queremos repetirlo en la pasada siguiente.
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .state
+          key: wow-alerts-state-${{ github.run_id }}

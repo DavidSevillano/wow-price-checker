@@ -1,0 +1,247 @@
+"""Envio de avisos a Discord.
+
+La construccion de los embeds es una funcion pura (`build_messages`) para poder
+comprobar el formato en los tests sin enviar nada, y el envio real es una capa
+fina encima.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any, Iterable, Mapping, Sequence
+
+import requests
+
+from .scanner import Deal
+
+log = logging.getLogger(__name__)
+
+# Limites del webhook de Discord.
+MAX_EMBEDS_PER_MESSAGE = 10
+# Tope propio: mas de esto en una pasada es ruido, no una oportunidad.
+MAX_DEALS_PER_RUN = 50
+
+COLOR_UNCONFIRMED = 0x95A5A6  # gris: ilvl sin confirmar
+COLOR_GOOD = 0xE67E22        # naranja: por debajo del umbral
+COLOR_GREAT = 0xF1C40F       # amarillo: bastante por debajo
+COLOR_STEAL = 0x2ECC71       # verde: chollo serio
+COLOR_WARNING = 0xE74C3C     # rojo: aviso de salud del bot
+
+TIME_LEFT_ES = {
+    "SHORT": "menos de 30 min",
+    "MEDIUM": "30 min - 2 h",
+    "LONG": "2 - 12 h",
+    "VERY_LONG": "mas de 12 h",
+}
+
+
+class DiscordError(Exception):
+    """No se ha podido entregar el aviso a Discord."""
+
+
+def format_gold(amount: int) -> str:
+    """120000 -> '120.000' (separador de miles a la espanola)."""
+    return f"{amount:,}".replace(",", ".")
+
+
+def _time_left_label(raw: str) -> str:
+    return TIME_LEFT_ES.get(raw.upper(), raw or "desconocido")
+
+
+def _color_for(deal: Deal) -> int:
+    if not deal.ilvl_confirmed:
+        return COLOR_UNCONFIRMED
+    if deal.discount_pct >= 50:
+        return COLOR_STEAL
+    if deal.discount_pct >= 25:
+        return COLOR_GREAT
+    return COLOR_GOOD
+
+
+def build_embed(deal: Deal, realm_name: str) -> dict[str, Any]:
+    """Tarjeta de Discord para un chollo."""
+    if deal.ilvl_confirmed:
+        ilvl_text = f"ilvl **{deal.ilvl}**"
+    else:
+        ilvl_text = "ilvl **sin confirmar**"
+
+    description = (
+        f"**{format_gold(deal.price_gold)} de oro**  ·  {ilvl_text}\n"
+        f"Un {deal.discount_pct:.0f}% por debajo de tu limite "
+        f"({format_gold(deal.threshold_gold)} de oro)."
+    )
+    if not deal.ilvl_confirmed:
+        description += (
+            "\n\n> No he podido determinar el ilvl de esta subasta, asi que la "
+            "he comparado con tu precio mas bajo para ese objeto. Comprueba el "
+            "ilvl en el juego antes de comprar."
+        )
+
+    fields = [
+        {"name": "Reino", "value": realm_name, "inline": True},
+        {
+            "name": "Tiempo restante",
+            "value": _time_left_label(deal.time_left),
+            "inline": True,
+        },
+    ]
+    if deal.quantity > 1:
+        fields.append(
+            {"name": "Cantidad", "value": str(deal.quantity), "inline": True}
+        )
+
+    return {
+        "title": deal.item_name,
+        # El ancla final no le dice nada a Wowhead, pero hace que cada embed
+        # tenga una url distinta. Discord fusiona en uno solo los embeds de un
+        # mismo mensaje que comparten url (es su galeria de imagenes), y sin
+        # esto varias subastas del mismo objeto se veian como una sola.
+        "url": f"https://www.wowhead.com/item={deal.item_id}#a{deal.auction_id}",
+        "color": _color_for(deal),
+        "description": description,
+        "fields": fields,
+        "footer": {"text": f"Subasta {deal.auction_id} · reino {deal.realm_id}"},
+    }
+
+
+def build_messages(
+    deals: Sequence[Deal], realm_names: Mapping[int, str]
+) -> list[dict[str, Any]]:
+    """Convierte los chollos en mensajes listos para el webhook.
+
+    Se agrupan de diez en diez (el maximo que admite Discord por mensaje) y se
+    recorta a `MAX_DEALS_PER_RUN`, avisando de cuantos se han omitido.
+    """
+    if not deals:
+        return []
+
+    shown = list(deals[:MAX_DEALS_PER_RUN])
+    omitted = len(deals) - len(shown)
+
+    plural = "chollos" if len(shown) != 1 else "chollo"
+    header = f"🚨 **{len(shown)} {plural}** por debajo de tus precios"
+    if omitted:
+        header += f" (y {omitted} mas que no caben en el aviso)"
+
+    messages: list[dict[str, Any]] = []
+    for start in range(0, len(shown), MAX_EMBEDS_PER_MESSAGE):
+        chunk = shown[start : start + MAX_EMBEDS_PER_MESSAGE]
+        message: dict[str, Any] = {
+            "embeds": [
+                build_embed(deal, realm_names.get(deal.realm_id, f"Reino {deal.realm_id}"))
+                for deal in chunk
+            ]
+        }
+        if start == 0:
+            message["content"] = header
+        messages.append(message)
+
+    return messages
+
+
+class DiscordNotifier:
+    """Cliente minimo del webhook de Discord."""
+
+    def __init__(
+        self,
+        webhook_url: str,
+        session: requests.Session | None = None,
+        timeout: int = 15,
+        max_retries: int = 3,
+        sleep: Any = None,
+    ) -> None:
+        if not webhook_url:
+            raise DiscordError(
+                "Falta DISCORD_WEBHOOK_URL.\n"
+                "En Discord: Ajustes del canal > Integraciones > Webhooks > "
+                "Nuevo webhook > Copiar URL. Ponlo en el fichero .env (en local) "
+                "o en los secrets del repositorio (en GitHub Actions)."
+            )
+        self.webhook_url = webhook_url
+        self.session = session or requests.Session()
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self._sleep = sleep if sleep is not None else time.sleep
+
+    def send_deals(self, deals: Sequence[Deal], realm_names: Mapping[int, str]) -> int:
+        """Envia los chollos. Devuelve cuantos mensajes se han entregado."""
+        messages = build_messages(deals, realm_names)
+        for message in messages:
+            self._post(message)
+        return len(messages)
+
+    def send_warning(self, title: str, text: str) -> None:
+        """Aviso sobre el estado del propio bot, no sobre precios."""
+        self._post(
+            {
+                "embeds": [
+                    {"title": f"⚠️ {title}", "description": text, "color": COLOR_WARNING}
+                ]
+            }
+        )
+
+    def send_test(self) -> None:
+        self._post(
+            {
+                "content": "✅ Prueba de conexion",
+                "embeds": [
+                    {
+                        "title": "El vigilante de precios puede escribir aqui",
+                        "description": (
+                            "Si ves este mensaje, el webhook esta bien configurado. "
+                            "Los avisos de chollos llegaran a este canal."
+                        ),
+                        "color": COLOR_STEAL,
+                    }
+                ],
+            }
+        )
+
+    def _post(self, payload: Mapping[str, Any]) -> None:
+        last_error = "motivo desconocido"
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self.session.post(
+                    self.webhook_url, json=payload, timeout=self.timeout
+                )
+            except requests.RequestException as exc:
+                last_error = str(exc)
+            else:
+                if response.status_code in (200, 204):
+                    return
+                if response.status_code == 429:
+                    self._sleep(_discord_retry_after(response))
+                    last_error = "Discord esta limitando los envios (HTTP 429)"
+                    continue
+                if response.status_code in (401, 403, 404):
+                    raise DiscordError(
+                        f"Discord rechaza el webhook (HTTP {response.status_code}). "
+                        "Comprueba que la URL es correcta y que el webhook no se "
+                        "ha borrado."
+                    )
+                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+
+            if attempt < self.max_retries:
+                self._sleep(2**attempt)
+
+        raise DiscordError(f"No he podido enviar el aviso a Discord: {last_error}")
+
+
+def _discord_retry_after(response: requests.Response) -> float:
+    """Segundos que Discord pide esperar tras un 429."""
+    try:
+        value = float(response.json().get("retry_after", 1.0))
+    except (ValueError, AttributeError, requests.exceptions.JSONDecodeError):
+        value = 1.0
+    return min(max(value, 0.5), 60.0)
+
+
+def realm_names_for(deals: Iterable[Deal], lookup) -> dict[int, str]:
+    """Resuelve el nombre de cada reino implicado, una sola vez por reino."""
+    names: dict[int, str] = {}
+    for deal in deals:
+        if deal.realm_id not in names:
+            names[deal.realm_id] = lookup(deal.realm_id)
+    return names

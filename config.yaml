@@ -1,0 +1,143 @@
+# ============================================================================
+#  Configuracion del vigilante de precios de la Casa de Subastas
+# ----------------------------------------------------------------------------
+#  Edita SOLO este fichero para cambiar objetos y precios. No hace falta tocar
+#  el codigo Python. Si escribes algo mal, el script te lo dira al arrancar
+#  en vez de fallar a medias.
+# ============================================================================
+
+# Region de la API de Blizzard: eu, us, kr o tw.
+region: eu
+
+# ----------------------------------------------------------------------------
+#  OBJETOS QUE VIGILAR
+# ----------------------------------------------------------------------------
+#  Cada objeto tiene su propia tabla "ilvl -> precio maximo EN ORO".
+#  Solo se avisa de los ilvl que aparezcan aqui: si una subasta es de un ilvl
+#  que no has listado, se ignora aunque sea baratisima.
+#
+#  Opcionalmente puedes fijar "item_id" para saltarte la busqueda por nombre
+#  (mas rapido y a prueba de cambios de nombre). Lo veras en el log la primera
+#  vez que se ejecute, y tambien en la URL de Wowhead del objeto.
+# ----------------------------------------------------------------------------
+items:
+  - name: "Greaves of the Noxious Depths"
+    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+
+  - name: "Temple Delver's Mystic Helm"
+    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+
+  - name: "Slitherscale Girdle"
+    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+
+  - name: "Slippers of the Hissing Cult"
+    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+
+  - name: "Pauldrons of the Forgotten Sacrifice"
+    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+
+  - name: "Venom Rite Mantle"
+    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+
+  - name: "Crushing Coiler Coif"
+    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+
+  - name: "Fanged Brute's Greatbelt"
+    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+
+  - name: "Bound Serpent's Jade Eye"
+    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+
+# ----------------------------------------------------------------------------
+#  MAPA DE BONUS ID -> ILVL
+# ----------------------------------------------------------------------------
+#  Blizzard no dice el ilvl de una subasta directamente: lo codifica en una
+#  lista de "bonus ids". Esta tabla los traduce. Es la fuente mas fiable, asi
+#  que se consulta la primera.
+#
+#  Cada gama de mejora (Adventurer / Veteran / Champion / Hero / Myth) ocupa un
+#  bloque de 8 ids consecutivos: los 6 escalones que se ven en el juego mas 2
+#  escalones extra por encima. Ojo: gamas distintas se solapan en ilvl. Por
+#  ejemplo el 311 se alcanza tanto por Champion 7/8 (12839) como por Hero 3/6
+#  (12843), y ambos son igual de buenos.
+#
+#  Tabla comprobada contra los datos de tooltip de Wowhead, verificando ademas
+#  que el mismo bonus id da el mismo ilvl en objetos de ranuras distintas.
+#
+#  Si dejas de recibir alertas, lo mas probable es que Blizzard haya cambiado
+#  estos ids en un parche. Ejecuta:
+#      .venv\Scripts\python.exe main.py --dry-run --realms 1305 -v
+#  y mira en el log los "bonus" de los objetos vistos para actualizar la tabla.
+# ----------------------------------------------------------------------------
+bonus_ilvl_map:
+  # Adventurer (1/6 .. 6/6, mas 2 escalones extra)
+  12817: 266
+  12818: 269
+  12819: 272
+  12820: 276
+  12821: 279
+  12822: 282
+  12823: 285
+  12824: 289
+  # Veteran
+  12825: 279
+  12826: 282
+  12827: 285
+  12828: 289
+  12829: 292
+  12830: 295
+  12831: 298
+  12832: 302
+  # Champion
+  12833: 292
+  12834: 295
+  12835: 298
+  12836: 302
+  12837: 305
+  12838: 308
+  12839: 311
+  12840: 315
+  # Hero
+  12841: 305
+  12842: 308
+  12843: 311
+  12844: 315
+  12845: 318
+  12846: 321
+  12847: 324
+  12848: 328
+  # Myth
+  12849: 318
+  12850: 321
+  12851: 324
+  12852: 328
+  12853: 331
+  12854: 334
+  12855: 337
+  12856: 340
+
+# ----------------------------------------------------------------------------
+#  AJUSTES (los valores por defecto van bien; toca solo si sabes lo que haces)
+# ----------------------------------------------------------------------------
+settings:
+  # Si no se puede determinar el ilvl de una subasta, avisar igualmente cuando
+  # el precio este por debajo del umbral MAS BARATO de ese objeto. La alerta
+  # sale marcada como "ilvl sin confirmar".
+  alert_on_unconfirmed_ilvl: true
+
+  # Reinos escaneados a la vez. No lo subas a lo loco: cada reino en vuelo
+  # mantiene en memoria toda su lista de subastas ya procesada, y en un reino
+  # grande eso son cientos de MB. Con 8 el escaneo completo de EU tarda unos
+  # pocos minutos, que es de sobra para un cron cada hora.
+  max_workers: 8
+
+  # Segundos de espera por peticion. Las subastas de un reino grande tardan.
+  request_timeout: 45
+
+  # Cuantas ejecuciones se recuerda una subasta ya avisada antes de olvidarla.
+  # 72 = 3 dias con el cron cada hora, mas que la duracion maxima de una subasta.
+  state_retention_runs: 72
+
+  # Si falla mas de esta fraccion de reinos, el proceso termina con error y te
+  # avisa por Discord (para que no te quedes sin alertas sin enterarte).
+  failure_ratio_threshold: 0.30
