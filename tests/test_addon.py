@@ -43,10 +43,13 @@ function GetDetailedItemLevelInfo() return ILVL end
 
 SlashCmdList = {}
 
+C_Timer = { After = function(_, fn) fn() end }
+
 C_AuctionHouse = {
     GetNumOwnedAuctions = function() return #SUBASTAS end,
     GetOwnedAuctionInfo = function(i) return SUBASTAS[i] end,
-    QueryOwnedAuctions = function() end,
+    -- En el juego la consulta es asincrona y su respuesta dispara el evento.
+    QueryOwnedAuctions = function() DISPARAR("OWNED_AUCTIONS_UPDATED") end,
 }
 
 function DISPARAR(evento, arg1) eventos.OnEvent(nil, evento, arg1) end
@@ -207,3 +210,43 @@ def test_el_comando_sin_poder_leer_dice_lo_que_conserva():
     mensajes = " ".join(lua.globals().mensajes.values())
     assert "conservo las 2" in mensajes
     assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
+
+
+def test_postear_sin_cerrar_la_casa_actualiza():
+    """Antes habia que cerrar y volver a abrir la casa de subastas: el addon
+    solo miraba al abrirla, asi que se quedaba con la foto de ese momento."""
+    lua = runtime(subastas=[subasta()])
+    recoger(lua)
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 1
+
+    lua.globals().SUBASTAS = lua.table_from([subasta(), subasta(auction_id=2)])
+    lua.globals().DISPARAR("AUCTION_HOUSE_AUCTION_CREATED")
+
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
+
+
+def test_cancelar_sin_cerrar_la_casa_actualiza():
+    lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
+    recoger(lua)
+
+    lua.globals().SUBASTAS = lua.table_from([subasta(auction_id=2)])
+    lua.globals().DISPARAR("AUCTION_CANCELED")
+
+    subastas = volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]
+    assert [s["auctionID"] for s in subastas] == [2]
+
+
+def test_una_tanda_de_posteos_no_dispara_una_consulta_por_cada_uno():
+    lua = runtime(subastas=[subasta()])
+    # El temporizador deja de ejecutar al momento: se cuenta cuantos se piden,
+    # que es lo que mide si las peticiones seguidas se agrupan.
+    lua.execute("""
+        PENDIENTES = 0
+        C_Timer = { After = function() PENDIENTES = PENDIENTES + 1 end }
+    """)
+
+    for _ in range(5):
+        lua.globals().DISPARAR("AUCTION_HOUSE_AUCTION_CREATED")
+
+    # Cinco posteos seguidos, un unico temporizador pendiente.
+    assert lua.globals().PENDIENTES == 1

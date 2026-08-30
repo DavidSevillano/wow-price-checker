@@ -157,6 +157,22 @@ local function pedirSubastas()
     pcall(C_AuctionHouse.QueryOwnedAuctions, {})
 end
 
+-- Igual, pero agrupando las peticiones seguidas en una sola. Al postear una
+-- tanda de veinte objetos llegan veinte eventos, y la casa de subastas limita
+-- cuantas consultas admite seguidas.
+local refrescoPendiente = false
+
+local function pedirSubastasPronto()
+    if refrescoPendiente then
+        return
+    end
+    refrescoPendiente = true
+    C_Timer.After(2, function()
+        refrescoPendiente = false
+        pedirSubastas()
+    end)
+end
+
 
 local function claveDePersonaje()
     local nombre = UnitName("player")
@@ -219,6 +235,10 @@ local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("AUCTION_HOUSE_SHOW")
 frame:RegisterEvent("OWNED_AUCTIONS_UPDATED")
+-- Postear o cancelar cambia tus subastas sin cerrar la casa. Sin estos dos, el
+-- addon se quedaba con la foto de cuando la abriste.
+frame:RegisterEvent("AUCTION_HOUSE_AUCTION_CREATED")
+frame:RegisterEvent("AUCTION_CANCELED")
 
 frame:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" then
@@ -227,6 +247,8 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         end
     elseif event == "AUCTION_HOUSE_SHOW" then
         pedirSubastas()
+    elseif event == "AUCTION_HOUSE_AUCTION_CREATED" or event == "AUCTION_CANCELED" then
+        pedirSubastasPronto()
     elseif event == "OWNED_AUCTIONS_UPDATED" then
         local cuantas = guardar()
         if cuantas then
