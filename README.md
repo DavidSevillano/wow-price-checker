@@ -127,6 +127,26 @@ que no ensucia el repositorio con commits.
 
 ---
 
+## 3.1 Saber si esta corriendo de verdad
+
+Cuando no llega ningun aviso a Discord hay dos explicaciones muy distintas: que
+no haya chollos, o que la pasada no se haya ejecutado. Para distinguirlas:
+
+```bash
+.venv\Scripts\python.exe estado.py
+```
+
+Lista las ejecuciones programadas de las ultimas 24 horas, marca las que
+faltan, y dice cuanto se retraso cada una respecto al minuto del cron. Con
+`--detalle` descarga ademas el log de cada pasada y resume que encontro (mas
+lento). Necesita el cliente `gh` autenticado.
+
+Para revisar una sola ejecucion a fondo, la pestana Actions del repositorio, o:
+
+```bash
+gh run list --workflow="WoW Price Monitor" --limit 10
+```
+
 ## 4. Opciones de la linea de comandos
 
 | Opcion | Para que sirve |
@@ -149,6 +169,7 @@ Codigos de salida: `0` todo bien · `1` error de configuracion o credenciales ·
 ```
 config.yaml            Lo unico que editas normalmente
 main.py                Linea de comandos y orquestacion
+estado.py              Comprueba si Actions esta ejecutando el cron
 wowalerts/
   config.py            Carga y validacion del config
   blizzard.py          API de Blizzard: OAuth, reintentos, endpoints
@@ -157,7 +178,7 @@ wowalerts/
   scanner.py           Que cuenta como chollo (logica pura)
   state.py             Memoria entre ejecuciones
   notifier.py          Embeds y envio a Discord
-tests/                 104 tests, sin tocar la red
+tests/                 123 tests, sin tocar la red
 ```
 
 Para pasar los tests:
