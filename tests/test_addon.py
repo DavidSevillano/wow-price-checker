@@ -291,26 +291,37 @@ def test_el_comando_no_cuenta_antes_de_que_llegue_la_respuesta():
     assert "no puedo leer nada" not in mensajes
 
 
-def test_avisa_aunque_la_primera_lectura_llegue_vacia():
-    """Al abrir la casa de subastas el evento llega varias veces, la primera
-    con la lista todavia vacia. El mensaje no puede depender de esa."""
+def test_al_abrir_la_casa_sale_un_mensaje():
     lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
-    recoger(lua)
-    lua.globals().mensajes = lua.table_from([])
-
-    # Llega una pasada vacia, como hace el juego al abrir la casa.
-    lua.globals().SUBASTAS = lua.table_from([])
-    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    lua.globals().DISPARAR("AUCTION_HOUSE_SHOW")
 
     mensajes = " ".join(lua.globals().mensajes.values())
     assert "2 subasta(s) tuyas registradas" in mensajes
 
 
-def test_varias_pasadas_seguidas_dan_un_solo_mensaje():
+def test_al_cerrar_la_casa_sale_un_mensaje_con_lo_guardado():
+    lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
+    recoger(lua)
+    lua.globals().mensajes = lua.table_from([])
+
+    # Con la casa cerrada el juego ya no devuelve nada, pero lo guardado sigue.
+    lua.globals().SUBASTAS = lua.table_from([])
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+
+    mensajes = " ".join(lua.globals().mensajes.values())
+    assert "2 subasta(s) tuyas registradas" in mensajes
+
+
+def test_postear_y_cancelar_no_llena_el_chat():
+    """El resumen es solo al abrir y al cerrar: mientras trabajas, silencio."""
     lua = runtime(subastas=[subasta()])
-    lua.execute("PENDIENTES = 0; C_Timer = { After = function() PENDIENTES = PENDIENTES + 1 end }")
+    recoger(lua)
+    lua.globals().mensajes = lua.table_from([])
 
-    for _ in range(4):
-        lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    for i in range(2, 12):
+        lua.globals().SUBASTAS = lua.table_from([subasta(auction_id=j) for j in range(1, i + 1)])
+        lua.globals().DISPARAR("AUCTION_HOUSE_AUCTION_CREATED")
 
-    assert lua.globals().PENDIENTES == 1
+    assert " ".join(lua.globals().mensajes.values()) == ""
+    # Pero si que se ha ido guardando por el camino.
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 11

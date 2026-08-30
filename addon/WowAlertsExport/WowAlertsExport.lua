@@ -7,7 +7,7 @@
 
 local FORMAT_VERSION = 1
 -- Version del addon, para saber que codigo se esta ejecutando de verdad.
-local ADDON_VERSION = "1.4"
+local ADDON_VERSION = "1.5"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 
@@ -248,10 +248,16 @@ local function avisarSiFaltaVolcar()
     )
 end
 
--- El resumen no lo imprime quien guarda, sino un temporizador corto: al abrir
--- la casa de subastas el evento llega varias veces, la primera con la lista
--- todavia vacia. Esperar un momento y contar una sola vez lo que hay guardado
--- da un mensaje fiable, en vez de ninguno o tres seguidos.
+-- El resumen sale al abrir y al cerrar la casa de subastas, y en ningun otro
+-- momento: mientras posteas o cancelas el addon se actualiza en silencio. Dos
+-- mensajes por visita, no uno por cada cosa que hagas.
+local function resumir()
+    print(("|cffffd200WoW Alerts:|r %d subasta(s) tuyas registradas."):format(guardadas()))
+    avisarSiFaltaVolcar()
+end
+
+-- Al abrir hay que esperar un momento: el evento de apertura llega antes que
+-- los datos, y la primera lectura viene vacia.
 local resumenPendiente = false
 
 local function resumirPronto()
@@ -261,8 +267,7 @@ local function resumirPronto()
     resumenPendiente = true
     C_Timer.After(1, function()
         resumenPendiente = false
-        print(("|cffffd200WoW Alerts:|r %d subasta(s) tuyas registradas."):format(guardadas()))
-        avisarSiFaltaVolcar()
+        resumir()
     end)
 end
 
@@ -275,6 +280,7 @@ end
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("AUCTION_HOUSE_SHOW")
+frame:RegisterEvent("AUCTION_HOUSE_CLOSED")
 frame:RegisterEvent("OWNED_AUCTIONS_UPDATED")
 -- Postear o cancelar cambia tus subastas sin cerrar la casa. Sin estos dos, el
 -- addon se quedaba con la foto de cuando la abriste.
@@ -288,11 +294,14 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         end
     elseif event == "AUCTION_HOUSE_SHOW" then
         pedirSubastas()
+        resumirPronto()
+    elseif event == "AUCTION_HOUSE_CLOSED" then
+        -- Al cerrar ya esta todo guardado, asi que se cuenta sin esperar.
+        resumir()
     elseif event == "AUCTION_HOUSE_AUCTION_CREATED" or event == "AUCTION_CANCELED" then
         pedirSubastasPronto()
     elseif event == "OWNED_AUCTIONS_UPDATED" then
         guardar()
-        resumirPronto()
     end
 end)
 
