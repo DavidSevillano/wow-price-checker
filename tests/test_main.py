@@ -6,6 +6,7 @@ nada a Discord de verdad.
 
 import json
 import logging
+from datetime import datetime, timezone
 
 import pytest
 
@@ -287,3 +288,164 @@ def test_el_estado_guardado_es_legible(entorno, tmp_path):
 
     estado = json.loads((tmp_path / "estado" / "notified.json").read_text(encoding="utf-8"))
     assert estado["auctions"] == {"1305:1": 1}
+
+
+# ---------------------------------------------------------------------------
+#  Reintento cuando Blizzard publica el volcado tarde
+# ---------------------------------------------------------------------------
+#
+#  El cron dispara a y 33 porque el volcado sale a y 31. Si Blizzard se
+#  retrasa, la pasada se encuentra los datos de la hora anterior y, sin
+#  reintento, no habria otra oportunidad hasta la hora siguiente.
+
+AHORA = datetime(2026, 8, 30, 12, 33, tzinfo=timezone.utc)
+VOLCADO_VIEJO = {"Last-Modified": "Sun, 30 Aug 2026 11:31:16 GMT"}
+VOLCADO_NUEVO = {"Last-Modified": "Sun, 30 Aug 2026 12:31:16 GMT"}
+
+
+@pytest.fixture
+def reloj_parado(monkeypatch):
+    """Congela el reloj a y 33, que es cuando corre el cron de verdad."""
+
+    class Reloj(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return AHORA
+
+    monkeypatch.setattr(cli, "datetime", Reloj)
+
+
+@pytest.fixture
+def esperas(monkeypatch):
+    """Recoge las esperas en vez de dormirlas."""
+    dormido = []
+    monkeypatch.setattr("time.sleep", lambda s: dormido.append(s))
+    return dormido
+
+
+def escaneos(requests_mock):
+    return [r for r in requests_mock.request_history if r.path.endswith("/auctions")]
+
+
+def con_ajustes(entorno, tmp_path, extra):
+    """Reescribe el config con opciones adicionales dentro de 'settings'."""
+    path = tmp_path / "config-ajustado.yaml"
+    path.write_text(CONFIG + extra, encoding="utf-8")
+    entorno["config"] = str(path)
+    return entorno
+
+
+def test_si_el_volcado_va_tarde_se_espera_y_se_vuelve_a_mirar(
+    entorno, reloj_parado, esperas
+):
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        [
+            {"json": {"auctions": []}, "headers": VOLCADO_VIEJO},
+            {
+                "json": {"auctions": [subasta(1, 45_000 * 10_000)]},
+                "headers": VOLCADO_NUEVO,
+            },
+        ],
+    )
+
+    assert ejecutar(entorno) == 0
+
+    assert len(escaneos(entorno["mock"])) == 2
+    assert esperas == [120]
+    embed = mensajes_discord(entorno["mock"])[0]["embeds"][0]
+    assert embed["title"] == "Greaves of the Noxious Depths"
+
+
+def test_un_chollo_visto_solo_en_el_primer_intento_se_envia_igual(
+    entorno, reloj_parado, esperas
+):
+    """La garantia que importa: reintentar no puede tragarse un aviso."""
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        [
+            {
+                "json": {"auctions": [subasta(1, 45_000 * 10_000)]},
+                "headers": VOLCADO_VIEJO,
+            },
+            {"json": {"auctions": []}, "headers": VOLCADO_NUEVO},
+        ],
+    )
+
+    ejecutar(entorno)
+
+    # Hubo segundo intento y ya no traia el chollo: el aviso salio del primero.
+    assert len(escaneos(entorno["mock"])) == 2
+    embeds = [e for m in mensajes_discord(entorno["mock"]) for e in m["embeds"]]
+    assert len(embeds) == 1
+    assert embeds[0]["title"] == "Greaves of the Noxious Depths"
+
+
+def test_no_se_avisa_dos_veces_del_mismo_chollo_entre_intentos(
+    entorno, reloj_parado, esperas
+):
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        [
+            {
+                "json": {"auctions": [subasta(1, 45_000 * 10_000)]},
+                "headers": VOLCADO_VIEJO,
+            },
+            {
+                "json": {"auctions": [subasta(1, 45_000 * 10_000)]},
+                "headers": VOLCADO_NUEVO,
+            },
+        ],
+    )
+
+    ejecutar(entorno)
+
+    embeds = [e for m in mensajes_discord(entorno["mock"]) for e in m["embeds"]]
+    assert len(embeds) == 1
+
+
+def test_se_deja_de_reintentar_al_agotar_los_intentos(
+    entorno, reloj_parado, esperas, caplog
+):
+    caplog.set_level(logging.WARNING)
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": []},
+        headers=VOLCADO_VIEJO,
+    )
+
+    assert ejecutar(entorno) == 0
+
+    # El primer escaneo mas los dos reintentos que trae por defecto.
+    assert len(escaneos(entorno["mock"])) == 3
+    assert esperas == [120, 120]
+    assert "ya no quedan" in caplog.text
+
+
+def test_los_reintentos_se_pueden_desactivar(
+    entorno, reloj_parado, esperas, tmp_path
+):
+    con_ajustes(entorno, tmp_path, "  stale_retries: 0\n")
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": []},
+        headers=VOLCADO_VIEJO,
+    )
+
+    ejecutar(entorno)
+
+    assert len(escaneos(entorno["mock"])) == 1
+    assert esperas == []
+
+
+def test_un_volcado_al_dia_no_provoca_ninguna_espera(entorno, reloj_parado, esperas):
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": []},
+        headers=VOLCADO_NUEVO,
+    )
+
+    ejecutar(entorno)
+
+    assert len(escaneos(entorno["mock"])) == 1
+    assert esperas == []

@@ -141,3 +141,26 @@ settings:
   # Si falla mas de esta fraccion de reinos, el proceso termina con error y te
   # avisa por Discord (para que no te quedes sin alertas sin enterarte).
   failure_ratio_threshold: 0.30
+
+  # --------------------------------------------------------------------------
+  #  Cuando Blizzard publica el volcado tarde
+  # --------------------------------------------------------------------------
+  #  La casa de subastas se regenera una vez por hora, hacia el minuto 31, y el
+  #  cron dispara a y 33. Si algun dia Blizzard se retrasa, la pasada se
+  #  encontraria los datos de la hora anterior --ya vistos, sin nada nuevo-- y
+  #  no habria otra oportunidad hasta la hora siguiente. En ese caso se espera
+  #  y se vuelve a mirar.
+  #
+  #  Cada intento avisa por su cuenta, asi que un chollo que solo aparezca en
+  #  el primero se envia igual.
+
+  # Minuto en el que Blizzard publica el volcado. Si el log de las pasadas
+  # empieza a cantar antiguedades raras, es que lo han movido: cambialo aqui.
+  dump_minute: 31
+
+  # Cuantas veces reintentar si el volcado de esta hora aun no ha salido.
+  # 0 lo desactiva y la pasada se conforma con lo que haya.
+  stale_retries: 2
+
+  # Cuanto esperar entre intentos.
+  stale_retry_wait_seconds: 120

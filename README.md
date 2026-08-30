@@ -179,6 +179,28 @@ del workflow no coinciden.
 El minuto 33 sale de que Blizzard regenera los datos a y 31 y el disparo es
 inmediato: dos minutos de margen bastan.
 
+### Si Blizzard llega tarde
+
+Dos minutos son suficientes casi siempre, pero no son garantia. Si al escanear
+resulta que el volcado de esta hora todavia no ha salido, la pasada **espera
+dos minutos y vuelve a mirar**, hasta dos veces, en vez de perder la hora
+entera. Lo veras en el log:
+
+```
+⏳ Blizzard aun no ha publicado el volcado de las 13:31 UTC: lo leido es de la
+   hora anterior. Espero 120 s y vuelvo a mirar (quedan 2 intento(s)).
+```
+
+Cada intento envia sus propios avisos, asi que un chollo que solo aparezca en
+el primero se manda igual: reintentar nunca se traga una alerta.
+
+La comparacion se hace contra el horario de Blizzard, no contra una antiguedad
+fija. Por eso una pasada lanzada a mano a y 58 no reintenta: su volcado de y 31
+tiene 27 minutos, pero es el ultimo que existe.
+
+Se ajusta en `config.yaml` con `dump_minute`, `stale_retries` y
+`stale_retry_wait_seconds`. Con `stale_retries: 0` se desactiva.
+
 ## 3.2 Saber si esta corriendo de verdad
 
 Cuando no llega ningun aviso a Discord hay dos explicaciones muy distintas: que
@@ -230,7 +252,8 @@ wowalerts/
   scanner.py           Que cuenta como chollo (logica pura)
   state.py             Memoria entre ejecuciones
   notifier.py          Embeds y envio a Discord
-tests/                 130 tests, sin tocar la red
+  snapshot.py          Si el volcado leido es el de esta hora
+tests/                 153 tests, sin tocar la red
 ```
 
 Para pasar los tests:

@@ -128,3 +128,32 @@ def test_el_config_del_repositorio_es_valido():
     config = load_config("config.yaml")
     assert config.items
     assert config.bonus_ilvl_map
+
+
+def test_valores_por_defecto_del_reintento_por_volcado_viejo(tmp_path):
+    settings = load_config(write(tmp_path, VALID)).settings
+
+    assert settings.dump_minute == 31
+    assert settings.stale_retries == 2
+    assert settings.stale_retry_wait_seconds == 120
+
+
+def test_se_puede_desactivar_el_reintento(tmp_path):
+    text = VALID + "  stale_retries: 0\n"
+
+    assert load_config(write(tmp_path, text)).settings.stale_retries == 0
+
+
+def test_dump_minute_fuera_de_rango(tmp_path):
+    with pytest.raises(ConfigError, match="entre 0 y 59"):
+        load_config(write(tmp_path, VALID + "  dump_minute: 60\n"))
+
+
+def test_stale_retries_negativo(tmp_path):
+    with pytest.raises(ConfigError, match="no puede ser negativo"):
+        load_config(write(tmp_path, VALID + "  stale_retries: -1\n"))
+
+
+def test_espera_entre_reintentos_demasiado_corta(tmp_path):
+    with pytest.raises(ConfigError, match="al menos 1 segundo"):
+        load_config(write(tmp_path, VALID + "  stale_retry_wait_seconds: 0\n"))

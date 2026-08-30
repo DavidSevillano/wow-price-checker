@@ -33,6 +33,7 @@ from wowalerts.notifier import (
     realm_names_for,
 )
 from wowalerts.scanner import scan_realms
+from wowalerts.snapshot import dump_is_stale, expected_dump_at
 from wowalerts.state import ItemIconCache, ItemIdCache, NotifiedAuctions
 
 log = logging.getLogger("wowalerts")
@@ -204,6 +205,82 @@ def run(args: argparse.Namespace) -> int:
         realm_ids = client.connected_realm_ids()
         log.info("🚀 Escaneando los %s reinos de %s...", len(realm_ids), config.region.upper())
 
+    settings = config.settings
+    intentos = settings.stale_retries
+
+    while True:
+        result = scan_once(
+            client,
+            config,
+            realm_ids,
+            rules_by_item_id,
+            notified,
+            icon_cache,
+            notifier,
+            dry_run=args.dry_run,
+            ignore_state=args.ignore_state,
+        )
+
+        ahora = datetime.now(timezone.utc)
+        if not dump_is_stale(result.snapshot_at, ahora, settings.dump_minute):
+            break
+
+        toca = expected_dump_at(ahora, settings.dump_minute).strftime("%H:%M")
+        if intentos < 1:
+            log.warning(
+                "⚠️  El volcado de las %s UTC sigue sin aparecer y ya no quedan "
+                "reintentos. Lo recogera la pasada de la hora siguiente.",
+                toca,
+            )
+            break
+
+        log.warning(
+            "⏳ Blizzard aun no ha publicado el volcado de las %s UTC: lo leido "
+            "es de la hora anterior. Espero %s s y vuelvo a mirar (quedan %s "
+            "intento(s)).",
+            toca,
+            settings.stale_retry_wait_seconds,
+            intentos,
+        )
+        intentos -= 1
+        time.sleep(settings.stale_retry_wait_seconds)
+
+    if result.failure_ratio > settings.failure_ratio_threshold:
+        message = (
+            f"Han fallado {len(result.realms_failed)} de {result.realms_total} reinos "
+            f"en esta pasada. Los resultados estan incompletos: puede haber chollos "
+            f"que no hayas visto."
+        )
+        log.error("❌ %s", message)
+        if notifier and not args.dry_run:
+            try:
+                notifier.send_warning("Escaneo incompleto", message)
+            except DiscordError as exc:
+                log.error("Ademas, no he podido avisar por Discord: %s", exc)
+        return EXIT_TOO_MANY_FAILURES
+
+    return EXIT_OK
+
+
+def scan_once(
+    client,
+    config,
+    realm_ids,
+    rules_by_item_id,
+    notified,
+    icon_cache,
+    notifier,
+    *,
+    dry_run: bool,
+    ignore_state: bool,
+):
+    """Una lectura completa de la region, con sus avisos ya enviados.
+
+    Se ejecuta mas de una vez cuando el volcado de Blizzard llega tarde. Cada
+    intento avisa por su cuenta y marca lo enviado, de modo que un chollo visto
+    solo en el primer intento no se pierde aunque en el segundo ya no aparezca:
+    para entonces lo habran comprado, pero el aviso salio a tiempo.
+    """
     started = time.monotonic()
     result = scan_realms(client, config, realm_ids, rules_by_item_id)
     elapsed = time.monotonic() - started
@@ -234,7 +311,7 @@ def run(args: argparse.Namespace) -> int:
             ", ".join(str(r) for r in sorted(result.realms_failed)[:20]),
         )
 
-    fresh = result.deals if args.ignore_state else notified.filter_new(result.deals)
+    fresh = result.deals if ignore_state else notified.filter_new(result.deals)
     repeats = len(result.deals) - len(fresh)
     if repeats:
         log.info("🔁 %s chollo(s) ya avisados anteriormente, omitidos.", repeats)
@@ -244,7 +321,7 @@ def run(args: argparse.Namespace) -> int:
         log.info("🎉 %s chollo(s) nuevos:", len(fresh))
         print_deals(fresh, realm_names)
 
-        if args.dry_run:
+        if dry_run:
             log.info("🧪 --dry-run: no envio nada a Discord ni guardo el estado.")
         else:
             icon_urls = resolve_icons(client, icon_cache, fresh)
@@ -269,24 +346,12 @@ def run(args: argparse.Namespace) -> int:
     else:
         log.info("😴 Ningun chollo nuevo esta vez.")
 
-    if not args.dry_run:
+    if not dry_run:
+        # Se guarda en cada intento, no al final: si la pasada muriera durante
+        # la espera, lo ya avisado seguiria constando y no se repetiria.
         notified.save()
 
-    if result.failure_ratio > config.settings.failure_ratio_threshold:
-        message = (
-            f"Han fallado {len(result.realms_failed)} de {result.realms_total} reinos "
-            f"en esta pasada. Los resultados estan incompletos: puede haber chollos "
-            f"que no hayas visto."
-        )
-        log.error("❌ %s", message)
-        if notifier and not args.dry_run:
-            try:
-                notifier.send_warning("Escaneo incompleto", message)
-            except DiscordError as exc:
-                log.error("Ademas, no he podido avisar por Discord: %s", exc)
-        return EXIT_TOO_MANY_FAILURES
-
-    return EXIT_OK
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
