@@ -26,15 +26,24 @@ from dotenv import load_dotenv
 from wowalerts.blizzard import BlizzardAuthError, BlizzardClient, BlizzardError
 from wowalerts.config import ConfigError, load_config
 from wowalerts.items import ItemResolutionError, resolve_item_ids
+from wowalerts.misubastas import MisSubastasError, leer_snapshot
 from wowalerts.notifier import (
     DiscordError,
     DiscordNotifier,
     format_gold,
     realm_names_for,
 )
+from wowalerts.realms import RealmResolutionError, resolve_connected_realms
 from wowalerts.scanner import scan_realms
 from wowalerts.snapshot import dump_is_stale, expected_dump_at
-from wowalerts.state import ItemIconCache, ItemIdCache, NotifiedAuctions
+from wowalerts.state import (
+    ItemIconCache,
+    ItemIdCache,
+    NotifiedAuctions,
+    NotifiedUndercuts,
+    RealmIdCache,
+)
+from wowalerts.undercut import find_undercuts
 
 log = logging.getLogger("wowalerts")
 
@@ -87,6 +96,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--ignore-state",
         action="store_true",
         help="Avisa tambien de chollos ya notificados en pasadas anteriores.",
+    )
+    parser.add_argument(
+        "--undercut",
+        action="store_true",
+        help="En vez de buscar chollos, avisa si alguien ha adelantado a tus "
+        "propias subastas de los objetos vigilados. Necesita mis_subastas.json, "
+        "que genera sync_subastas.py en tu PC.",
+    )
+    parser.add_argument(
+        "--mis-subastas",
+        default="mis_subastas.json",
+        help="Ruta del volcado de tus subastas (por defecto: mis_subastas.json).",
     )
     parser.add_argument(
         "-v",
@@ -154,6 +175,143 @@ def resolve_icons(client, cache, deals) -> dict[int, str]:
     return urls
 
 
+def agrupar_por_reino(mis_subastas, realm_ids_por_slug) -> dict[int, list]:
+    """Agrupa tus subastas por connected realm.
+
+    Varios reinos comparten connected realm, asi que agrupar por ahi y no por
+    nombre evita descargar dos veces el mismo volcado.
+    """
+    grupos: dict[int, list] = {}
+    for subasta in mis_subastas:
+        realm_id = realm_ids_por_slug.get(subasta.realm_slug)
+        if realm_id is None:
+            log.warning(
+                "Omito las subastas de %s: no se a que reino conectado pertenece.",
+                subasta.realm,
+            )
+            continue
+        grupos.setdefault(realm_id, []).append(subasta)
+    return grupos
+
+
+def run_undercut(
+    client,
+    config,
+    rules_by_item_id,
+    notifier,
+    state_dir: Path,
+    mis_subastas_path: str,
+    *,
+    dry_run: bool,
+    ignore_state: bool,
+) -> int:
+    """Una pasada de vigilancia sobre tus propias subastas."""
+    todas = leer_snapshot(mis_subastas_path)
+    # Solo interesan los objetos que vigila config.yaml: el resto de lo que
+    # tengas puesto (monturas, mochilas, decoracion) no es el negocio.
+    mis_subastas = [s for s in todas if s.item_id in rules_by_item_id]
+
+    if not mis_subastas:
+        log.info(
+            "😴 De tus %s subasta(s) conocidas, ninguna es de un objeto vigilado. "
+            "Nada que comprobar.",
+            len(todas),
+        )
+        return EXIT_OK
+
+    log.info(
+        "📋 %s de tus %s subastas son de objetos vigilados, en %s reino(s).",
+        len(mis_subastas),
+        len(todas),
+        len({s.realm_slug for s in mis_subastas}),
+    )
+
+    realm_cache = RealmIdCache(state_dir / "realm_ids.json")
+    realm_ids_por_slug = resolve_connected_realms(
+        client, realm_cache, (s.realm_slug for s in mis_subastas), strict=False
+    )
+    if not dry_run:
+        realm_cache.save()
+
+    grupos = agrupar_por_reino(mis_subastas, realm_ids_por_slug)
+    if not grupos:
+        raise RealmResolutionError(
+            "No he podido resolver ninguno de tus reinos. Sin eso no puedo "
+            "descargar sus subastas."
+        )
+
+    notified = NotifiedUndercuts(
+        state_dir / "undercuts.json", config.settings.state_retention_runs
+    )
+    icon_cache = ItemIconCache(state_dir / "item_icons.json")
+
+    todos: list = []
+    snapshot_at = None
+    for realm_id, mias in grupos.items():
+        try:
+            snapshot = client.auctions(realm_id)
+        except BlizzardError as exc:
+            log.warning("Reino %s: %s", realm_id, exc)
+            continue
+        if snapshot.taken_at and (snapshot_at is None or snapshot.taken_at > snapshot_at):
+            snapshot_at = snapshot.taken_at
+        todos.extend(
+            find_undercuts(snapshot.auctions, mias, config.bonus_ilvl_map, realm_id)
+        )
+
+    frescos = todos if ignore_state else notified.filter_new(todos)
+    repetidos = len(todos) - len(frescos)
+    if repetidos:
+        log.info("🔁 %s undercut(s) ya avisados, omitidos.", repetidos)
+
+    if not frescos:
+        log.info("😌 Nadie nuevo te ha adelantado.")
+        if not dry_run:
+            notified.save()
+        return EXIT_OK
+
+    log.info("⚔️ Te han adelantado en %s subasta(s):", len(frescos))
+    for undercut in frescos:
+        log.info(
+            "  %s | tuya %s g vs %s g | ilvl %s | %s en %s",
+            undercut.mine.item_name,
+            format_gold(undercut.my_price_gold),
+            format_gold(undercut.rival_price_gold),
+            undercut.mine.ilvl,
+            undercut.mine.character,
+            undercut.mine.realm,
+        )
+
+    if dry_run:
+        log.info("🧪 --dry-run: no envio nada a Discord ni guardo el estado.")
+        return EXIT_OK
+
+    realm_names = {
+        realm_id: client.connected_realm_name(realm_id) for realm_id in grupos
+    }
+
+    icon_urls: dict[int, str] = {}
+    for item_id in dict.fromkeys(u.mine.item_id for u in frescos):
+        url = icon_cache.get(item_id) or client.item_icon_url(item_id)
+        if url:
+            icon_urls[item_id] = url
+            icon_cache.set(item_id, url)
+    icon_cache.save()
+
+    enviados = notifier.send_undercuts(frescos, realm_names, icon_urls, snapshot_at)
+    log.info("📨 Enviados a Discord %s aviso(s).", len(enviados))
+
+    # Solo se marcan los que han salido de verdad, igual que con los chollos.
+    for undercut in enviados:
+        notified.mark(
+            notified.key(
+                undercut.realm_id, undercut.mine.auction_id, undercut.rival_auction_id
+            )
+        )
+    notified.save()
+    return EXIT_OK
+
+
 def run(args: argparse.Namespace) -> int:
     load_dotenv()
 
@@ -197,6 +355,18 @@ def run(args: argparse.Namespace) -> int:
     rules_by_item_id = resolve_item_ids(client, config, item_cache)
     if not args.dry_run:
         item_cache.save()
+
+    if args.undercut:
+        return run_undercut(
+            client,
+            config,
+            rules_by_item_id,
+            notifier,
+            state_dir,
+            args.mis_subastas,
+            dry_run=args.dry_run,
+            ignore_state=args.ignore_state,
+        )
 
     if args.realms:
         realm_ids = parse_realm_ids(args.realms)
@@ -360,7 +530,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return run(args)
-    except (ConfigError, BlizzardAuthError, DiscordError, ItemResolutionError) as exc:
+    except (
+        ConfigError,
+        BlizzardAuthError,
+        DiscordError,
+        ItemResolutionError,
+        MisSubastasError,
+        RealmResolutionError,
+    ) as exc:
         log.error("❌ %s", exc)
         return EXIT_CONFIG_ERROR
     except BlizzardError as exc:

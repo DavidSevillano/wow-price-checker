@@ -449,3 +449,46 @@ def test_un_volcado_al_dia_no_provoca_ninguna_espera(entorno, reloj_parado, espe
 
     assert len(escaneos(entorno["mock"])) == 1
     assert esperas == []
+
+
+# -- Modo undercut ----------------------------------------------------------
+
+from main import agrupar_por_reino, build_parser as _parser
+from wowalerts.misubastas import MyAuction
+
+
+def una_mia(auction_id=1, realm="Sanguino", slug="sanguino", item_id=200000):
+    return MyAuction(
+        auction_id=auction_id,
+        item_id=item_id,
+        item_name="Greaves of the Noxious Depths",
+        ilvl=311,
+        buyout_copper=90_000_000,
+        quantity=1,
+        character="Pepe",
+        realm=realm,
+        realm_slug=slug,
+    )
+
+
+def test_el_parser_acepta_undercut():
+    assert _parser().parse_args(["--undercut"]).undercut is True
+
+
+def test_agrupa_las_subastas_por_reino_conectado():
+    mias = [
+        una_mia(1, "Sanguino", "sanguino"),
+        una_mia(2, "Dun Modr", "dun-modr"),
+        una_mia(3, "Sanguino", "sanguino"),
+    ]
+    grupos = agrupar_por_reino(mias, {"sanguino": 1379, "dun-modr": 1379})
+    # Los dos reinos comparten connected realm: una sola descarga.
+    assert list(grupos) == [1379]
+    assert len(grupos[1379]) == 3
+
+
+def test_las_subastas_de_reinos_sin_resolver_se_omiten():
+    mias = [una_mia(1, "Sanguino", "sanguino"), una_mia(2, "Fantasma", "fantasma")]
+    grupos = agrupar_por_reino(mias, {"sanguino": 1379})
+    assert list(grupos) == [1379]
+    assert len(grupos[1379]) == 1
