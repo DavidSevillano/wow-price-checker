@@ -111,14 +111,15 @@ Cuando funcione en local:
 1. En el repositorio: `Settings > Secrets and variables > Actions > New
    repository secret`, y crea `DISCORD_WEBHOOK_URL`, `BLIZZARD_CLIENT_ID` y
    `BLIZZARD_CLIENT_SECRET`.
-2. Sube los cambios. El workflow `.github/workflows/monitor.yml` se ejecuta cada
-   hora por su cuenta, al minuto 35.
+2. Sube los cambios. El workflow `.github/workflows/monitor.yml` ya se ejecuta
+   solo: su `schedule` corre cada 3 horas como red de seguridad, y la pasada de
+   cada hora la dispara el cron externo del apartado 3.1, que es puntual.
 
    Blizzard regenera los datos de la casa de subastas una vez por hora y para
    toda la region a la vez (comprobado: 30 reinos de EU compartian el volcado de
    las 11:31 UTC). Escanear mas a menudo devuelve datos identicos. Cada pasada
    escribe en el log la antiguedad del volcado; si ves que se acerca a los 60
-   minutos, Blizzard ha movido su horario y conviene retrasar el minuto del cron.
+   minutos, Blizzard ha movido su horario y conviene retrasar el minuto.
 3. Para probarlo a mano: pestana `Actions > WoW Price Monitor > Run workflow`
    (tiene una casilla para hacer una pasada en seco).
 
