@@ -62,8 +62,8 @@ Y por ultimo, el escaneo completo de verdad:
 .venv\Scripts\python.exe main.py
 ```
 
-Tarda unos minutos: son ~250 reinos y cada uno devuelve decenas de MB de
-subastas.
+Tarda unos segundos: son los 92 connected realms de EU y unos 2,8 millones de
+subastas, pero solo se mira lo que interesa.
 
 ---
 
