@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from estado import MINUTO_CRON, slot_de, slots_esperados
+from estado import MINUTO_CRON, esta_pendiente, slot_de, slots_esperados
 
 
 def utc(dia, hora, minuto):
@@ -55,3 +55,35 @@ def test_la_ventana_acota_por_abajo():
 
     assert esperados[0] == utc(30, 12, 35)
     assert len(esperados) == 3
+
+
+def test_no_se_reclaman_pasadas_de_antes_de_que_existiera_el_workflow():
+    """Sin esto, la herramienta inventaba huecos donde no habia nada que correr."""
+    esperados = slots_esperados(
+        utc(30, 14, 36), horas=24, no_antes_de=utc(30, 12, 0)
+    )
+
+    assert esperados == [utc(30, 12, 35), utc(30, 13, 35), utc(30, 14, 35)]
+
+
+def test_un_recorte_anterior_a_la_ventana_no_la_amplia():
+    esperados = slots_esperados(utc(30, 14, 36), horas=3, no_antes_de=utc(1, 0, 0))
+
+    assert len(esperados) == 3
+    assert esperados[0] == utc(30, 12, 35)
+
+
+def test_sin_recorte_se_comporta_igual_que_antes():
+    assert slots_esperados(utc(30, 14, 36), horas=3) == slots_esperados(
+        utc(30, 14, 36), horas=3, no_antes_de=None
+    )
+
+
+def test_un_slot_recien_cumplido_esta_pendiente_no_fallido():
+    """GitHub lanza tarde con normalidad: no hay que darlo por perdido enseguida."""
+    assert esta_pendiente(utc(30, 14, 35), ahora=utc(30, 14, 36))
+    assert esta_pendiente(utc(30, 14, 35), ahora=utc(30, 15, 10))
+
+
+def test_pasado_el_margen_ya_cuenta_como_fallo():
+    assert not esta_pendiente(utc(30, 14, 35), ahora=utc(30, 15, 20))

@@ -24,6 +24,11 @@ WORKFLOW = "WoW Price Monitor"
 # Minuto en el que el cron pide la ejecucion (ver .github/workflows/monitor.yml).
 MINUTO_CRON = 35
 
+# GitHub lanza los workflows programados tarde con normalidad: los retrasos
+# medidos en este repositorio han llegado a 38 minutos. Hasta que pase este
+# margen, un slot sin ejecucion se considera pendiente y no un fallo.
+GRACIA_MIN = 40
+
 SIMBOLO = {"success": "✓", "failure": "✗", "cancelled": "-", None: "…"}
 
 
@@ -88,9 +93,19 @@ def slot_de(inicio: datetime) -> datetime:
     return slot
 
 
-def slots_esperados(ahora: datetime, horas: int) -> list[datetime]:
-    """Ejecuciones que ya deberian haber ocurrido dentro de la ventana."""
+def slots_esperados(
+    ahora: datetime, horas: int, no_antes_de: datetime | None = None
+) -> list[datetime]:
+    """Ejecuciones que ya deberian haber ocurrido dentro de la ventana.
+
+    `no_antes_de` recorta por abajo. Sirve para no inventarse huecos en un
+    periodo en el que el workflow todavia no existia o tenia otro horario:
+    marcarlos como 'NO SE EJECUTO' seria una falsa alarma.
+    """
     desde = ahora - timedelta(hours=horas)
+    if no_antes_de and no_antes_de > desde:
+        desde = no_antes_de
+
     slot = ahora.replace(minute=MINUTO_CRON, second=0, microsecond=0)
     if slot > ahora:
         slot -= timedelta(hours=1)
@@ -102,11 +117,21 @@ def slots_esperados(ahora: datetime, horas: int) -> list[datetime]:
     return list(reversed(esperados))
 
 
+def esta_pendiente(slot: datetime, ahora: datetime) -> bool:
+    """Un slot recien cumplido todavia puede llegar: no es un fallo aun."""
+    return (ahora - slot) < timedelta(minutes=GRACIA_MIN)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Comprueba si el vigilante se esta ejecutando en GitHub Actions."
     )
     parser.add_argument("--horas", type=int, default=24, help="Ventana a revisar.")
+    parser.add_argument(
+        "--desde",
+        help="No mirar antes de esta fecha y hora local (formato 'AAAA-MM-DD HH:MM'). "
+        "Util despues de cambiar el minuto del cron: lo anterior no es comparable.",
+    )
     parser.add_argument(
         "--detalle",
         action="store_true",
@@ -121,7 +146,29 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     ahora = datetime.now(timezone.utc)
+
+    # Antes de la primera ejecucion conocida el workflow no existia, asi que no
+    # tiene sentido reclamar pasadas de entonces.
+    inicios = [
+        datetime.fromisoformat(r["startedAt"].replace("Z", "+00:00")) for r in runs
+    ]
+    no_antes_de = min(inicios) if inicios else None
+    nota_recorte = "el workflow todavia no existia"
+
+    if args.desde:
+        try:
+            elegido = datetime.strptime(args.desde, "%Y-%m-%d %H:%M").astimezone()
+        except ValueError:
+            print("❌ --desde espera el formato 'AAAA-MM-DD HH:MM', por ejemplo")
+            print("   --desde \"2026-08-30 14:35\"")
+            return 1
+        if no_antes_de is None or elegido > no_antes_de:
+            no_antes_de = elegido
+            nota_recorte = "lo has acotado con --desde"
+
     desde = ahora - timedelta(hours=args.horas)
+    if no_antes_de and no_antes_de > desde:
+        desde = no_antes_de
 
     por_slot: dict[datetime, dict] = {}
     for run in runs:
@@ -133,18 +180,36 @@ def main(argv: list[str] | None = None) -> int:
         slot = slot_de(inicio)
         por_slot.setdefault(slot, {"run": run, "retraso": inicio - slot})
 
-    esperados = slots_esperados(ahora, args.horas)
-    huecos = [s for s in esperados if s not in por_slot]
+    esperados = slots_esperados(ahora, args.horas, no_antes_de)
+    pendientes = [
+        s for s in esperados if s not in por_slot and esta_pendiente(s, ahora)
+    ]
+    huecos = [s for s in esperados if s not in por_slot and s not in pendientes]
 
     print(f"Ventana: ultimas {args.horas} h  (ahora {ahora.astimezone():%H:%M} local)")
-    print(f"Esperadas: {len(esperados)}   ejecutadas: {len(esperados) - len(huecos)}")
+    if no_antes_de and no_antes_de > ahora - timedelta(hours=args.horas):
+        print(
+            f"Se mira desde {no_antes_de.astimezone():%d/%m %H:%M} "
+            f"porque antes {nota_recorte}."
+        )
+    linea_resumen = (
+        f"Esperadas: {len(esperados)}   "
+        f"ejecutadas: {len(esperados) - len(huecos) - len(pendientes)}   "
+        f"sin ejecutar: {len(huecos)}"
+    )
+    if pendientes:
+        linea_resumen += f"   pendientes: {len(pendientes)}"
+    print(linea_resumen)
     print()
 
     for slot in esperados:
         hora = slot.astimezone().strftime("%d/%m %H:%M")
         entrada = por_slot.get(slot)
         if entrada is None:
-            print(f"  {hora}   ✗   NO SE EJECUTO")
+            if slot in pendientes:
+                print(f"  {hora}   …   pendiente (GitHub suele lanzar tarde)")
+            else:
+                print(f"  {hora}   ✗   NO SE EJECUTO")
             continue
         run = entrada["run"]
         marca = SIMBOLO.get(run["conclusion"], "?")
@@ -166,6 +231,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"⚠️  Faltan {len(huecos)} de {len(esperados)}. GitHub descarta")
         print("   ejecuciones programadas cuando va cargado; si el hueco es grande,")
         print("   prueba a mover el minuto del cron en .github/workflows/monitor.yml.")
+        print()
+        print("   Si acabas de cambiar el minuto del cron, lo anterior al cambio no")
+        print("   es comparable: acota con --desde \"AAAA-MM-DD HH:MM\".")
     return 0
 
 
