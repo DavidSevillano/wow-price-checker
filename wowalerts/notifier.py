@@ -29,8 +29,9 @@ COLOR_GOOD = 0xE67E22        # naranja: por debajo del umbral
 COLOR_GREAT = 0xF1C40F       # amarillo: bastante por debajo
 COLOR_STEAL = 0x2ECC71       # verde: chollo serio
 COLOR_WARNING = 0xE74C3C     # rojo: aviso de salud del bot
-# Limite duro de Discord para el texto de un mensaje.
-MAX_DISCORD_CONTENT = 2000
+COLOR_UNDERCUT = 0xC0392B    # rojo oscuro: te han adelantado
+# Limite duro de Discord para la descripcion de un embed.
+MAX_EMBED_DESCRIPTION = 4096
 # Tope propio de lineas por mensaje: mas de esto ya no se lee de un vistazo.
 MAX_UNDERCUT_LINES_PER_MESSAGE = 20
 # Los nombres de objeto de WoW no pasan de 60 caracteres, pero recortarlos
@@ -219,11 +220,16 @@ def _repartir(lineas: list[str], presupuesto: int) -> list[list[str]]:
 
 
 def build_undercut_messages(undercuts: Sequence[Undercut]) -> list[dict[str, Any]]:
-    """Un mensaje por personaje, con sus subastas adelantadas en una lista.
+    """Un mensaje por personaje, con sus subastas adelantadas en una tarjeta.
 
     Agrupar por personaje es lo que hace el aviso accionable: cada mensaje es
     un viaje al buzon de un personaje concreto, y dice todo lo que hay que
     cambiar alli.
+
+    Va en un embed y no en texto suelto porque Discord encadena los mensajes
+    seguidos de un mismo webhook: le quita al segundo el avatar y el nombre, y
+    dos avisos se leen como uno. El borde de color de la tarjeta los separa sin
+    gastar una linea en decirlo.
     """
     if not undercuts:
         return []
@@ -245,19 +251,29 @@ def build_undercut_messages(undercuts: Sequence[Undercut]) -> list[dict[str, Any
     for (character, _realm, account), suyas in por_personaje.items():
         # El reino no hace falta: lo que necesitas para ir a cambiarlo es a que
         # cuenta entrar y con que personaje.
-        quien = f"**{character}**"
+        quien = f"⚔️ {character}"
         if account is not None:
             quien += f" · WoW {account}"
 
         plural = "subastas" if len(suyas) != 1 else "subasta"
-        cabecera = f"⚔️ {quien} — te han adelantado en {len(suyas)} {plural}"
-        continuacion = f"⚔️ {quien} · sigue"
-        presupuesto = MAX_DISCORD_CONTENT - max(len(cabecera), len(continuacion)) - 1
+        titulo = f"{quien} — {len(suyas)} {plural}"
+        continuacion = f"{quien} · sigue"
 
-        grupos = _repartir([_undercut_line(u) for u in suyas], presupuesto)
+        grupos = _repartir(
+            [_undercut_line(u) for u in suyas], MAX_EMBED_DESCRIPTION
+        )
         for indice, grupo in enumerate(grupos):
-            titulo = cabecera if indice == 0 else continuacion
-            messages.append({"content": "\n".join([titulo, *grupo])})
+            messages.append(
+                {
+                    "embeds": [
+                        {
+                            "title": titulo if indice == 0 else continuacion,
+                            "description": "\n".join(grupo),
+                            "color": COLOR_UNDERCUT,
+                        }
+                    ]
+                }
+            )
 
     return messages
 

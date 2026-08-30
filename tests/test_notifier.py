@@ -205,7 +205,7 @@ def test_mensaje_de_prueba(requests_mock):
 # -- Avisos de undercut -----------------------------------------------------
 
 from wowalerts.misubastas import MyAuction
-from wowalerts.notifier import build_undercut_messages
+from wowalerts.notifier import COLOR_UNDERCUT, build_undercut_messages
 from wowalerts.undercut import Undercut
 
 
@@ -239,23 +239,29 @@ def un_undercut(
     )
 
 
+def texto(mensaje) -> str:
+    """Titulo y descripcion de la tarjeta, juntos, para poder buscar en ellos."""
+    embed = mensaje["embeds"][0]
+    return embed["title"] + "\n" + embed["description"]
+
+
 def test_sin_undercuts_no_hay_mensajes():
     assert build_undercut_messages([]) == []
 
 
 def test_la_cabecera_lleva_personaje_y_cuenta():
-    contenido = build_undercut_messages([un_undercut()])[0]["content"]
+    contenido = texto(build_undercut_messages([un_undercut()])[0])
     assert "Pepe" in contenido
     assert "WoW 2" in contenido
 
 
 def test_la_cabecera_no_lleva_el_reino():
-    contenido = build_undercut_messages([un_undercut()])[0]["content"]
+    contenido = texto(build_undercut_messages([un_undercut()])[0])
     assert "Sanguino" not in contenido
 
 
 def test_sin_cuenta_conocida_solo_va_el_personaje():
-    contenido = build_undercut_messages([un_undercut(cuenta=None)])[0]["content"]
+    contenido = texto(build_undercut_messages([un_undercut(cuenta=None)])[0])
     assert "Pepe" in contenido
     assert "WoW" not in contenido
 
@@ -279,8 +285,8 @@ def test_un_mensaje_por_personaje():
         ]
     )
     assert len(mensajes) == 2
-    assert "Pepe" in mensajes[0]["content"]
-    assert "Ana" in mensajes[1]["content"]
+    assert "Pepe" in texto(mensajes[0])
+    assert "Ana" in texto(mensajes[1])
 
 
 def test_las_subastas_de_un_personaje_van_juntas():
@@ -291,22 +297,22 @@ def test_las_subastas_de_un_personaje_van_juntas():
         ]
     )
     assert len(mensajes) == 1
-    assert "Grebas" in mensajes[0]["content"]
-    assert "Zapatillas" in mensajes[0]["content"]
+    assert "Grebas" in texto(mensajes[0])
+    assert "Zapatillas" in texto(mensajes[0])
 
 
 def test_un_undercut_de_verdad_muestra_los_dos_precios():
-    contenido = build_undercut_messages([un_undercut(oro_mio=50000, oro_rival=30000)])[0][
-        "content"
-    ]
+    contenido = texto(
+        build_undercut_messages([un_undercut(oro_mio=50000, oro_rival=30000)])[0]
+    )
     assert "50.000" in contenido
     assert "30.000" in contenido
 
 
 def test_un_empate_se_dice_como_empate():
-    contenido = build_undercut_messages([un_undercut(oro_mio=9000, oro_rival=9000)])[0][
-        "content"
-    ]
+    contenido = texto(
+        build_undercut_messages([un_undercut(oro_mio=9000, oro_rival=9000)])[0]
+    )
     assert "igualan" in contenido
     assert "9.000" in contenido
 
@@ -315,12 +321,12 @@ def test_el_recuento_va_en_la_cabecera():
     mensajes = build_undercut_messages(
         [un_undercut(auction_id=1), un_undercut(auction_id=2)]
     )
-    assert "2 subastas" in mensajes[0]["content"]
+    assert "2 subastas" in texto(mensajes[0])
 
 
 def test_una_sola_subasta_va_en_singular():
-    contenido = build_undercut_messages([un_undercut()])[0]["content"]
-    assert "en 1 subasta" in contenido
+    contenido = texto(build_undercut_messages([un_undercut()])[0])
+    assert "1 subasta" in contenido
     assert "subastas" not in contenido
 
 
@@ -328,13 +334,21 @@ def test_un_personaje_con_muchisimas_se_parte_en_varios_mensajes():
     muchas = [un_undercut(auction_id=i) for i in range(1, 26)]
     mensajes = build_undercut_messages(muchas)
     assert len(mensajes) == 2
-    assert "Pepe" in mensajes[1]["content"]
+    assert "Pepe" in texto(mensajes[1])
 
 
-def test_ningun_mensaje_pasa_del_limite_de_discord():
+def test_cada_mensaje_es_una_tarjeta_con_su_color():
+    mensaje = build_undercut_messages([un_undercut()])[0]
+    assert len(mensaje["embeds"]) == 1
+    assert mensaje["embeds"][0]["color"] == COLOR_UNDERCUT
+
+
+def test_ninguna_tarjeta_pasa_de_los_limites_de_discord():
     muchas = [
         un_undercut(objeto="Objeto con un nombre larguisimo " * 3, auction_id=i)
         for i in range(1, 51)
     ]
     for mensaje in build_undercut_messages(muchas):
-        assert len(mensaje["content"]) <= 2000
+        embed = mensaje["embeds"][0]
+        assert len(embed["description"]) <= 4096
+        assert len(embed["title"]) <= 256
