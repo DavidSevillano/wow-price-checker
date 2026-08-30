@@ -6,6 +6,8 @@
 -- pantalla cuando hay subastas recogidas que todavia no se han volcado.
 
 local FORMAT_VERSION = 1
+-- Version del addon, para saber que codigo se esta ejecutando de verdad.
+local ADDON_VERSION = "1.2"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 
@@ -259,7 +261,14 @@ frame:SetScript("OnEvent", function(_, event, arg1)
 end)
 
 SLASH_WOWALERTS1 = "/wowalerts"
+SLASH_WOWALERTS2 = "/wa"
 SlashCmdList["WOWALERTS"] = function()
+    local clave, nombre, reino = claveDePersonaje()
+    print(("|cffffd200WoW Alerts v%s|r · %s de %s"):format(ADDON_VERSION, nombre, reino))
+    print(("  la casa de subastas dice que tienes %d subasta(s) ahora mismo."):format(
+        C_AuctionHouse.GetNumOwnedAuctions()
+    ))
+
     -- Se vuelve a pedir por si la casa de subastas ya estaba abierta cuando el
     -- addon se cargo, que es justo lo que pasa despues de un /reload: el evento
     -- de apertura no llega a dispararse.
