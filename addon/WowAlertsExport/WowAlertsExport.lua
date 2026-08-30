@@ -14,9 +14,10 @@ WowAlertsExportDB = WowAlertsExportDB or {}
 local volcadoEnDisco = nil
 
 -- El juego solo conoce tus subastas mientras la Casa de Subastas esta abierta:
--- con ella cerrada, GetNumOwnedAuctions() devuelve 0. Sin este control, un
--- /reload posterior recogeria cero subastas y borraria las buenas.
-local casaAbierta = false
+-- con ella cerrada, GetNumOwnedAuctions() devuelve 0. La regla para no perder
+-- datos por eso esta en guardar(), y no depende de ningun evento: una bandera
+-- levantada al abrir la casa se pierde con cualquier /reload, y entonces el
+-- addon se queda creyendo que esta cerrada para siempre.
 
 -- ---------------------------------------------------------------------------
 --  Codificacion JSON minima (solo los tipos que usamos)
@@ -150,6 +151,13 @@ end
 --  Volcado
 -- ---------------------------------------------------------------------------
 
+-- Pedirle al servidor tus subastas. Con la casa de subastas cerrada esto no
+-- vale para nada y puede protestar, asi que se envuelve en pcall.
+local function pedirSubastas()
+    pcall(C_AuctionHouse.QueryOwnedAuctions, {})
+end
+
+
 local function claveDePersonaje()
     local nombre = UnitName("player")
     local reino = GetRealmName()
@@ -157,22 +165,27 @@ local function claveDePersonaje()
 end
 
 local function guardar()
-    -- Con la casa de subastas cerrada no hay nada que leer, y sobrescribir
-    -- ahora dejaria la entrada de este personaje vacia.
-    if not casaAbierta then
-        return nil
-    end
-
     -- Se parte de lo ya guardado para no borrar las subastas de los demas
     -- personajes: cada uno actualiza solo su propia entrada.
     local datos = WowAlertsExportDB.personajes or {}
 
     local clave, nombre, reino = claveDePersonaje()
+    local recogidas = recogerSubastas()
+    local previo = datos[clave]
+
+    -- Leer cero subastas teniendo ya algo guardado no significa que las hayas
+    -- cancelado: significa que ahora mismo no se pueden leer, casi siempre
+    -- porque la casa de subastas esta cerrada. Conservar lo anterior es la
+    -- opcion segura, porque el vigilante descarta solo las que ya no existen.
+    if #recogidas == 0 and previo and #(previo.auctions or {}) > 0 then
+        return nil
+    end
+
     datos[clave] = {
         character = nombre,
         realm = reino,
         exportedAt = time(),
-        auctions = recogerSubastas(),
+        auctions = recogidas,
     }
 
     WowAlertsExportDB.personajes = datos
@@ -182,7 +195,7 @@ local function guardar()
         personajes = datos,
     })
 
-    return #datos[clave].auctions
+    return #recogidas
 end
 
 local function avisarSiFaltaVolcar()
@@ -205,7 +218,6 @@ end
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("AUCTION_HOUSE_SHOW")
-frame:RegisterEvent("AUCTION_HOUSE_CLOSED")
 frame:RegisterEvent("OWNED_AUCTIONS_UPDATED")
 
 frame:SetScript("OnEvent", function(_, event, arg1)
@@ -214,10 +226,7 @@ frame:SetScript("OnEvent", function(_, event, arg1)
             volcadoEnDisco = WowAlertsExportDB.payload
         end
     elseif event == "AUCTION_HOUSE_SHOW" then
-        casaAbierta = true
-        C_AuctionHouse.QueryOwnedAuctions({})
-    elseif event == "AUCTION_HOUSE_CLOSED" then
-        casaAbierta = false
+        pedirSubastas()
     elseif event == "OWNED_AUCTIONS_UPDATED" then
         local cuantas = guardar()
         if cuantas then
@@ -229,11 +238,18 @@ end)
 
 SLASH_WOWALERTS1 = "/wowalerts"
 SlashCmdList["WOWALERTS"] = function()
+    -- Se vuelve a pedir por si la casa de subastas ya estaba abierta cuando el
+    -- addon se cargo, que es justo lo que pasa despues de un /reload: el evento
+    -- de apertura no llega a dispararse.
+    pedirSubastas()
+
     local cuantas = guardar()
     if not cuantas then
+        local previo = (WowAlertsExportDB.personajes or {})[claveDePersonaje()]
         print(
-            "|cffffd200WoW Alerts:|r abre la Casa de Subastas primero. Con ella"
-                .. " cerrada el juego no sabe que subastas tienes puestas."
+            ("|cffffd200WoW Alerts:|r no puedo leer nada ahora mismo; conservo "
+                .. "las %d que tenia. Abre la Casa de Subastas y vuelve a "
+                .. "probar."):format(#((previo or {}).auctions or {}))
         )
         return
     end

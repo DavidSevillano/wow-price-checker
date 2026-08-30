@@ -168,23 +168,42 @@ def test_no_avisa_cuando_no_ha_cambiado_nada():
     assert "/reload" not in mensajes
 
 
-def test_con_la_casa_cerrada_no_borra_lo_ya_recogido():
-    """La regresion que costo un viaje al juego: un /reload con la CdS cerrada
-    recogia cero subastas y machacaba las buenas."""
+def test_leer_cero_no_borra_lo_ya_recogido():
+    """La regresion que costo un viaje al juego: con la casa de subastas
+    cerrada el juego devuelve cero subastas, y eso machacaba las buenas."""
     lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
     recoger(lua)
     assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
 
     # Cierras la casa de subastas: el juego ya no sabe que tienes puesto.
-    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
     lua.globals().SUBASTAS = lua.table_from([])
     lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
 
     assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
 
 
-def test_el_comando_con_la_casa_cerrada_lo_explica():
-    lua = runtime(subastas=[subasta()])
+def test_el_comando_funciona_sin_haber_visto_abrir_la_casa():
+    """La segunda regresion: un /reload con la casa de subastas ya abierta.
+
+    El evento de apertura no vuelve a dispararse, asi que el addon no puede
+    fiarse de haberlo visto para saber si puede leer.
+    """
+    lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
     lua.globals().SlashCmdList["WOWALERTS"]()
+
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
     mensajes = " ".join(lua.globals().mensajes.values())
-    assert "abre la Casa de Subastas" in mensajes
+    assert "2 subasta(s) registradas" in mensajes
+
+
+def test_el_comando_sin_poder_leer_dice_lo_que_conserva():
+    lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
+    recoger(lua)
+    lua.globals().mensajes = lua.table_from([])
+
+    lua.globals().SUBASTAS = lua.table_from([])
+    lua.globals().SlashCmdList["WOWALERTS"]()
+
+    mensajes = " ".join(lua.globals().mensajes.values())
+    assert "conservo las 2" in mensajes
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
