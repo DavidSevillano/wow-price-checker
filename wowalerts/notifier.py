@@ -203,13 +203,6 @@ def build_undercut_embed(
         description += f"Hay **{undercut.rivals_ahead}** por delante de la tuya.\n"
     description += f"ilvl **{undercut.mine.ilvl}**."
 
-    if not undercut.rival_ilvl_confirmed:
-        description += (
-            "\n\n> El ilvl de la subasta rival esta **sin confirmar**: puede que "
-            "no sea el mismo que el tuyo. Comprueba en el juego antes de bajar "
-            "el precio."
-        )
-
     embed: dict[str, Any] = {
         "title": undercut.mine.item_name,
         # Ancla distinta por subasta: Discord fusiona en una sola galeria los
@@ -218,7 +211,7 @@ def build_undercut_embed(
             f"https://www.wowhead.com/item={undercut.mine.item_id}"
             f"#a{undercut.mine.auction_id}"
         ),
-        "color": COLOR_UNDERCUT if undercut.rival_ilvl_confirmed else COLOR_UNCONFIRMED,
+        "color": COLOR_UNDERCUT,
         "description": description,
         "fields": [
             {

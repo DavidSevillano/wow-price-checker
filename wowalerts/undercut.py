@@ -13,10 +13,40 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from .config import COPPER_PER_GOLD
-from .ilvl import resolve_ilvl
+from .ilvl import int_list, resolve_ilvl
 from .misubastas import MyAuction
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _Rival:
+    """Una subasta ajena del mismo objeto, con lo que hace falta para comparar."""
+
+    auction_id: int
+    price_copper: int
+    bonus_ids: frozenset
+    ilvl: int | None
+
+
+def _compite_con(rival: _Rival, mine: MyAuction) -> bool:
+    """Decide si esa subasta ajena es el mismo producto que la tuya.
+
+    Dos vias, y basta con una:
+
+    - Si el ilvl del rival se puede determinar, tiene que ser el tuyo. Un ilvl
+      distinto es otro producto por mucho que el objeto sea el mismo.
+    - Si no se puede determinar, se exige que los bonus ids coincidan. Los bonus
+      ids describen la version exacta del objeto, asi que dos subastas que los
+      comparten son intercambiables aunque no sepamos que ilvl tienen.
+
+    Lo que queda fuera es justo lo que generaba las falsas alarmas: un rival de
+    ilvl desconocido y bonus distintos, que sobre datos reales resulto ser
+    chatarra de 100 g compitiendo contra subastas de 10.000.
+    """
+    if rival.ilvl is not None:
+        return rival.ilvl == mine.ilvl
+    return rival.bonus_ids == frozenset(mine.bonus_ids)
 
 
 @dataclass(frozen=True)
@@ -26,7 +56,6 @@ class Undercut:
     mine: MyAuction
     rival_auction_id: int
     rival_price_copper: int
-    rival_ilvl_confirmed: bool
     rivals_ahead: int
     # El reino conectado donde se ha visto. Lo necesita la memoria de avisos,
     # porque los ids de subasta solo son unicos dentro de su reino.
@@ -62,8 +91,14 @@ def find_undercuts(
 ) -> list[Undercut]:
     """Devuelve una entrada por cada subasta tuya que alguien haya adelantado.
 
-    Las comparaciones van siempre en cobre: convertir a oro antes de comparar
-    redondearia hacia abajo y colaria como empate un precio que no lo es.
+    Un rival cuenta si vende exactamente el mismo producto: mismo objeto y
+    mismos bonus ids. Si los bonus ids no coinciden pero ambos ilvl se pueden
+    determinar y son iguales, tambien cuenta. Cuando no se puede saber, no se
+    avisa: sobre datos reales, comparar contra rivales de ilvl desconocido
+    generaba solo falsas alarmas (chatarra de 100 g contra subastas de 10.000).
+
+    Las comparaciones de precio van siempre en cobre: convertir a oro antes de
+    comparar redondearia hacia abajo y colaria como empate un precio que no lo es.
     """
     if not my_auctions:
         return []
@@ -73,8 +108,7 @@ def find_undercuts(
 
     # Solo interesa saber si siguen vivas las tuyas, no las 30.000 del reino.
     vivas: set[int] = set()
-    por_ilvl: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
-    sin_ilvl: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    rivales: dict[int, list[_Rival]] = defaultdict(list)
 
     for auction in auctions:
         auction_id = auction.get("id")
@@ -95,11 +129,14 @@ def find_undercuts(
         if not isinstance(price, int) or isinstance(price, bool) or price <= 0:
             continue
 
-        ilvl = resolve_ilvl(item_obj, bonus_ilvl_map)
-        if ilvl.value is None:
-            sin_ilvl[item_id].append((auction_id, price))
-        else:
-            por_ilvl[(item_id, ilvl.value)].append((auction_id, price))
+        rivales[item_id].append(
+            _Rival(
+                auction_id=auction_id,
+                price_copper=price,
+                bonus_ids=frozenset(int_list(item_obj.get("bonus_lists"))),
+                ilvl=resolve_ilvl(item_obj, bonus_ilvl_map).value,
+            )
+        )
 
     undercuts: list[Undercut] = []
 
@@ -113,31 +150,22 @@ def find_undercuts(
             )
             continue
 
-        candidatos = [
-            (aid, precio, True)
-            for aid, precio in por_ilvl.get((mine.item_id, mine.ilvl), [])
+        delante = [
+            rival
+            for rival in rivales.get(mine.item_id, [])
+            if rival.price_copper <= mine.buyout_copper and _compite_con(rival, mine)
         ]
-        # Un rival cuyo ilvl no se puede deducir podria ser del tuyo, asi que
-        # entra como candidato marcado para que el aviso lo advierta.
-        candidatos += [
-            (aid, precio, False) for aid, precio in sin_ilvl.get(mine.item_id, [])
-        ]
-
-        delante = [c for c in candidatos if c[1] <= mine.buyout_copper]
         if not delante:
             continue
 
-        # El mas barato primero; a igualdad de precio, el de ilvl confirmado,
-        # que es el dato mas util para decidir a que precio repostear.
-        delante.sort(key=lambda c: (c[1], not c[2]))
-        auction_id, precio, confirmado = delante[0]
+        mejor = min(delante, key=lambda r: r.price_copper)
+        auction_id, precio = mejor.auction_id, mejor.price_copper
 
         undercuts.append(
             Undercut(
                 mine=mine,
                 rival_auction_id=auction_id,
                 rival_price_copper=precio,
-                rival_ilvl_confirmed=confirmado,
                 rivals_ahead=len(delante),
                 realm_id=realm_id,
             )

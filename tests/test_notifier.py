@@ -209,7 +209,7 @@ from wowalerts.notifier import build_undercut_embed, build_undercut_messages
 from wowalerts.undercut import Undercut
 
 
-def un_undercut(oro_mio=9000, oro_rival=8000, confirmado=True, rivales=1, auction_id=1):
+def un_undercut(oro_mio=9000, oro_rival=8000, rivales=1, auction_id=1):
     mine = MyAuction(
         auction_id=auction_id,
         item_id=200000,
@@ -226,7 +226,6 @@ def un_undercut(oro_mio=9000, oro_rival=8000, confirmado=True, rivales=1, auctio
         realm_id=1379,
         rival_auction_id=99,
         rival_price_copper=oro_rival * 10_000,
-        rival_ilvl_confirmed=confirmado,
         rivals_ahead=rivales,
     )
 
@@ -246,11 +245,6 @@ def test_el_embed_dice_donde_repostear():
 def test_el_empate_se_explica_como_empate():
     embed = build_undercut_embed(un_undercut(oro_rival=9000), "Sanguino")
     assert "mismo precio" in embed["description"]
-
-
-def test_el_ilvl_sin_confirmar_se_advierte():
-    embed = build_undercut_embed(un_undercut(confirmado=False), "Sanguino")
-    assert "sin confirmar" in embed["description"]
 
 
 def test_varios_rivales_se_cuentan():

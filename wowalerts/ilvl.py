@@ -46,7 +46,7 @@ def resolve_ilvl(item_obj: Mapping, bonus_ilvl_map: Mapping[int, int]) -> IlvlRe
     2. El campo `item_level`, si Blizzard lo incluye.
     3. El modificador de tipo 9, descartando valores implausibles.
     """
-    for bonus_id in _int_list(item_obj.get("bonus_lists")):
+    for bonus_id in int_list(item_obj.get("bonus_lists")):
         if bonus_id in bonus_ilvl_map:
             return IlvlResult(bonus_ilvl_map[bonus_id], f"bonus_id:{bonus_id}")
 
@@ -72,7 +72,8 @@ def resolve_ilvl(item_obj: Mapping, bonus_ilvl_map: Mapping[int, int]) -> IlvlRe
     return IlvlResult(None, "desconocido")
 
 
-def _int_list(value: object) -> list[int]:
+def int_list(value: object) -> list[int]:
+    """Los enteros de una lista, ignorando lo que no lo sea."""
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, int) and not isinstance(item, bool)]

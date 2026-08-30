@@ -42,6 +42,10 @@ class MyAuction:
     character: str
     realm: str
     realm_slug: str
+    # Los bonus ids identifican la version exacta del objeto (ilvl, calidad,
+    # afijos). Dos subastas del mismo objeto con los mismos bonus ids son el
+    # mismo producto; con distintos, no compiten entre si.
+    bonus_ids: tuple[int, ...] = ()
 
 
 def slugify_realm(name: str) -> str:
@@ -238,7 +242,13 @@ def _to_auction(cruda: Any, character: str, realm: str) -> MyAuction | None:
         campos[clave] = valor
 
     cantidad = cruda.get("quantity")
+    bonus = cruda.get("bonusIDs")
     return MyAuction(
+        bonus_ids=tuple(
+            b for b in bonus if isinstance(b, int) and not isinstance(b, bool)
+        )
+        if isinstance(bonus, list)
+        else (),
         auction_id=campos["auctionID"],
         item_id=campos["itemID"],
         item_name=str(cruda.get("itemName") or f"Objeto {campos['itemID']}"),
@@ -257,6 +267,7 @@ def _to_json(subasta: MyAuction) -> dict:
         "itemID": subasta.item_id,
         "itemName": subasta.item_name,
         "ilvl": subasta.ilvl,
+        "bonusIDs": list(subasta.bonus_ids),
         "buyout": subasta.buyout_copper,
         "quantity": subasta.quantity,
         "character": subasta.character,
