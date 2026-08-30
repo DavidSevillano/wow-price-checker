@@ -45,13 +45,18 @@ class MyAuction:
 
 
 def slugify_realm(name: str) -> str:
-    """'Area 52' -> 'area-52', que es como los nombra la API de Blizzard."""
+    """'Area 52' -> 'area-52', que es como los nombra la API de Blizzard.
+
+    Los apostrofos se borran en vez de convertirse en guion, porque asi es como
+    los trata Blizzard: "Zul'jin" es "zuljin", no "zul-jin".
+    """
     sin_tildes = "".join(
         c
         for c in unicodedata.normalize("NFKD", name)
         if not unicodedata.combining(c)
     )
-    return re.sub(r"[^a-zA-Z0-9]+", "-", sin_tildes).strip("-").lower()
+    sin_apostrofos = re.sub(r"['‘’]", "", sin_tildes)
+    return re.sub(r"[^a-zA-Z0-9]+", "-", sin_apostrofos).strip("-").lower()
 
 
 def extraer_payload(texto: str) -> str:

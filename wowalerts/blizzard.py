@@ -209,6 +209,50 @@ class BlizzardClient:
             log.warning("No he podido leer el nombre del reino %s", realm_id)
         return f"Reino {realm_id}"
 
+    def connected_realm_id_for(self, realm_slug: str) -> int | None:
+        """Connected realm al que pertenece un reino, por su slug.
+
+        Devuelve None si Blizzard no conoce ese slug, que es lo normal cuando
+        el nombre del reino lleva caracteres que no sobreviven al slug.
+        """
+        response = self._api_get(
+            f"/data/wow/realm/{realm_slug}", namespace=f"dynamic-{self.region}"
+        )
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise BlizzardError(
+                f"Consulta del reino {realm_slug!r}: HTTP {response.status_code}."
+            )
+        href = (response.json().get("connected_realm") or {}).get("href", "")
+        return _realm_id_from_href(href)
+
+    def realm_index(self) -> list[dict]:
+        """Todos los reinos de la region, con su slug oficial y su nombre.
+
+        Es la red de seguridad de `connected_realm_id_for`: una sola peticion
+        que permite dar con el slug bueno cuando el deducido del nombre no
+        acierta. El indice no trae el connected realm, asi que despues hay que
+        volver a preguntar con el slug correcto.
+        """
+        response = self._api_get(
+            "/data/wow/realm/index", namespace=f"dynamic-{self.region}"
+        )
+        if response.status_code != 200:
+            raise BlizzardError(
+                f"No he podido listar los reinos: HTTP {response.status_code}."
+            )
+
+        reinos: list[dict] = []
+        for realm in response.json().get("realms", []):
+            slug = realm.get("slug")
+            if not isinstance(slug, str):
+                continue
+            reinos.append(
+                {"slug": slug, "name": _realm_display_name(realm, self.locale) or slug}
+            )
+        return reinos
+
     def auctions(self, realm_id: int) -> AuctionSnapshot:
         """Todas las subastas de equipo de un connected realm."""
         response = self._api_get(

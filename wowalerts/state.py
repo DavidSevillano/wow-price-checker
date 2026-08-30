@@ -145,3 +145,14 @@ class ItemIconCache(JsonMapCache):
 
     def __init__(self, path: str | Path) -> None:
         super().__init__(path, "icons")
+
+
+class RealmIdCache(JsonMapCache):
+    """Cache de 'slug de reino' -> 'id de connected realm'.
+
+    Un reino no cambia de connected realm salvo fusion, que es un evento raro
+    y anunciado, asi que se pide una vez y se reutiliza siempre.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, "realms")

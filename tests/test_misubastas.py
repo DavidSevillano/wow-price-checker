@@ -136,6 +136,9 @@ def test_descarta_entradas_incompletas_sin_romper():
         ("Dun Modr", "dun-modr"),
         ("Área 52", "area-52"),
         ("Los Errantes", "los-errantes"),
+        # Blizzard borra el apostrofo, no lo convierte en guion.
+        ("Zul'jin", "zuljin"),
+        ("Blade's Edge", "blades-edge"),
     ],
 )
 def test_slug_del_reino(nombre, esperado):
