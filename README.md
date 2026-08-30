@@ -265,3 +265,95 @@ Para pasar los tests:
 ```bash
 .venv\Scripts\python.exe -m pytest -q
 ```
+
+---
+
+## 5. Avisos de undercut en tus propias subastas
+
+Ademas de buscar chollos ajenos, el proyecto puede avisarte cuando **alguien
+publica el mismo objeto que tu, a tu precio o por debajo**, para que vayas a
+repostear. Solo mira los objetos que ya vigila `config.yaml`: el resto de lo que
+tengas puesto (monturas, mochilas, decoracion) se ignora.
+
+La API de Blizzard no dice quien publica cada subasta, asi que hace falta un
+addon que exporte las tuyas desde dentro del juego.
+
+### 5.1 Instalar el addon
+
+Copia la carpeta `addon/WowAlertsExport` a tu carpeta de addons:
+
+```bash
+Copy-Item -Recurse -Force addon/WowAlertsExport "D:/Juegos/World of Warcraft/_retail_/Interface/AddOns/"
+```
+
+Entra al juego y **abre la Casa de Subastas**: en el chat general te dira
+cuantas subastas tuyas ha registrado. Si tienes personajes vendiendo en varios
+reinos, repitelo con cada uno; el addon los va acumulando.
+
+Para comprobarlo en cualquier momento: `/wowalerts`.
+
+**Dos cosas que conviene saber:**
+
+- El juego solo conoce tus subastas **mientras la Casa de Subastas esta
+  abierta**. Con ella cerrada, el addon no puede leer nada y no toca lo que ya
+  tenia guardado.
+- WoW solo escribe los datos del addon a disco al salir del juego, al volver al
+  selector de personajes o al hacer `/reload`. Si posteas y sigues jugando, el
+  vigilante todavia no lo sabe. El addon te lo recuerda en pantalla.
+
+### 5.2 Instalar la sincronizacion
+
+```bash
+powershell -ExecutionPolicy Bypass -File instalar_tarea_sync.ps1
+```
+
+Crea una tarea de Windows que cada 15 minutos mira si el volcado ha cambiado y,
+si si, lo sube a GitHub. A partir de ahi el vigilante funciona **aunque apagues
+el PC**.
+
+Para forzarlo a mano:
+
+```bash
+.venv\Scripts\python.exe sync_subastas.py
+```
+
+Para quitar la tarea:
+
+```bash
+schtasks /delete /tn "WoW subastas sync" /f
+```
+
+### 5.3 Probarlo
+
+```bash
+.venv\Scripts\python.exe main.py --undercut --dry-run
+```
+
+Te lista quien te ha adelantado y en que personaje tienes que ir a cambiarlo,
+sin enviar nada a Discord.
+
+### 5.4 Como decide que dos subastas compiten
+
+Del mismo objeto, una subasta ajena compite con la tuya si:
+
+- su ilvl **se puede determinar** y es el tuyo, **o**
+- su ilvl no se puede determinar pero sus **bonus ids son los mismos** que los
+  de tu objeto.
+
+Si no se puede saber ninguna de las dos cosas, **no se avisa**. Comparar contra
+rivales de ilvl desconocido generaba solo falsas alarmas: el equipo de Legion
+Remix publica un dato que parece ilvl pero es el nivel del personaje, y esas
+subastas de 100 g salian compitiendo contra listados de 10.000 g.
+
+### 5.5 Que esperar
+
+- **Latencia de hasta una hora.** Blizzard regenera los datos de subastas una
+  vez por hora. No hay forma de esquivarlo con la API oficial.
+- **Un aviso por rival.** Mientras sea el mismo el que te adelanta, no se
+  repite. Si reposteas y te vuelven a adelantar, aviso nuevo.
+- **Nada de avisos fantasma.** Si una subasta tuya ya no aparece en la casa de
+  subastas (vendida, caducada o cancelada), se descarta sola.
+- **Tus otros personajes cuentan como rivales hasta que los visites.** Si
+  vendes lo mismo con dos personajes y solo has abierto la Casa de Subastas con
+  uno, el otro parece competencia. Abre la CdS con cada personaje que venda y el
+  problema desaparece.
