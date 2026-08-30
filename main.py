@@ -318,6 +318,11 @@ def run(args: argparse.Namespace) -> int:
     config = load_config(args.config)
 
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "")
+    if args.undercut:
+        # Los undercuts van a su propio canal: son avisos de otra naturaleza que
+        # los chollos y mezclarlos hace que se pierdan unos entre otros. Si no
+        # hay canal propio configurado, se usa el de siempre.
+        webhook_url = os.getenv("DISCORD_UNDERCUT_WEBHOOK_URL", "") or webhook_url
     notifier = DiscordNotifier(webhook_url) if webhook_url else None
 
     if args.test_discord:

@@ -71,6 +71,7 @@ jobs:
         if: '!cancelled()'
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_UNDERCUT_WEBHOOK_URL: ${{ secrets.DISCORD_UNDERCUT_WEBHOOK_URL }}
           BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
           BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
         run: python main.py --undercut ${{ inputs.dry_run && '--dry-run' || '' }}

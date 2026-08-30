@@ -301,7 +301,28 @@ Para comprobarlo en cualquier momento: `/wowalerts`.
   selector de personajes o al hacer `/reload`. Si posteas y sigues jugando, el
   vigilante todavia no lo sabe. El addon te lo recuerda en pantalla.
 
-### 5.2 Instalar la sincronizacion
+### 5.2 Canal propio para los undercuts
+
+Los avisos de undercut son de otra naturaleza que los chollos, asi que van a su
+propio canal. Crea un webhook en el canal que quieras (`Editar canal >
+Integraciones > Webhooks > Nuevo webhook`) y ponlo en `.env`:
+
+```
+DISCORD_UNDERCUT_WEBHOOK_URL=https://discord.com/api/webhooks/...
+```
+
+Si lo dejas vacio, los undercuts van al mismo canal que los chollos.
+
+Para comprobar que ese canal funciona:
+
+```bash
+.venv\Scripts\python.exe main.py --undercut --test-discord
+```
+
+En GitHub Actions hace falta el mismo valor como secret del repositorio, con
+ese mismo nombre.
+
+### 5.3 Instalar la sincronizacion
 
 ```bash
 powershell -ExecutionPolicy Bypass -File instalar_tarea_sync.ps1
@@ -323,7 +344,7 @@ Para quitar la tarea:
 schtasks /delete /tn "WoW subastas sync" /f
 ```
 
-### 5.3 Probarlo
+### 5.4 Probarlo
 
 ```bash
 .venv\Scripts\python.exe main.py --undercut --dry-run
@@ -332,7 +353,7 @@ schtasks /delete /tn "WoW subastas sync" /f
 Te lista quien te ha adelantado y en que personaje tienes que ir a cambiarlo,
 sin enviar nada a Discord.
 
-### 5.4 Como decide que dos subastas compiten
+### 5.5 Como decide que dos subastas compiten
 
 Del mismo objeto, una subasta ajena compite con la tuya si:
 
@@ -345,7 +366,7 @@ rivales de ilvl desconocido generaba solo falsas alarmas: el equipo de Legion
 Remix publica un dato que parece ilvl pero es el nivel del personaje, y esas
 subastas de 100 g salian compitiendo contra listados de 10.000 g.
 
-### 5.5 Que esperar
+### 5.6 Que esperar
 
 - **Latencia de hasta una hora.** Blizzard regenera los datos de subastas una
   vez por hora. No hay forma de esquivarlo con la API oficial.
