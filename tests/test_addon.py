@@ -195,21 +195,18 @@ def test_el_comando_funciona_sin_haber_visto_abrir_la_casa():
     lua.globals().SlashCmdList["WOWALERTS"]()
 
     assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
-    mensajes = " ".join(lua.globals().mensajes.values())
-    assert "2 subasta(s) registradas" in mensajes
 
 
-def test_el_comando_sin_poder_leer_dice_lo_que_conserva():
+def test_el_comando_dice_la_version_y_lo_guardado():
     lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
     recoger(lua)
     lua.globals().mensajes = lua.table_from([])
 
-    lua.globals().SUBASTAS = lua.table_from([])
     lua.globals().SlashCmdList["WOWALERTS"]()
 
     mensajes = " ".join(lua.globals().mensajes.values())
-    assert "conservo las 2" in mensajes
-    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
+    assert "WoW Alerts v" in mensajes
+    assert "tengo guardadas" in mensajes
 
 
 def test_postear_sin_cerrar_la_casa_actualiza():
@@ -250,3 +247,17 @@ def test_una_tanda_de_posteos_no_dispara_una_consulta_por_cada_uno():
 
     # Cinco posteos seguidos, un unico temporizador pendiente.
     assert lua.globals().PENDIENTES == 1
+
+
+def test_el_comando_no_cuenta_antes_de_que_llegue_la_respuesta():
+    """La consulta es asincrona: contar en la misma linea que se pide daba cero
+    y hacia creer que el addon no leia nada."""
+    lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
+    recoger(lua)
+    lua.globals().mensajes = lua.table_from([])
+
+    lua.globals().SlashCmdList["WOWALERTS"]()
+
+    mensajes = " ".join(lua.globals().mensajes.values())
+    assert "tengo guardadas" in mensajes
+    assert "no puedo leer nada" not in mensajes

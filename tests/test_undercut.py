@@ -39,10 +39,28 @@ def test_rival_mas_barato_genera_aviso():
     assert resultado[0].rival_price_gold == 8000
 
 
-def test_rival_al_mismo_precio_exacto_genera_aviso():
+def test_rival_al_mismo_precio_publicado_despues_genera_aviso():
+    # Su id (99) es mayor que el tuyo (1): publico despues y te adelanto.
     resultado = find_undercuts([ajena(oro=9000), ajena(auction_id=1)], [mia()], {})
     assert len(resultado) == 1
     assert resultado[0].tied
+
+
+def test_rival_al_mismo_precio_que_ya_estaba_no_genera_aviso():
+    """Si su subasta es anterior a la tuya, no te ha quitado el sitio: llegaste
+    tu segundo y empataste a sabiendas."""
+    resultado = find_undercuts(
+        [ajena(auction_id=5, oro=9000), ajena(auction_id=100)], [mia(100)], {}
+    )
+    assert resultado == []
+
+
+def test_un_rival_anterior_pero_mas_barato_si_genera_aviso():
+    # Mas barato adelanta siempre, se publicara cuando se publicara.
+    resultado = find_undercuts(
+        [ajena(auction_id=5, oro=8000), ajena(auction_id=100)], [mia(100)], {}
+    )
+    assert len(resultado) == 1
 
 
 def test_rival_mas_caro_no_genera_aviso():

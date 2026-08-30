@@ -49,6 +49,25 @@ def _compite_con(rival: _Rival, mine: MyAuction) -> bool:
     return rival.bonus_ids == frozenset(mine.bonus_ids)
 
 
+def _va_por_delante(rival: _Rival, mine: MyAuction) -> bool:
+    """Decide si esa subasta te ha adelantado a ti, y no al reves.
+
+    Mas barata siempre adelanta, se publicara cuando se publicara. Al mismo
+    precio, en cambio, solo te adelanta la que se publico *despues* de la tuya:
+    si ya estaba ahi cuando tu publicaste, no te ha quitado el sitio, es que
+    llegaste tu segundo y lo sabias.
+
+    El orden se deduce del id de subasta, que crece con el tiempo dentro de un
+    mismo reino.
+    """
+    if rival.price_copper < mine.buyout_copper:
+        return True
+    return (
+        rival.price_copper == mine.buyout_copper
+        and rival.auction_id > mine.auction_id
+    )
+
+
 @dataclass(frozen=True)
 class Undercut:
     """Una subasta tuya con al menos un rival a su precio o por debajo."""
@@ -153,7 +172,7 @@ def find_undercuts(
         delante = [
             rival
             for rival in rivales.get(mine.item_id, [])
-            if rival.price_copper <= mine.buyout_copper and _compite_con(rival, mine)
+            if _va_por_delante(rival, mine) and _compite_con(rival, mine)
         ]
         if not delante:
             continue

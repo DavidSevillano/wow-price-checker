@@ -260,30 +260,20 @@ frame:SetScript("OnEvent", function(_, event, arg1)
     end
 end)
 
+-- Pedir los datos y contarlos en la misma linea no funciona: la consulta es
+-- asincrona y la respuesta tarda un instante. Este comando solo informa de lo
+-- que hay guardado y lanza la peticion; quien cuenta lo nuevo es el manejador
+-- de OWNED_AUCTIONS_UPDATED, cuando llega la respuesta.
 SLASH_WOWALERTS1 = "/wowalerts"
 SLASH_WOWALERTS2 = "/wa"
 SlashCmdList["WOWALERTS"] = function()
     local clave, nombre, reino = claveDePersonaje()
+    local previo = (WowAlertsExportDB.personajes or {})[clave]
+    local guardadas = #((previo or {}).auctions or {})
+
     print(("|cffffd200WoW Alerts v%s|r · %s de %s"):format(ADDON_VERSION, nombre, reino))
-    print(("  la casa de subastas dice que tienes %d subasta(s) ahora mismo."):format(
-        C_AuctionHouse.GetNumOwnedAuctions()
-    ))
+    print(("  tengo guardadas |cff00ff00%d|r subasta(s) de este personaje."):format(guardadas))
+    print("  pidiendo las de ahora mismo...")
 
-    -- Se vuelve a pedir por si la casa de subastas ya estaba abierta cuando el
-    -- addon se cargo, que es justo lo que pasa despues de un /reload: el evento
-    -- de apertura no llega a dispararse.
     pedirSubastas()
-
-    local cuantas = guardar()
-    if not cuantas then
-        local previo = (WowAlertsExportDB.personajes or {})[claveDePersonaje()]
-        print(
-            ("|cffffd200WoW Alerts:|r no puedo leer nada ahora mismo; conservo "
-                .. "las %d que tenia. Abre la Casa de Subastas y vuelve a "
-                .. "probar."):format(#((previo or {}).auctions or {}))
-        )
-        return
-    end
-    print(("|cffffd200WoW Alerts:|r %d subasta(s) registradas de este personaje."):format(cuantas))
-    avisarSiFaltaVolcar()
 end
