@@ -1,0 +1,8 @@
+## Interface: 120100
+## Title: WoW Alerts Export
+## Notes: Exporta tus subastas activas para el vigilante de undercuts.
+## Author: wow-price-checker
+## Version: 1.0
+## SavedVariables: WowAlertsExportDB
+
+WowAlertsExport.lua
