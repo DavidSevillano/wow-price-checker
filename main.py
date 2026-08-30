@@ -33,7 +33,7 @@ from wowalerts.notifier import (
     realm_names_for,
 )
 from wowalerts.scanner import scan_realms
-from wowalerts.state import ItemIdCache, NotifiedAuctions
+from wowalerts.state import ItemIconCache, ItemIdCache, NotifiedAuctions
 
 log = logging.getLogger("wowalerts")
 
@@ -138,6 +138,21 @@ def print_deals(deals, realm_names) -> None:
         )
 
 
+def resolve_icons(client, cache, deals) -> dict[int, str]:
+    """Miniatura de cada objeto con chollo, pidiendola solo la primera vez.
+
+    Los iconos no cambian, asi que se cachean. Un fallo aqui no impide el aviso:
+    simplemente sale sin miniatura.
+    """
+    urls: dict[int, str] = {}
+    for item_id in dict.fromkeys(deal.item_id for deal in deals):
+        url = cache.get(item_id) or client.item_icon_url(item_id)
+        if url:
+            urls[item_id] = url
+            cache.set(item_id, url)
+    return urls
+
+
 def run(args: argparse.Namespace) -> int:
     load_dotenv()
 
@@ -172,6 +187,7 @@ def run(args: argparse.Namespace) -> int:
 
     state_dir = Path(args.state_dir)
     item_cache = ItemIdCache(state_dir / "item_ids.json")
+    icon_cache = ItemIconCache(state_dir / "item_icons.json")
     notified = NotifiedAuctions(
         state_dir / "notified.json", config.settings.state_retention_runs
     )
@@ -231,7 +247,11 @@ def run(args: argparse.Namespace) -> int:
         if args.dry_run:
             log.info("🧪 --dry-run: no envio nada a Discord ni guardo el estado.")
         else:
-            messages = notifier.send_deals(fresh, realm_names)
+            icon_urls = resolve_icons(client, icon_cache, fresh)
+            icon_cache.save()
+            messages = notifier.send_deals(
+                fresh, realm_names, icon_urls, result.snapshot_at
+            )
             log.info("📨 Enviado a Discord en %s mensaje(s).", messages)
             for deal in fresh:
                 notified.mark(deal.realm_id, deal.auction_id)

@@ -14,7 +14,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 log = logging.getLogger(__name__)
 
@@ -95,32 +95,53 @@ class NotifiedAuctions:
         return len(self._seen)
 
 
-class ItemIdCache:
-    """Cache de 'nombre de objeto' -> 'id de objeto'.
+class JsonMapCache:
+    """Diccionario sencillo persistido en disco.
 
-    Los ids se resuelven en cada pasada, pero si la busqueda falla (un fallo
-    puntual de la API) se recurre a lo guardado aqui en vez de dejar de vigilar
-    ese objeto.
+    Sirve de red de seguridad: si una consulta a la API falla puntualmente, se
+    usa lo que se guardo en la pasada anterior en vez de perder el dato.
+    """
+
+    def __init__(self, path: str | Path, section: str = "items") -> None:
+        self.path = Path(path)
+        self.section = section
+        raw = (_read_json(self.path) or {}).get(section)
+        self._data: dict[str, Any] = (
+            {str(k): v for k, v in raw.items()} if isinstance(raw, dict) else {}
+        )
+
+    def get(self, key: Any) -> Any | None:
+        return self._data.get(str(key))
+
+    def set(self, key: Any, value: Any) -> None:
+        self._data[str(key)] = value
+
+    def update(self, mapping: Mapping[Any, Any]) -> None:
+        for key, value in mapping.items():
+            self.set(key, value)
+
+    def save(self) -> None:
+        _write_json_atomic(
+            self.path, {"version": STATE_VERSION, self.section: self._data}
+        )
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+
+class ItemIdCache(JsonMapCache):
+    """Cache de 'nombre de objeto' -> 'id de objeto'."""
+
+    def __init__(self, path: str | Path) -> None:
+        super().__init__(path, "items")
+
+
+class ItemIconCache(JsonMapCache):
+    """Cache de 'id de objeto' -> 'url del icono'.
+
+    Los iconos no cambian casi nunca, asi que se piden una sola vez y se
+    reutilizan en todas las pasadas siguientes.
     """
 
     def __init__(self, path: str | Path) -> None:
-        self.path = Path(path)
-        data = _read_json(self.path) or {}
-        raw = data.get("items")
-        self._ids: dict[str, int] = (
-            {str(k): int(v) for k, v in raw.items() if isinstance(v, int)}
-            if isinstance(raw, dict)
-            else {}
-        )
-
-    def get(self, name: str) -> int | None:
-        return self._ids.get(name)
-
-    def set(self, name: str, item_id: int) -> None:
-        self._ids[name] = item_id
-
-    def update(self, mapping: Mapping[str, int]) -> None:
-        self._ids.update(mapping)
-
-    def save(self) -> None:
-        _write_json_atomic(self.path, {"version": STATE_VERSION, "items": self._ids})
+        super().__init__(path, "icons")

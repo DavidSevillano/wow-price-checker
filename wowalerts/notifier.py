@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 from typing import Any, Iterable, Mapping, Sequence
 
 import requests
@@ -59,7 +60,12 @@ def _color_for(deal: Deal) -> int:
     return COLOR_GOOD
 
 
-def build_embed(deal: Deal, realm_name: str) -> dict[str, Any]:
+def build_embed(
+    deal: Deal,
+    realm_name: str,
+    icon_url: str | None = None,
+    snapshot_at: datetime | None = None,
+) -> dict[str, Any]:
     """Tarjeta de Discord para un chollo."""
     if deal.ilvl_confirmed:
         ilvl_text = f"ilvl **{deal.ilvl}**"
@@ -91,7 +97,7 @@ def build_embed(deal: Deal, realm_name: str) -> dict[str, Any]:
             {"name": "Cantidad", "value": str(deal.quantity), "inline": True}
         )
 
-    return {
+    embed: dict[str, Any] = {
         "title": deal.item_name,
         # El ancla final no le dice nada a Wowhead, pero hace que cada embed
         # tenga una url distinta. Discord fusiona en uno solo los embeds de un
@@ -104,9 +110,24 @@ def build_embed(deal: Deal, realm_name: str) -> dict[str, Any]:
         "footer": {"text": f"Subasta {deal.auction_id} · reino {deal.realm_id}"},
     }
 
+    if icon_url:
+        embed["thumbnail"] = {"url": icon_url}
+
+    if snapshot_at:
+        # Discord lo pinta junto al pie y lo convierte a la zona horaria de cada
+        # lector. Es la hora del volcado de Blizzard, no la del envio: lo que
+        # importa es cuando se vio ese precio.
+        embed["timestamp"] = snapshot_at.isoformat()
+        embed["footer"]["text"] += " · precio visto a las"
+
+    return embed
+
 
 def build_messages(
-    deals: Sequence[Deal], realm_names: Mapping[int, str]
+    deals: Sequence[Deal],
+    realm_names: Mapping[int, str],
+    icon_urls: Mapping[int, str] | None = None,
+    snapshot_at: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Convierte los chollos en mensajes listos para el webhook.
 
@@ -129,7 +150,12 @@ def build_messages(
         chunk = shown[start : start + MAX_EMBEDS_PER_MESSAGE]
         message: dict[str, Any] = {
             "embeds": [
-                build_embed(deal, realm_names.get(deal.realm_id, f"Reino {deal.realm_id}"))
+                build_embed(
+                    deal,
+                    realm_names.get(deal.realm_id, f"Reino {deal.realm_id}"),
+                    (icon_urls or {}).get(deal.item_id),
+                    snapshot_at,
+                )
                 for deal in chunk
             ]
         }
@@ -164,9 +190,15 @@ class DiscordNotifier:
         self.max_retries = max_retries
         self._sleep = sleep if sleep is not None else time.sleep
 
-    def send_deals(self, deals: Sequence[Deal], realm_names: Mapping[int, str]) -> int:
+    def send_deals(
+        self,
+        deals: Sequence[Deal],
+        realm_names: Mapping[int, str],
+        icon_urls: Mapping[int, str] | None = None,
+        snapshot_at: datetime | None = None,
+    ) -> int:
         """Envia los chollos. Devuelve cuantos mensajes se han entregado."""
-        messages = build_messages(deals, realm_names)
+        messages = build_messages(deals, realm_names, icon_urls, snapshot_at)
         for message in messages:
             self._post(message)
         return len(messages)

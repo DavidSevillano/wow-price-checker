@@ -14,6 +14,7 @@ import main as cli
 WEBHOOK = "https://discord.com/api/webhooks/1/abc"
 TOKEN_URL = "https://oauth.battle.net/token"
 BASE = "https://eu.api.blizzard.com/data/wow"
+ICON_URL = "https://render.worldofwarcraft.com/eu/icons/56/7705643.jpg"
 
 CONFIG = """
 region: eu
@@ -57,6 +58,10 @@ def entorno(tmp_path, monkeypatch, requests_mock):
     requests_mock.get(
         f"{BASE}/connected-realm/1305", json={"realms": [{"name": "Dun Modr"}]}
     )
+    requests_mock.get(
+        f"{BASE}/media/item/5000",
+        json={"assets": [{"key": "icon", "value": ICON_URL}]},
+    )
     requests_mock.post(WEBHOOK, status_code=204)
 
     return {
@@ -90,6 +95,47 @@ def test_una_pasada_completa_avisa_del_chollo(entorno):
     assert embed["title"] == "Greaves of the Noxious Depths"
     assert "45.000" in embed["description"]
     assert any(f["value"] == "Dun Modr" for f in embed["fields"])
+
+
+def test_el_aviso_lleva_miniatura_y_hora_del_volcado(entorno):
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": [subasta(1, 45_000 * 10_000)]},
+        headers={"Last-Modified": "Sun, 30 Aug 2026 11:31:16 GMT"},
+    )
+
+    ejecutar(entorno)
+
+    embed = mensajes_discord(entorno["mock"])[0]["embeds"][0]
+    assert embed["thumbnail"] == {"url": ICON_URL}
+    assert embed["timestamp"].startswith("2026-08-30T11:31:16")
+
+
+def test_el_icono_se_cachea_entre_pasadas(entorno):
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": [subasta(1, 45_000 * 10_000), subasta(2, 44_000 * 10_000)]},
+    )
+
+    ejecutar(entorno)
+    ejecutar(entorno, "--ignore-state")
+
+    peticiones = [r for r in entorno["mock"].request_history if "/media/item/" in r.url]
+    assert len(peticiones) == 1
+
+
+def test_un_fallo_al_pedir_el_icono_no_impide_el_aviso(entorno):
+    entorno["mock"].get(f"{BASE}/media/item/5000", status_code=404)
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": [subasta(1, 45_000 * 10_000)]},
+    )
+
+    assert ejecutar(entorno) == cli.EXIT_OK
+
+    embed = mensajes_discord(entorno["mock"])[0]["embeds"][0]
+    assert "thumbnail" not in embed
+    assert embed["title"] == "Greaves of the Noxious Depths"
 
 
 def test_la_segunda_pasada_no_repite_el_mismo_chollo(entorno):

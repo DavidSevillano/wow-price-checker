@@ -145,6 +145,25 @@ class BlizzardClient:
                     return item_id
         return None
 
+    def item_icon_url(self, item_id: int) -> str | None:
+        """URL publica del icono de un objeto, para la miniatura del aviso.
+
+        Devuelve None si no se puede obtener: un aviso sin icono sigue siendo
+        util, asi que esto nunca debe tumbar una notificacion.
+        """
+        try:
+            response = self._api_get(
+                f"/data/wow/media/item/{item_id}", namespace=f"static-{self.region}"
+            )
+            if response.status_code != 200:
+                return None
+            for asset in response.json().get("assets", []):
+                if asset.get("key") == "icon" and isinstance(asset.get("value"), str):
+                    return asset["value"]
+        except BlizzardError as exc:
+            log.debug("Sin icono para el objeto %s: %s", item_id, exc)
+        return None
+
     def connected_realm_ids(self) -> list[int]:
         """Ids de todos los connected realms de la region."""
         response = self._api_get(
