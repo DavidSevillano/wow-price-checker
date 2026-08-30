@@ -117,8 +117,10 @@ def build_embed(
         # Discord lo pinta junto al pie y lo convierte a la zona horaria de cada
         # lector. Es la hora del volcado de Blizzard, no la del envio: lo que
         # importa es cuando se vio ese precio.
+        # Discord pinta el pie como "texto • fecha", asi que el texto se corta
+        # aqui para que se lea "... · precio visto • 30/08/2026 13:31".
         embed["timestamp"] = snapshot_at.isoformat()
-        embed["footer"]["text"] += " · precio visto a las"
+        embed["footer"]["text"] += " · precio visto"
 
     return embed
 
