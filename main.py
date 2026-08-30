@@ -243,7 +243,6 @@ def run_undercut(
     notified = NotifiedUndercuts(
         state_dir / "undercuts.json", config.settings.state_retention_runs
     )
-    icon_cache = ItemIconCache(state_dir / "item_icons.json")
 
     todos: list = []
     snapshot_at = None
@@ -257,6 +256,14 @@ def run_undercut(
             snapshot_at = snapshot.taken_at
         todos.extend(
             find_undercuts(snapshot.auctions, mias, config.bonus_ilvl_map, realm_id)
+        )
+
+    if snapshot_at:
+        edad = (datetime.now(timezone.utc) - snapshot_at).total_seconds() / 60
+        log.info(
+            "🕒 Datos del volcado de las %s UTC (hace %.0f min).",
+            snapshot_at.strftime("%H:%M"),
+            edad,
         )
 
     frescos = todos if ignore_state else notified.filter_new(todos)
@@ -286,19 +293,7 @@ def run_undercut(
         log.info("🧪 --dry-run: no envio nada a Discord ni guardo el estado.")
         return EXIT_OK
 
-    realm_names = {
-        realm_id: client.connected_realm_name(realm_id) for realm_id in grupos
-    }
-
-    icon_urls: dict[int, str] = {}
-    for item_id in dict.fromkeys(u.mine.item_id for u in frescos):
-        url = icon_cache.get(item_id) or client.item_icon_url(item_id)
-        if url:
-            icon_urls[item_id] = url
-            icon_cache.set(item_id, url)
-    icon_cache.save()
-
-    enviados = notifier.send_undercuts(frescos, realm_names, icon_urls, snapshot_at)
+    enviados = notifier.send_undercuts(frescos)
     log.info("📨 Enviados a Discord %s aviso(s).", len(enviados))
 
     # Solo se marcan los que han salido de verdad, igual que con los chollos.

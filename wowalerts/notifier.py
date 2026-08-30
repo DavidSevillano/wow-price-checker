@@ -29,7 +29,13 @@ COLOR_GOOD = 0xE67E22        # naranja: por debajo del umbral
 COLOR_GREAT = 0xF1C40F       # amarillo: bastante por debajo
 COLOR_STEAL = 0x2ECC71       # verde: chollo serio
 COLOR_WARNING = 0xE74C3C     # rojo: aviso de salud del bot
-COLOR_UNDERCUT = 0xC0392B    # rojo oscuro: te han adelantado
+# Limite duro de Discord para el texto de un mensaje.
+MAX_DISCORD_CONTENT = 2000
+# Tope propio de lineas por mensaje: mas de esto ya no se lee de un vistazo.
+MAX_UNDERCUT_LINES_PER_MESSAGE = 20
+# Los nombres de objeto de WoW no pasan de 60 caracteres, pero recortarlos
+# garantiza que una linea suelta nunca pueda desbordar un mensaje entero.
+MAX_ITEM_NAME = 100
 
 TIME_LEFT_ES = {
     "SHORT": "menos de 30 min",
@@ -179,100 +185,72 @@ def build_messages(
     return messages
 
 
-def build_undercut_embed(
-    undercut: Undercut,
-    realm_name: str,
-    icon_url: str | None = None,
-    snapshot_at: datetime | None = None,
-) -> dict[str, Any]:
-    """Tarjeta de Discord para una subasta tuya que han adelantado."""
+def _undercut_line(undercut: Undercut) -> str:
+    """Una linea del aviso: que objeto y a que precio hay que batir."""
+    nombre = undercut.mine.item_name
+    if len(nombre) > MAX_ITEM_NAME:
+        nombre = nombre[: MAX_ITEM_NAME - 1].rstrip() + "…"
+
     if undercut.tied:
-        titular = (
-            f"Te han igualado: **{format_gold(undercut.rival_price_gold)} de oro**, "
-            f"el mismo precio que el tuyo."
-        )
-    else:
-        titular = (
-            f"**{format_gold(undercut.rival_price_gold)} de oro** frente a tus "
-            f"{format_gold(undercut.my_price_gold)}: "
-            f"{format_gold(undercut.gap_gold)} de oro por debajo."
-        )
-
-    description = f"{titular}\n"
-    if undercut.rivals_ahead > 1:
-        description += f"Hay **{undercut.rivals_ahead}** por delante de la tuya.\n"
-    description += f"ilvl **{undercut.mine.ilvl}**."
-
-    embed: dict[str, Any] = {
-        "title": undercut.mine.item_name,
-        # Ancla distinta por subasta: Discord fusiona en una sola galeria los
-        # embeds de un mensaje que comparten url.
-        "url": (
-            f"https://www.wowhead.com/item={undercut.mine.item_id}"
-            f"#a{undercut.mine.auction_id}"
-        ),
-        "color": COLOR_UNDERCUT,
-        "description": description,
-        "fields": [
-            {
-                "name": "Repostear en",
-                "value": f"{undercut.mine.character} · {undercut.mine.realm}",
-                "inline": True,
-            },
-            {"name": "Reino conectado", "value": realm_name, "inline": True},
-        ],
-        "footer": {
-            "text": (
-                f"Tu subasta {undercut.mine.auction_id} · "
-                f"rival {undercut.rival_auction_id}"
-            )
-        },
-    }
-
-    if icon_url:
-        embed["thumbnail"] = {"url": icon_url}
-    if snapshot_at:
-        embed["timestamp"] = snapshot_at.isoformat()
-        embed["footer"]["text"] += " · precio visto"
-
-    return embed
+        return f"• {nombre} — te igualan a {format_gold(undercut.rival_price_gold)} g"
+    return (
+        f"• {nombre} — ~~{format_gold(undercut.my_price_gold)}~~ "
+        f"**{format_gold(undercut.rival_price_gold)} g**"
+    )
 
 
-def build_undercut_messages(
-    undercuts: Sequence[Undercut],
-    realm_names: Mapping[int, str],
-    icon_urls: Mapping[int, str] | None = None,
-    snapshot_at: datetime | None = None,
-) -> list[dict[str, Any]]:
-    """Convierte los undercuts en mensajes listos para el webhook."""
+def _repartir(lineas: list[str], presupuesto: int) -> list[list[str]]:
+    """Parte las lineas en grupos que quepan en un mensaje de Discord."""
+    grupos: list[list[str]] = []
+    actual: list[str] = []
+    largo = 0
+
+    for linea in lineas:
+        cabe = largo + len(linea) + 1 <= presupuesto
+        if actual and (not cabe or len(actual) >= MAX_UNDERCUT_LINES_PER_MESSAGE):
+            grupos.append(actual)
+            actual, largo = [], 0
+        actual.append(linea)
+        largo += len(linea) + 1
+
+    if actual:
+        grupos.append(actual)
+    return grupos
+
+
+def build_undercut_messages(undercuts: Sequence[Undercut]) -> list[dict[str, Any]]:
+    """Un mensaje por personaje, con sus subastas adelantadas en una lista.
+
+    Agrupar por personaje es lo que hace el aviso accionable: cada mensaje es
+    un viaje al buzon de un personaje concreto, y dice todo lo que hay que
+    cambiar alli.
+    """
     if not undercuts:
         return []
 
     shown = list(undercuts[:MAX_DEALS_PER_RUN])
-    omitted = len(undercuts) - len(shown)
 
-    plural = "subastas tuyas" if len(shown) != 1 else "subasta tuya"
-    header = f"⚔️ **Te han adelantado en {len(shown)} {plural}**"
-    if omitted:
-        header += f" (y {omitted} mas que te envio en la proxima pasada)"
+    # dict normal: conserva el orden de llegada, que ya viene por diferencia de
+    # precio, asi que el personaje con el undercut mas gordo sale primero.
+    por_personaje: dict[tuple[str, str], list[Undercut]] = {}
+    for undercut in shown:
+        clave = (undercut.mine.character, undercut.mine.realm)
+        por_personaje.setdefault(clave, []).append(undercut)
 
     messages: list[dict[str, Any]] = []
-    for start in range(0, len(shown), MAX_EMBEDS_PER_MESSAGE):
-        chunk = shown[start : start + MAX_EMBEDS_PER_MESSAGE]
-        message: dict[str, Any] = {
-            "embeds": [
-                build_undercut_embed(
-                    undercut,
-                    realm_names.get(undercut.realm_id, f"Reino {undercut.realm_id}"),
-                    (icon_urls or {}).get(undercut.mine.item_id),
-                    snapshot_at,
-                )
-                for undercut in chunk
-            ]
-        }
-        if start == 0:
-            message["content"] = header
-        messages.append(message)
+    for (character, realm), suyas in por_personaje.items():
+        plural = "subastas" if len(suyas) != 1 else "subasta"
+        cabecera = (
+            f"⚔️ **{character}** · {realm} — te han adelantado en "
+            f"{len(suyas)} {plural}"
+        )
+        continuacion = f"⚔️ **{character}** · sigue"
+        presupuesto = MAX_DISCORD_CONTENT - max(len(cabecera), len(continuacion)) - 1
+
+        grupos = _repartir([_undercut_line(u) for u in suyas], presupuesto)
+        for indice, grupo in enumerate(grupos):
+            titulo = cabecera if indice == 0 else continuacion
+            messages.append({"content": "\n".join([titulo, *grupo])})
 
     return messages
 
@@ -319,21 +297,13 @@ class DiscordNotifier:
             self._post(message)
         return deals_to_send(deals)
 
-    def send_undercuts(
-        self,
-        undercuts: Sequence[Undercut],
-        realm_names: Mapping[int, str],
-        icon_urls: Mapping[int, str] | None = None,
-        snapshot_at: datetime | None = None,
-    ) -> list[Undercut]:
+    def send_undercuts(self, undercuts: Sequence[Undercut]) -> list[Undercut]:
         """Envia los undercuts y devuelve los que de verdad han salido.
 
         Como en `send_deals`, lo que no cabe no se marca como avisado y sale en
         la pasada siguiente.
         """
-        for message in build_undercut_messages(
-            undercuts, realm_names, icon_urls, snapshot_at
-        ):
+        for message in build_undercut_messages(undercuts):
             self._post(message)
         return list(undercuts[:MAX_DEALS_PER_RUN])
 

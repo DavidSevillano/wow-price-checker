@@ -205,71 +205,113 @@ def test_mensaje_de_prueba(requests_mock):
 # -- Avisos de undercut -----------------------------------------------------
 
 from wowalerts.misubastas import MyAuction
-from wowalerts.notifier import build_undercut_embed, build_undercut_messages
+from wowalerts.notifier import build_undercut_messages
 from wowalerts.undercut import Undercut
 
 
-def un_undercut(oro_mio=9000, oro_rival=8000, rivales=1, auction_id=1):
+def un_undercut(
+    objeto="Grebas de las profundidades nocivas",
+    oro_mio=9000,
+    oro_rival=8000,
+    personaje="Pepe",
+    reino="Sanguino",
+    auction_id=1,
+):
     mine = MyAuction(
         auction_id=auction_id,
         item_id=200000,
-        item_name="Greaves of the Noxious Depths",
+        item_name=objeto,
         ilvl=311,
         buyout_copper=oro_mio * 10_000,
         quantity=1,
-        character="Pepe",
-        realm="Sanguino",
-        realm_slug="sanguino",
+        character=personaje,
+        realm=reino,
+        realm_slug=reino.lower(),
     )
     return Undercut(
         mine=mine,
         realm_id=1379,
         rival_auction_id=99,
         rival_price_copper=oro_rival * 10_000,
-        rivals_ahead=rivales,
+        rivals_ahead=1,
     )
-
-
-def test_el_embed_lleva_los_dos_precios():
-    embed = build_undercut_embed(un_undercut(), "Sanguino")
-    assert "9.000" in embed["description"]
-    assert "8.000" in embed["description"]
-
-
-def test_el_embed_dice_donde_repostear():
-    embed = build_undercut_embed(un_undercut(), "Sanguino")
-    campos = {c["name"]: c["value"] for c in embed["fields"]}
-    assert campos["Repostear en"] == "Pepe · Sanguino"
-
-
-def test_el_empate_se_explica_como_empate():
-    embed = build_undercut_embed(un_undercut(oro_rival=9000), "Sanguino")
-    assert "mismo precio" in embed["description"]
-
-
-def test_varios_rivales_se_cuentan():
-    embed = build_undercut_embed(un_undercut(rivales=3), "Sanguino")
-    assert "3" in embed["description"]
-
-
-def test_las_urls_no_se_repiten_entre_embeds():
-    mensajes = build_undercut_messages(
-        [un_undercut(auction_id=1), un_undercut(auction_id=2)], {1379: "Sanguino"}
-    )
-    urls = [e["url"] for m in mensajes for e in m["embeds"]]
-    assert len(set(urls)) == len(urls)
 
 
 def test_sin_undercuts_no_hay_mensajes():
-    assert build_undercut_messages([], {}) == []
+    assert build_undercut_messages([]) == []
 
 
-def test_el_encabezado_dice_cuantas_son():
-    mensajes = build_undercut_messages([un_undercut()], {1379: "Sanguino"})
-    assert "1 subasta tuya" in mensajes[0]["content"]
+def test_la_cabecera_lleva_personaje_y_reino():
+    contenido = build_undercut_messages([un_undercut()])[0]["content"]
+    assert "Pepe" in contenido
+    assert "Sanguino" in contenido
 
 
-def test_se_parten_en_mensajes_de_diez():
-    muchos = [un_undercut(auction_id=i) for i in range(1, 13)]
-    mensajes = build_undercut_messages(muchos, {1379: "Sanguino"})
-    assert [len(m["embeds"]) for m in mensajes] == [10, 2]
+def test_un_mensaje_por_personaje():
+    mensajes = build_undercut_messages(
+        [
+            un_undercut(personaje="Pepe", auction_id=1),
+            un_undercut(personaje="Ana", auction_id=2),
+            un_undercut(personaje="Pepe", auction_id=3),
+        ]
+    )
+    assert len(mensajes) == 2
+    assert "Pepe" in mensajes[0]["content"]
+    assert "Ana" in mensajes[1]["content"]
+
+
+def test_las_subastas_de_un_personaje_van_juntas():
+    mensajes = build_undercut_messages(
+        [
+            un_undercut(objeto="Grebas", personaje="Pepe", auction_id=1),
+            un_undercut(objeto="Zapatillas", personaje="Pepe", auction_id=2),
+        ]
+    )
+    assert len(mensajes) == 1
+    assert "Grebas" in mensajes[0]["content"]
+    assert "Zapatillas" in mensajes[0]["content"]
+
+
+def test_un_undercut_de_verdad_muestra_los_dos_precios():
+    contenido = build_undercut_messages([un_undercut(oro_mio=50000, oro_rival=30000)])[0][
+        "content"
+    ]
+    assert "50.000" in contenido
+    assert "30.000" in contenido
+
+
+def test_un_empate_se_dice_como_empate():
+    contenido = build_undercut_messages([un_undercut(oro_mio=9000, oro_rival=9000)])[0][
+        "content"
+    ]
+    assert "igualan" in contenido
+    assert "9.000" in contenido
+
+
+def test_el_recuento_va_en_la_cabecera():
+    mensajes = build_undercut_messages(
+        [un_undercut(auction_id=1), un_undercut(auction_id=2)]
+    )
+    assert "2 subastas" in mensajes[0]["content"]
+
+
+def test_una_sola_subasta_va_en_singular():
+    contenido = build_undercut_messages([un_undercut()])[0]["content"]
+    assert "en 1 subasta" in contenido
+    assert "subastas" not in contenido
+
+
+def test_un_personaje_con_muchisimas_se_parte_en_varios_mensajes():
+    muchas = [un_undercut(auction_id=i) for i in range(1, 26)]
+    mensajes = build_undercut_messages(muchas)
+    assert len(mensajes) == 2
+    assert "Pepe" in mensajes[1]["content"]
+
+
+def test_ningun_mensaje_pasa_del_limite_de_discord():
+    muchas = [
+        un_undercut(objeto="Objeto con un nombre larguisimo " * 3, auction_id=i)
+        for i in range(1, 51)
+    ]
+    for mensaje in build_undercut_messages(muchas):
+        assert len(mensaje["content"]) <= 2000
