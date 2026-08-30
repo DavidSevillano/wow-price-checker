@@ -76,6 +76,12 @@ def subasta(auction_id=1, item_id=200000, buyout=90_000_000, quantity=1, link=LI
     }
 
 
+def recoger(lua):
+    """Abre la casa de subastas y deja que el addon recoja lo que hay."""
+    lua.globals().DISPARAR("AUCTION_HOUSE_SHOW")
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+
 def volcado(lua) -> dict:
     """El payload que el addon dejaria en SavedVariables, ya parseado."""
     return json.loads(lua.globals().WowAlertsExportDB.payload)
@@ -83,13 +89,13 @@ def volcado(lua) -> dict:
 
 def test_el_payload_es_json_valido():
     lua = runtime(subastas=[subasta()])
-    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    recoger(lua)
     assert volcado(lua)["version"] == 1
 
 
 def test_exporta_los_datos_de_la_subasta():
     lua = runtime(subastas=[subasta()])
-    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    recoger(lua)
 
     entrada = volcado(lua)["personajes"]["Sanguino-Pepe"]
     assert entrada["character"] == "Pepe"
@@ -109,7 +115,7 @@ def test_exporta_los_datos_de_la_subasta():
 
 def test_ignora_las_subastas_sin_compra_directa():
     lua = runtime(subastas=[subasta(buyout=0), subasta(auction_id=2)])
-    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    recoger(lua)
 
     subastas = volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]
     assert [s["auctionID"] for s in subastas] == [2]
@@ -118,7 +124,7 @@ def test_ignora_las_subastas_sin_compra_directa():
 def test_un_enlace_sin_bonus_ids_no_rompe():
     sin_bonus = "|cffffffff|Hitem:200000::::::::80:250::14:0:::|h[Cosa]|h|r"
     lua = runtime(subastas=[subasta(link=sin_bonus)])
-    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    recoger(lua)
 
     entrada = volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"][0]
     assert entrada["bonusIDs"] == []
@@ -127,20 +133,20 @@ def test_un_enlace_sin_bonus_ids_no_rompe():
 
 def test_sin_subastas_el_personaje_sale_igualmente_con_lista_vacia():
     lua = runtime(subastas=[])
-    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    recoger(lua)
     assert volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"] == []
 
 
 def test_los_nombres_con_comillas_no_rompen_el_json():
     lua = runtime(personaje='Pe"pe', subastas=[subasta()])
-    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    recoger(lua)
     assert volcado(lua)["personajes"]['Sanguino-Pe"pe']["character"] == 'Pe"pe'
 
 
 def test_avisa_de_que_falta_volcar_a_disco():
     lua = runtime(subastas=[subasta()])
     lua.globals().DISPARAR("ADDON_LOADED", "WowAlertsExport")
-    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    recoger(lua)
 
     mensajes = " ".join(lua.globals().mensajes.values())
     assert "/reload" in mensajes
@@ -149,14 +155,36 @@ def test_avisa_de_que_falta_volcar_a_disco():
 def test_no_avisa_cuando_no_ha_cambiado_nada():
     lua = runtime(subastas=[subasta()])
     # Primera pasada: se recoge y se "guarda a disco".
-    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    recoger(lua)
     lua.execute("VOLCADO = WowAlertsExportDB.payload")
     lua.globals().mensajes = lua.table_from([])
 
     # Se simula un reinicio con ese payload ya en disco.
     lua.execute("WowAlertsExportDB.payload = VOLCADO")
     lua.globals().DISPARAR("ADDON_LOADED", "WowAlertsExport")
-    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    recoger(lua)
 
     mensajes = " ".join(lua.globals().mensajes.values())
     assert "/reload" not in mensajes
+
+
+def test_con_la_casa_cerrada_no_borra_lo_ya_recogido():
+    """La regresion que costo un viaje al juego: un /reload con la CdS cerrada
+    recogia cero subastas y machacaba las buenas."""
+    lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
+    recoger(lua)
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
+
+    # Cierras la casa de subastas: el juego ya no sabe que tienes puesto.
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    lua.globals().SUBASTAS = lua.table_from([])
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
+
+
+def test_el_comando_con_la_casa_cerrada_lo_explica():
+    lua = runtime(subastas=[subasta()])
+    lua.globals().SlashCmdList["WOWALERTS"]()
+    mensajes = " ".join(lua.globals().mensajes.values())
+    assert "abre la Casa de Subastas" in mensajes

@@ -13,6 +13,11 @@ WowAlertsExportDB = WowAlertsExportDB or {}
 -- saber si queda algo sin volcar.
 local volcadoEnDisco = nil
 
+-- El juego solo conoce tus subastas mientras la Casa de Subastas esta abierta:
+-- con ella cerrada, GetNumOwnedAuctions() devuelve 0. Sin este control, un
+-- /reload posterior recogeria cero subastas y borraria las buenas.
+local casaAbierta = false
+
 -- ---------------------------------------------------------------------------
 --  Codificacion JSON minima (solo los tipos que usamos)
 -- ---------------------------------------------------------------------------
@@ -152,6 +157,12 @@ local function claveDePersonaje()
 end
 
 local function guardar()
+    -- Con la casa de subastas cerrada no hay nada que leer, y sobrescribir
+    -- ahora dejaria la entrada de este personaje vacia.
+    if not casaAbierta then
+        return nil
+    end
+
     -- Se parte de lo ya guardado para no borrar las subastas de los demas
     -- personajes: cada uno actualiza solo su propia entrada.
     local datos = WowAlertsExportDB.personajes or {}
@@ -189,11 +200,13 @@ end
 --  Eventos
 -- ---------------------------------------------------------------------------
 
+-- No hace falta engancharse a PLAYER_LOGOUT: lo recogido ya vive en
+-- WowAlertsExportDB, y WoW escribe esa tabla a disco al salir por su cuenta.
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("AUCTION_HOUSE_SHOW")
+frame:RegisterEvent("AUCTION_HOUSE_CLOSED")
 frame:RegisterEvent("OWNED_AUCTIONS_UPDATED")
-frame:RegisterEvent("PLAYER_LOGOUT")
 
 frame:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" then
@@ -201,19 +214,29 @@ frame:SetScript("OnEvent", function(_, event, arg1)
             volcadoEnDisco = WowAlertsExportDB.payload
         end
     elseif event == "AUCTION_HOUSE_SHOW" then
+        casaAbierta = true
         C_AuctionHouse.QueryOwnedAuctions({})
+    elseif event == "AUCTION_HOUSE_CLOSED" then
+        casaAbierta = false
     elseif event == "OWNED_AUCTIONS_UPDATED" then
         local cuantas = guardar()
-        print(("|cffffd200WoW Alerts:|r %d subasta(s) tuyas registradas."):format(cuantas))
-        avisarSiFaltaVolcar()
-    elseif event == "PLAYER_LOGOUT" then
-        guardar()
+        if cuantas then
+            print(("|cffffd200WoW Alerts:|r %d subasta(s) tuyas registradas."):format(cuantas))
+            avisarSiFaltaVolcar()
+        end
     end
 end)
 
 SLASH_WOWALERTS1 = "/wowalerts"
 SlashCmdList["WOWALERTS"] = function()
     local cuantas = guardar()
+    if not cuantas then
+        print(
+            "|cffffd200WoW Alerts:|r abre la Casa de Subastas primero. Con ella"
+                .. " cerrada el juego no sabe que subastas tienes puestas."
+        )
+        return
+    end
     print(("|cffffd200WoW Alerts:|r %d subasta(s) registradas de este personaje."):format(cuantas))
     avisarSiFaltaVolcar()
 end
