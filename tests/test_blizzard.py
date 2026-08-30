@@ -145,6 +145,69 @@ def test_nombre_del_reino(requests_mock, client):
     assert client.connected_realm_name(1305) == "Dun Modr / Sanguino"
 
 
+def test_un_reino_ruso_se_muestra_en_cirilico(requests_mock, client):
+    """Asi es como aparece en el juego a quien juega ahi."""
+    give_token(requests_mock)
+    requests_mock.get(
+        REALM_URL,
+        json={
+            "realms": [
+                {
+                    "locale": "ruRU",
+                    "name": {"en_GB": "Howling Fjord", "ru_RU": "Ревущий фьорд"},
+                }
+            ]
+        },
+    )
+
+    assert client.connected_realm_name(1305) == "Ревущий фьорд"
+
+
+def test_varios_reinos_rusos_agrupados(requests_mock, client):
+    give_token(requests_mock)
+    requests_mock.get(
+        REALM_URL,
+        json={
+            "realms": [
+                {"locale": "ruRU", "name": {"en_GB": "Goldrinn", "ru_RU": "Голдринн"}},
+                {"locale": "ruRU", "name": {"en_GB": "Greymane", "ru_RU": "Седогрив"}},
+            ]
+        },
+    )
+
+    assert client.connected_realm_name(1305) == "Голдринн / Седогрив"
+
+
+def test_un_reino_no_ruso_conserva_su_nombre(requests_mock, client):
+    give_token(requests_mock)
+    requests_mock.get(
+        REALM_URL,
+        json={"realms": [{"locale": "enGB", "name": {"en_GB": "Kazzak", "ru_RU": "Каззак"}}]},
+    )
+
+    assert client.connected_realm_name(1305) == "Kazzak"
+
+
+def test_sin_el_idioma_propio_cae_al_del_cliente(requests_mock, client):
+    give_token(requests_mock)
+    requests_mock.get(
+        REALM_URL,
+        json={"realms": [{"locale": "xxYY", "name": {"en_GB": "Silvermoon"}}]},
+    )
+
+    assert client.connected_realm_name(1305) == "Silvermoon"
+
+
+def test_el_nombre_del_reino_se_pide_sin_locale(requests_mock, client):
+    """Con locale, Blizzard devuelve un solo idioma y no se puede elegir."""
+    give_token(requests_mock)
+    requests_mock.get(REALM_URL, json={"realms": []})
+
+    client.connected_realm_name(1305)
+
+    assert "locale" not in requests_mock.last_request.qs
+
+
 def test_nombre_del_reino_cae_al_id_si_falla(requests_mock, client):
     give_token(requests_mock)
     requests_mock.get(REALM_URL, status_code=404)

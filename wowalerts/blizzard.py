@@ -188,19 +188,20 @@ class BlizzardClient:
         gastar 250 peticiones extra en cada pasada.
         """
         try:
+            # Sin locale: asi llega el nombre en todos los idiomas y cada reino
+            # puede mostrarse en el suyo.
             response = self._api_get(
                 f"/data/wow/connected-realm/{realm_id}",
                 namespace=f"dynamic-{self.region}",
+                localized=False,
             )
             if response.status_code != 200:
                 return f"Reino {realm_id}"
 
             names: list[str] = []
             for realm in response.json().get("realms", []):
-                name = realm.get("name")
-                if isinstance(name, dict):
-                    name = name.get(self.locale)
-                if isinstance(name, str) and name:
+                name = _realm_display_name(realm, self.locale)
+                if name:
                     names.append(name)
             if names:
                 return " / ".join(dict.fromkeys(names))
@@ -228,10 +229,23 @@ class BlizzardClient:
     # -- Fontaneria HTTP ----------------------------------------------------
 
     def _api_get(
-        self, path: str, *, namespace: str, params: dict | None = None
+        self,
+        path: str,
+        *,
+        namespace: str,
+        params: dict | None = None,
+        localized: bool = True,
     ) -> requests.Response:
+        """Peticion a la API de datos.
+
+        Con `localized=False` no se manda el parametro locale y Blizzard
+        devuelve los textos en todos los idiomas, que es lo que hace falta para
+        elegir el nombre de un reino en su propia lengua.
+        """
         url = f"https://{self.region}.api.blizzard.com{path}"
-        query = {"namespace": namespace, "locale": self.locale}
+        query = {"namespace": namespace}
+        if localized:
+            query["locale"] = self.locale
         query.update(params or {})
         return self._request("GET", url, params=query)
 
@@ -279,6 +293,39 @@ def _retry_delay(attempt: int, response: requests.Response | None) -> float:
             except ValueError:
                 pass
     return float(2**attempt)
+
+
+def _realm_display_name(realm: dict, fallback_locale: str) -> str | None:
+    """Nombre de un reino en su propio idioma.
+
+    Los reinos rusos se llaman 'Ревущий фьорд' o 'Гордунни', no por su
+    transliteracion inglesa, y asi es como aparecen en el juego a quien juega
+    ahi. Blizzard indica el idioma de cada reino en su campo 'locale' (con el
+    formato 'ruRU', sin guion bajo), distinto del que usan las claves del
+    diccionario de nombres ('ru_RU').
+    """
+    name = realm.get("name")
+    if isinstance(name, str):
+        return name or None
+    if not isinstance(name, dict):
+        return None
+
+    candidatos: list[str] = []
+    propio = str(realm.get("locale") or "")
+    if len(propio) == 4:
+        candidatos.append(f"{propio[:2]}_{propio[2:]}")
+    candidatos.append(fallback_locale)
+
+    for clave in candidatos:
+        valor = name.get(clave)
+        if isinstance(valor, str) and valor:
+            return valor
+
+    # Ultimo recurso: cualquier idioma antes que quedarnos sin nombre.
+    for valor in name.values():
+        if isinstance(valor, str) and valor:
+            return valor
+    return None
 
 
 def _parse_http_date(value: str | None) -> datetime | None:
