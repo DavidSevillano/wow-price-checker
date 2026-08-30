@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 
-from wowalerts.state import ItemIdCache, NotifiedAuctions
+from wowalerts.state import ItemIdCache, NotifiedAuctions, NotifiedUndercuts
 
 
 @dataclass
@@ -103,3 +103,51 @@ def test_cache_de_ids_de_objeto(tmp_path):
     cache.save()
 
     assert ItemIdCache(path).get("Botas") == 12345
+
+
+# -- Memoria de undercuts ---------------------------------------------------
+
+
+def test_undercut_nuevo_es_nuevo(tmp_path):
+    memoria = NotifiedUndercuts(tmp_path / "u.json")
+    assert memoria.is_new(memoria.key(1379, 1, 99))
+
+
+def test_undercut_ya_avisado_no_se_repite(tmp_path):
+    path = tmp_path / "u.json"
+    memoria = NotifiedUndercuts(path)
+    memoria.mark(memoria.key(1379, 1, 99))
+    memoria.save()
+
+    otra = NotifiedUndercuts(path)
+    assert not otra.is_new(otra.key(1379, 1, 99))
+
+
+def test_repostear_reabre_el_aviso(tmp_path):
+    path = tmp_path / "u.json"
+    memoria = NotifiedUndercuts(path)
+    memoria.mark(memoria.key(1379, 1, 99))
+    memoria.save()
+
+    # Reposteas: tu subasta pasa a ser la 2. Mismo rival, pareja nueva.
+    otra = NotifiedUndercuts(path)
+    assert otra.is_new(otra.key(1379, 2, 99))
+
+
+def test_un_rival_nuevo_reabre_el_aviso(tmp_path):
+    path = tmp_path / "u.json"
+    memoria = NotifiedUndercuts(path)
+    memoria.mark(memoria.key(1379, 1, 99))
+    memoria.save()
+
+    assert NotifiedUndercuts(path).is_new(NotifiedUndercuts(path).key(1379, 1, 98))
+
+
+def test_los_undercuts_no_pisan_a_los_chollos(tmp_path):
+    # Cada memoria usa su propia seccion, asi que pueden compartir carpeta.
+    path = tmp_path / "compartido.json"
+    chollos = NotifiedAuctions(path)
+    chollos.mark(1379, 1)
+    chollos.save()
+
+    assert NotifiedUndercuts(path).is_new(NotifiedUndercuts(path).key(1379, 1, 99))
