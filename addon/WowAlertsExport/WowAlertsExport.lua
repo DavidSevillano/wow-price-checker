@@ -7,13 +7,17 @@
 
 local FORMAT_VERSION = 1
 -- Version del addon, para saber que codigo se esta ejecutando de verdad.
-local ADDON_VERSION = "1.2"
+local ADDON_VERSION = "1.3"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 
--- Lo que habia en disco al arrancar. Comparar contra esto es lo que permite
--- saber si queda algo sin volcar.
-local volcadoEnDisco = nil
+-- La huella de lo que habia en disco al arrancar. Comparar contra esto es lo
+-- que permite saber si queda algo sin volcar.
+--
+-- Es una huella y no el volcado entero porque el volcado lleva la hora de cada
+-- exportacion, que cambia cada vez que se lee aunque las subastas sean las
+-- mismas: comparando eso, el aviso saltaba siempre.
+local huellaEnDisco = nil
 
 -- El juego solo conoce tus subastas mientras la Casa de Subastas esta abierta:
 -- con ella cerrada, GetNumOwnedAuctions() devuelve 0. La regla para no perder
@@ -182,6 +186,16 @@ local function claveDePersonaje()
     return reino .. "-" .. nombre, nombre, reino
 end
 
+-- Las subastas de cada personaje, sin horas ni nada que cambie solo. Dos
+-- lecturas con las mismas subastas dan la misma huella.
+local function huellaDe(datos)
+    local limpio = {}
+    for clave, entrada in pairs(datos) do
+        limpio[clave] = entrada.auctions or {}
+    end
+    return encode(limpio)
+end
+
 local function guardar()
     -- Se parte de lo ya guardado para no borrar las subastas de los demas
     -- personajes: cada uno actualiza solo su propia entrada.
@@ -212,12 +226,13 @@ local function guardar()
         version = FORMAT_VERSION,
         personajes = datos,
     })
+    WowAlertsExportDB.huella = huellaDe(datos)
 
     return #recogidas
 end
 
 local function avisarSiFaltaVolcar()
-    if WowAlertsExportDB.payload == volcadoEnDisco then
+    if WowAlertsExportDB.huella == huellaEnDisco then
         return
     end
     print(
@@ -245,7 +260,7 @@ frame:RegisterEvent("AUCTION_CANCELED")
 frame:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" then
         if arg1 == "WowAlertsExport" then
-            volcadoEnDisco = WowAlertsExportDB.payload
+            huellaEnDisco = WowAlertsExportDB.huella
         end
     elseif event == "AUCTION_HOUSE_SHOW" then
         pedirSubastas()

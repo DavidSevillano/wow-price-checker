@@ -36,7 +36,7 @@ function CreateFrame()
 end
 
 function print(texto) mensajes[#mensajes + 1] = texto end
-function time() return 1756500000 end
+function time() return AHORA end
 function UnitName() return PERSONAJE end
 function GetRealmName() return REINO end
 function GetDetailedItemLevelInfo() return ILVL end
@@ -62,6 +62,7 @@ def runtime(personaje="Pepe", reino="Sanguino", ilvl=311, subastas=None):
     lua.globals().PERSONAJE = personaje
     lua.globals().REINO = reino
     lua.globals().ILVL = ilvl
+    lua.globals().AHORA = 1756500000
     lua.execute(DOBLES)
 
     lua.globals().SUBASTAS = lua.table_from(subastas or [])
@@ -159,16 +160,43 @@ def test_no_avisa_cuando_no_ha_cambiado_nada():
     lua = runtime(subastas=[subasta()])
     # Primera pasada: se recoge y se "guarda a disco".
     recoger(lua)
-    lua.execute("VOLCADO = WowAlertsExportDB.payload")
     lua.globals().mensajes = lua.table_from([])
 
-    # Se simula un reinicio con ese payload ya en disco.
-    lua.execute("WowAlertsExportDB.payload = VOLCADO")
+    # Se simula el arranque siguiente con eso ya en disco.
     lua.globals().DISPARAR("ADDON_LOADED", "WowAlertsExport")
     recoger(lua)
 
     mensajes = " ".join(lua.globals().mensajes.values())
     assert "/reload" not in mensajes
+
+
+def test_no_avisa_cuando_solo_ha_pasado_el_tiempo():
+    """El volcado lleva la hora de exportacion, que cambia en cada lectura. Si
+    se compara eso, el aviso de 'sin guardar a disco' sale siempre."""
+    lua = runtime(subastas=[subasta()])
+    recoger(lua)
+    lua.globals().DISPARAR("ADDON_LOADED", "WowAlertsExport")
+    lua.globals().mensajes = lua.table_from([])
+
+    # Vuelves a entrar mas tarde, con las mismas subastas.
+    lua.globals().AHORA = 1756599999
+    recoger(lua)
+
+    mensajes = " ".join(lua.globals().mensajes.values())
+    assert "/reload" not in mensajes
+
+
+def test_si_avisa_cuando_de_verdad_hay_algo_nuevo():
+    lua = runtime(subastas=[subasta()])
+    recoger(lua)
+    lua.globals().DISPARAR("ADDON_LOADED", "WowAlertsExport")
+    lua.globals().mensajes = lua.table_from([])
+
+    lua.globals().SUBASTAS = lua.table_from([subasta(), subasta(auction_id=2)])
+    recoger(lua)
+
+    mensajes = " ".join(lua.globals().mensajes.values())
+    assert "/reload" in mensajes
 
 
 def test_leer_cero_no_borra_lo_ya_recogido():
