@@ -33,10 +33,10 @@ jobs:
 
     steps:
       - name: Descargar repositorio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Instalar Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           cache: pip
@@ -45,7 +45,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Recuperar memoria de avisos anteriores
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .state
           # La clave lleva el id de ejecucion porque las caches de GitHub son
@@ -65,8 +65,11 @@ jobs:
       - name: Guardar memoria de avisos
         # Tambien cuando el escaneo va mal: lo ya avisado sigue siendo valido y
         # no queremos repetirlo en la pasada siguiente.
-        if: always()
-        uses: actions/cache/save@v4
+        #
+        # El hashFiles evita un aviso feo cuando no hay nada que guardar, que es
+        # lo que pasa en las pasadas con --dry-run: no escriben estado.
+        if: always() && hashFiles('.state/**') != ''
+        uses: actions/cache/save@v6
         with:
           path: .state
           key: wow-alerts-state-${{ github.run_id }}
