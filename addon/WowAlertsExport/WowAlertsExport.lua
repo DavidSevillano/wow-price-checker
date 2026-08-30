@@ -7,7 +7,7 @@
 
 local FORMAT_VERSION = 1
 -- Version del addon, para saber que codigo se esta ejecutando de verdad.
-local ADDON_VERSION = "1.3"
+local ADDON_VERSION = "1.4"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 
@@ -231,6 +231,12 @@ local function guardar()
     return #recogidas
 end
 
+-- Cuantas subastas hay guardadas de este personaje ahora mismo.
+local function guardadas()
+    local previo = (WowAlertsExportDB.personajes or {})[claveDePersonaje()]
+    return #((previo or {}).auctions or {})
+end
+
 local function avisarSiFaltaVolcar()
     if WowAlertsExportDB.huella == huellaEnDisco then
         return
@@ -240,6 +246,24 @@ local function avisarSiFaltaVolcar()
             .. " a disco|r. Haz |cff00ff00/reload|r (o sal del juego) para que el"
             .. " vigilante de undercuts se entere."
     )
+end
+
+-- El resumen no lo imprime quien guarda, sino un temporizador corto: al abrir
+-- la casa de subastas el evento llega varias veces, la primera con la lista
+-- todavia vacia. Esperar un momento y contar una sola vez lo que hay guardado
+-- da un mensaje fiable, en vez de ninguno o tres seguidos.
+local resumenPendiente = false
+
+local function resumirPronto()
+    if resumenPendiente then
+        return
+    end
+    resumenPendiente = true
+    C_Timer.After(1, function()
+        resumenPendiente = false
+        print(("|cffffd200WoW Alerts:|r %d subasta(s) tuyas registradas."):format(guardadas()))
+        avisarSiFaltaVolcar()
+    end)
 end
 
 -- ---------------------------------------------------------------------------
@@ -267,11 +291,8 @@ frame:SetScript("OnEvent", function(_, event, arg1)
     elseif event == "AUCTION_HOUSE_AUCTION_CREATED" or event == "AUCTION_CANCELED" then
         pedirSubastasPronto()
     elseif event == "OWNED_AUCTIONS_UPDATED" then
-        local cuantas = guardar()
-        if cuantas then
-            print(("|cffffd200WoW Alerts:|r %d subasta(s) tuyas registradas."):format(cuantas))
-            avisarSiFaltaVolcar()
-        end
+        guardar()
+        resumirPronto()
     end
 end)
 
@@ -282,12 +303,10 @@ end)
 SLASH_WOWALERTS1 = "/wowalerts"
 SLASH_WOWALERTS2 = "/wa"
 SlashCmdList["WOWALERTS"] = function()
-    local clave, nombre, reino = claveDePersonaje()
-    local previo = (WowAlertsExportDB.personajes or {})[clave]
-    local guardadas = #((previo or {}).auctions or {})
+    local _, nombre, reino = claveDePersonaje()
 
     print(("|cffffd200WoW Alerts v%s|r · %s de %s"):format(ADDON_VERSION, nombre, reino))
-    print(("  tengo guardadas |cff00ff00%d|r subasta(s) de este personaje."):format(guardadas))
+    print(("  tengo guardadas |cff00ff00%d|r subasta(s) de este personaje."):format(guardadas()))
     print("  pidiendo las de ahora mismo...")
 
     pedirSubastas()

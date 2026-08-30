@@ -289,3 +289,28 @@ def test_el_comando_no_cuenta_antes_de_que_llegue_la_respuesta():
     mensajes = " ".join(lua.globals().mensajes.values())
     assert "tengo guardadas" in mensajes
     assert "no puedo leer nada" not in mensajes
+
+
+def test_avisa_aunque_la_primera_lectura_llegue_vacia():
+    """Al abrir la casa de subastas el evento llega varias veces, la primera
+    con la lista todavia vacia. El mensaje no puede depender de esa."""
+    lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
+    recoger(lua)
+    lua.globals().mensajes = lua.table_from([])
+
+    # Llega una pasada vacia, como hace el juego al abrir la casa.
+    lua.globals().SUBASTAS = lua.table_from([])
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+    mensajes = " ".join(lua.globals().mensajes.values())
+    assert "2 subasta(s) tuyas registradas" in mensajes
+
+
+def test_varias_pasadas_seguidas_dan_un_solo_mensaje():
+    lua = runtime(subastas=[subasta()])
+    lua.execute("PENDIENTES = 0; C_Timer = { After = function() PENDIENTES = PENDIENTES + 1 end }")
+
+    for _ in range(4):
+        lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+    assert lua.globals().PENDIENTES == 1
