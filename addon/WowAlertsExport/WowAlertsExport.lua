@@ -7,7 +7,7 @@
 
 local FORMAT_VERSION = 1
 -- Version del addon, para saber que codigo se esta ejecutando de verdad.
-local ADDON_VERSION = "1.5"
+local ADDON_VERSION = "1.6"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 
@@ -251,9 +251,15 @@ end
 -- El resumen sale al abrir y al cerrar la casa de subastas, y en ningun otro
 -- momento: mientras posteas o cancelas el addon se actualiza en silencio. Dos
 -- mensajes por visita, no uno por cada cosa que hagas.
-local function resumir()
+-- `conAviso` solo se pide al cerrar. Al abrir, la casa de subastas entrega tus
+-- subastas por partes, asi que lo guardado a mitad de la entrega no coincide
+-- con el disco y el recordatorio saltaria siempre. Y aun coincidiendo no
+-- vendria a cuento: al abrir todavia no has hecho nada.
+local function resumir(conAviso)
     print(("|cffffd200WoW Alerts:|r %d subasta(s) tuyas registradas."):format(guardadas()))
-    avisarSiFaltaVolcar()
+    if conAviso then
+        avisarSiFaltaVolcar()
+    end
 end
 
 -- Al abrir hay que esperar un momento: el evento de apertura llega antes que
@@ -267,7 +273,7 @@ local function resumirPronto()
     resumenPendiente = true
     C_Timer.After(1, function()
         resumenPendiente = false
-        resumir()
+        resumir(false)
     end)
 end
 
@@ -296,8 +302,9 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         pedirSubastas()
         resumirPronto()
     elseif event == "AUCTION_HOUSE_CLOSED" then
-        -- Al cerrar ya esta todo guardado, asi que se cuenta sin esperar.
-        resumir()
+        -- Al cerrar ya esta todo entregado y guardado: se cuenta sin esperar, y
+        -- es el momento en que el recordatorio de /reload sirve para algo.
+        resumir(true)
     elseif event == "AUCTION_HOUSE_AUCTION_CREATED" or event == "AUCTION_CANCELED" then
         pedirSubastasPronto()
     elseif event == "OWNED_AUCTIONS_UPDATED" then

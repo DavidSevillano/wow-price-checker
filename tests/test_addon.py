@@ -151,9 +151,23 @@ def test_avisa_de_que_falta_volcar_a_disco():
     lua = runtime(subastas=[subasta()])
     lua.globals().DISPARAR("ADDON_LOADED", "WowAlertsExport")
     recoger(lua)
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
 
     mensajes = " ".join(lua.globals().mensajes.values())
     assert "/reload" in mensajes
+
+
+def test_al_abrir_nunca_recuerda_lo_del_reload():
+    """La casa de subastas entrega tus subastas por partes: a mitad de la
+    entrega lo guardado no coincide con el disco, y el aviso saltaria siempre.
+    Ademas, al abrir todavia no has hecho nada."""
+    lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
+    lua.globals().DISPARAR("ADDON_LOADED", "WowAlertsExport")
+    lua.globals().DISPARAR("AUCTION_HOUSE_SHOW")
+
+    mensajes = " ".join(lua.globals().mensajes.values())
+    assert "registradas" in mensajes
+    assert "/reload" not in mensajes
 
 
 def test_no_avisa_cuando_no_ha_cambiado_nada():
@@ -165,6 +179,7 @@ def test_no_avisa_cuando_no_ha_cambiado_nada():
     # Se simula el arranque siguiente con eso ya en disco.
     lua.globals().DISPARAR("ADDON_LOADED", "WowAlertsExport")
     recoger(lua)
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
 
     mensajes = " ".join(lua.globals().mensajes.values())
     assert "/reload" not in mensajes
@@ -181,6 +196,7 @@ def test_no_avisa_cuando_solo_ha_pasado_el_tiempo():
     # Vuelves a entrar mas tarde, con las mismas subastas.
     lua.globals().AHORA = 1756599999
     recoger(lua)
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
 
     mensajes = " ".join(lua.globals().mensajes.values())
     assert "/reload" not in mensajes
@@ -194,6 +210,7 @@ def test_si_avisa_cuando_de_verdad_hay_algo_nuevo():
 
     lua.globals().SUBASTAS = lua.table_from([subasta(), subasta(auction_id=2)])
     recoger(lua)
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
 
     mensajes = " ".join(lua.globals().mensajes.values())
     assert "/reload" in mensajes
