@@ -15,6 +15,7 @@ from typing import Any, Iterable, Mapping, Sequence
 import requests
 
 from .scanner import Deal
+from .undercut import Undercut
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ COLOR_GOOD = 0xE67E22        # naranja: por debajo del umbral
 COLOR_GREAT = 0xF1C40F       # amarillo: bastante por debajo
 COLOR_STEAL = 0x2ECC71       # verde: chollo serio
 COLOR_WARNING = 0xE74C3C     # rojo: aviso de salud del bot
+COLOR_UNDERCUT = 0xC0392B    # rojo oscuro: te han adelantado
 
 TIME_LEFT_ES = {
     "SHORT": "menos de 30 min",
@@ -177,6 +179,111 @@ def build_messages(
     return messages
 
 
+def build_undercut_embed(
+    undercut: Undercut,
+    realm_name: str,
+    icon_url: str | None = None,
+    snapshot_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Tarjeta de Discord para una subasta tuya que han adelantado."""
+    if undercut.tied:
+        titular = (
+            f"Te han igualado: **{format_gold(undercut.rival_price_gold)} de oro**, "
+            f"el mismo precio que el tuyo."
+        )
+    else:
+        titular = (
+            f"**{format_gold(undercut.rival_price_gold)} de oro** frente a tus "
+            f"{format_gold(undercut.my_price_gold)}: "
+            f"{format_gold(undercut.gap_gold)} de oro por debajo."
+        )
+
+    description = f"{titular}\n"
+    if undercut.rivals_ahead > 1:
+        description += f"Hay **{undercut.rivals_ahead}** por delante de la tuya.\n"
+    description += f"ilvl **{undercut.mine.ilvl}**."
+
+    if not undercut.rival_ilvl_confirmed:
+        description += (
+            "\n\n> El ilvl de la subasta rival esta **sin confirmar**: puede que "
+            "no sea el mismo que el tuyo. Comprueba en el juego antes de bajar "
+            "el precio."
+        )
+
+    embed: dict[str, Any] = {
+        "title": undercut.mine.item_name,
+        # Ancla distinta por subasta: Discord fusiona en una sola galeria los
+        # embeds de un mensaje que comparten url.
+        "url": (
+            f"https://www.wowhead.com/item={undercut.mine.item_id}"
+            f"#a{undercut.mine.auction_id}"
+        ),
+        "color": COLOR_UNDERCUT if undercut.rival_ilvl_confirmed else COLOR_UNCONFIRMED,
+        "description": description,
+        "fields": [
+            {
+                "name": "Repostear en",
+                "value": f"{undercut.mine.character} · {undercut.mine.realm}",
+                "inline": True,
+            },
+            {"name": "Reino conectado", "value": realm_name, "inline": True},
+        ],
+        "footer": {
+            "text": (
+                f"Tu subasta {undercut.mine.auction_id} · "
+                f"rival {undercut.rival_auction_id}"
+            )
+        },
+    }
+
+    if icon_url:
+        embed["thumbnail"] = {"url": icon_url}
+    if snapshot_at:
+        embed["timestamp"] = snapshot_at.isoformat()
+        embed["footer"]["text"] += " · precio visto"
+
+    return embed
+
+
+def build_undercut_messages(
+    undercuts: Sequence[Undercut],
+    realm_names: Mapping[int, str],
+    icon_urls: Mapping[int, str] | None = None,
+    snapshot_at: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Convierte los undercuts en mensajes listos para el webhook."""
+    if not undercuts:
+        return []
+
+    shown = list(undercuts[:MAX_DEALS_PER_RUN])
+    omitted = len(undercuts) - len(shown)
+
+    plural = "subastas tuyas" if len(shown) != 1 else "subasta tuya"
+    header = f"⚔️ **Te han adelantado en {len(shown)} {plural}**"
+    if omitted:
+        header += f" (y {omitted} mas que te envio en la proxima pasada)"
+
+    messages: list[dict[str, Any]] = []
+    for start in range(0, len(shown), MAX_EMBEDS_PER_MESSAGE):
+        chunk = shown[start : start + MAX_EMBEDS_PER_MESSAGE]
+        message: dict[str, Any] = {
+            "embeds": [
+                build_undercut_embed(
+                    undercut,
+                    realm_names.get(undercut.realm_id, f"Reino {undercut.realm_id}"),
+                    (icon_urls or {}).get(undercut.mine.item_id),
+                    snapshot_at,
+                )
+                for undercut in chunk
+            ]
+        }
+        if start == 0:
+            message["content"] = header
+        messages.append(message)
+
+    return messages
+
+
 class DiscordNotifier:
     """Cliente minimo del webhook de Discord."""
 
@@ -218,6 +325,24 @@ class DiscordNotifier:
         for message in messages:
             self._post(message)
         return deals_to_send(deals)
+
+    def send_undercuts(
+        self,
+        undercuts: Sequence[Undercut],
+        realm_names: Mapping[int, str],
+        icon_urls: Mapping[int, str] | None = None,
+        snapshot_at: datetime | None = None,
+    ) -> list[Undercut]:
+        """Envia los undercuts y devuelve los que de verdad han salido.
+
+        Como en `send_deals`, lo que no cabe no se marca como avisado y sale en
+        la pasada siguiente.
+        """
+        for message in build_undercut_messages(
+            undercuts, realm_names, icon_urls, snapshot_at
+        ):
+            self._post(message)
+        return list(undercuts[:MAX_DEALS_PER_RUN])
 
     def send_warning(self, title: str, text: str) -> None:
         """Aviso sobre el estado del propio bot, no sobre precios."""

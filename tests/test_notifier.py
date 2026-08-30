@@ -200,3 +200,82 @@ def test_mensaje_de_prueba(requests_mock):
     DiscordNotifier(WEBHOOK, session=requests.Session()).send_test()
 
     assert "Prueba de conexion" in requests_mock.last_request.json()["content"]
+
+
+# -- Avisos de undercut -----------------------------------------------------
+
+from wowalerts.misubastas import MyAuction
+from wowalerts.notifier import build_undercut_embed, build_undercut_messages
+from wowalerts.undercut import Undercut
+
+
+def un_undercut(oro_mio=9000, oro_rival=8000, confirmado=True, rivales=1, auction_id=1):
+    mine = MyAuction(
+        auction_id=auction_id,
+        item_id=200000,
+        item_name="Greaves of the Noxious Depths",
+        ilvl=311,
+        buyout_copper=oro_mio * 10_000,
+        quantity=1,
+        character="Pepe",
+        realm="Sanguino",
+        realm_slug="sanguino",
+    )
+    return Undercut(
+        mine=mine,
+        realm_id=1379,
+        rival_auction_id=99,
+        rival_price_copper=oro_rival * 10_000,
+        rival_ilvl_confirmed=confirmado,
+        rivals_ahead=rivales,
+    )
+
+
+def test_el_embed_lleva_los_dos_precios():
+    embed = build_undercut_embed(un_undercut(), "Sanguino")
+    assert "9.000" in embed["description"]
+    assert "8.000" in embed["description"]
+
+
+def test_el_embed_dice_donde_repostear():
+    embed = build_undercut_embed(un_undercut(), "Sanguino")
+    campos = {c["name"]: c["value"] for c in embed["fields"]}
+    assert campos["Repostear en"] == "Pepe · Sanguino"
+
+
+def test_el_empate_se_explica_como_empate():
+    embed = build_undercut_embed(un_undercut(oro_rival=9000), "Sanguino")
+    assert "mismo precio" in embed["description"]
+
+
+def test_el_ilvl_sin_confirmar_se_advierte():
+    embed = build_undercut_embed(un_undercut(confirmado=False), "Sanguino")
+    assert "sin confirmar" in embed["description"]
+
+
+def test_varios_rivales_se_cuentan():
+    embed = build_undercut_embed(un_undercut(rivales=3), "Sanguino")
+    assert "3" in embed["description"]
+
+
+def test_las_urls_no_se_repiten_entre_embeds():
+    mensajes = build_undercut_messages(
+        [un_undercut(auction_id=1), un_undercut(auction_id=2)], {1379: "Sanguino"}
+    )
+    urls = [e["url"] for m in mensajes for e in m["embeds"]]
+    assert len(set(urls)) == len(urls)
+
+
+def test_sin_undercuts_no_hay_mensajes():
+    assert build_undercut_messages([], {}) == []
+
+
+def test_el_encabezado_dice_cuantas_son():
+    mensajes = build_undercut_messages([un_undercut()], {1379: "Sanguino"})
+    assert "1 subasta tuya" in mensajes[0]["content"]
+
+
+def test_se_parten_en_mensajes_de_diez():
+    muchos = [un_undercut(auction_id=i) for i in range(1, 13)]
+    mensajes = build_undercut_messages(muchos, {1379: "Sanguino"})
+    assert [len(m["embeds"]) for m in mensajes] == [10, 2]
