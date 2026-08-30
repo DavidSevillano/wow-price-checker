@@ -127,7 +127,58 @@ que no ensucia el repositorio con commits.
 
 ---
 
-## 3.1 Saber si esta corriendo de verdad
+## 3.1 Disparo puntual desde un cron externo
+
+Los eventos `schedule` de Actions entran en una cola compartida y se retrasan
+entre 20 y 40 minutos, cuando no se descartan. Un `workflow_dispatch`, en
+cambio, arranca en segundos (medido en este repositorio: 12 s). Por eso la
+ejecucion de cada hora la dispara un cron externo llamando a la API de GitHub,
+y el `schedule` del workflow se queda como red de seguridad cada 3 horas.
+
+Hace falta un token, asi que conviene que sea lo mas limitado posible.
+
+### El token
+
+En <https://github.com/settings/personal-access-tokens/new> crea un token
+**fine-grained** (no uno clasico):
+
+- **Repository access**: *Only select repositories* -> `wow-price-checker`.
+- **Permissions** -> *Repository permissions* -> **Actions: Read and write**.
+  Nada mas. (Si la llamada devolviera 403, anade *Contents: Read*.)
+- **Expiration**: pon una fecha y apuntala; habra que renovarlo.
+
+Asi acotado, el token solo puede lanzar workflows en ese repositorio. No puede
+leer tu codigo ni tocar ningun otro repo.
+
+### El cron externo
+
+En un servicio de cron por HTTP (cron-job.org o equivalente), crea un trabajo
+con exactamente esto:
+
+| Campo | Valor |
+|---|---|
+| URL | `https://api.github.com/repos/DavidSevillano/wow-price-checker/actions/workflows/monitor.yml/dispatches` |
+| Metodo | `POST` |
+| Horario | cada hora, minuto **33** |
+| Cuerpo | `{"ref":"main"}` |
+
+Cabeceras:
+
+```
+Accept: application/vnd.github+json
+Authorization: Bearer TU_TOKEN_AQUI
+X-GitHub-Api-Version: 2022-11-28
+Content-Type: application/json
+```
+
+La respuesta correcta es **HTTP 204 sin cuerpo**. Un 404 suele significar que
+el token no tiene acceso al repositorio; un 422, que la rama `main` o el nombre
+del workflow no coinciden.
+
+El minuto 33 sale de que Blizzard regenera los datos a y 31 y el disparo es
+inmediato: dos minutos de margen bastan.
+
+## 3.2 Saber si esta corriendo de verdad
 
 Cuando no llega ningun aviso a Discord hay dos explicaciones muy distintas: que
 no haya chollos, o que la pasada no se haya ejecutado. Para distinguirlas:
@@ -178,7 +229,7 @@ wowalerts/
   scanner.py           Que cuenta como chollo (logica pura)
   state.py             Memoria entre ejecuciones
   notifier.py          Embeds y envio a Discord
-tests/                 123 tests, sin tocar la red
+tests/                 130 tests, sin tocar la red
 ```
 
 Para pasar los tests:

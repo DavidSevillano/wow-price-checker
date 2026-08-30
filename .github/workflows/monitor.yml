@@ -2,17 +2,20 @@ name: WoW Price Monitor
 
 on:
   schedule:
-    # Blizzard regenera los datos de la casa de subastas una vez por hora, y
-    # toda la region EU a la vez: el 2026-08-30 el volcado fue a las 11:31 UTC
-    # y los 30 reinos comprobados compartian esa misma hora exacta.
+    # RED DE SEGURIDAD, no la via principal.
     #
-    # Se lanza a y 35 por dos motivos: deja unos minutos de margen tras el
-    # volcado, y evita el minuto en punto, que es el mas congestionado de
-    # GitHub Actions y donde mas se retrasan las ejecuciones programadas.
+    # La ejecucion de cada hora la dispara un cron externo llamando a la API de
+    # GitHub (ver README), porque un workflow_dispatch arranca en segundos
+    # mientras que un 'schedule' entra en una cola compartida y se retrasa entre
+    # 20 y 40 minutos, cuando no se descarta directamente.
     #
-    # Si en los logs ves que la antiguedad del volcado se acerca a 60 minutos,
-    # es que Blizzard ha movido su horario: retrasa este minuto en consecuencia.
-    - cron: '35 * * * *'
+    # Esto queda cada 3 horas para que, si el servicio externo se cae, las
+    # alertas no se paren del todo: se degradan a 3 horas de latencia en vez de
+    # desaparecer. Cada 3 h y no cada hora para no gastar cuota por duplicado.
+    #
+    # El minuto 35 deja margen tras el volcado de Blizzard, que es a y 31, y
+    # esquiva el minuto en punto, el mas congestionado de Actions.
+    - cron: '35 */3 * * *'
   workflow_dispatch:
     inputs:
       dry_run:

@@ -21,8 +21,14 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 WORKFLOW = "WoW Price Monitor"
-# Minuto en el que el cron pide la ejecucion (ver .github/workflows/monitor.yml).
-MINUTO_CRON = 35
+# Minuto en el que se espera la ejecucion de cada hora. Es el del cron externo
+# que dispara el workflow por la API (ver README), no el del 'schedule' del
+# workflow, que solo actua de red de seguridad cada 3 horas.
+MINUTO_CRON = 33
+
+# Eventos que cuentan como pasada de esa hora. El disparo externo llega como
+# workflow_dispatch, asi que mirar solo 'schedule' daria todo por perdido.
+EVENTOS_VALIDOS = ("schedule", "workflow_dispatch")
 
 # GitHub lanza los workflows programados tarde con normalidad: los retrasos
 # medidos en este repositorio han llegado a 38 minutos. Hasta que pase este
@@ -81,20 +87,24 @@ def resumen_del_log(run_id: int) -> str:
     return "(sin resumen)"
 
 
-def slot_de(inicio: datetime) -> datetime:
-    """Hora del cron a la que corresponde una ejecucion.
+def slot_de(inicio: datetime, minuto: int = MINUTO_CRON) -> datetime:
+    """Hora prevista a la que corresponde una ejecucion.
 
-    GitHub lanza tarde pero nunca antes, asi que una ejecucion a las 15:52 es
-    la del slot de las 15:35, y una a las 15:10 es la del slot de las 14:35.
+    Nunca se lanza antes de la hora prevista, pero si despues, asi que una
+    ejecucion a las 15:52 es la del slot de las 15:33, y una a las 15:10 es la
+    del slot de las 14:33.
     """
-    slot = inicio.replace(minute=MINUTO_CRON, second=0, microsecond=0)
-    if inicio.minute < MINUTO_CRON:
+    slot = inicio.replace(minute=minuto, second=0, microsecond=0)
+    if inicio.minute < minuto:
         slot -= timedelta(hours=1)
     return slot
 
 
 def slots_esperados(
-    ahora: datetime, horas: int, no_antes_de: datetime | None = None
+    ahora: datetime,
+    horas: int,
+    no_antes_de: datetime | None = None,
+    minuto: int = MINUTO_CRON,
 ) -> list[datetime]:
     """Ejecuciones que ya deberian haber ocurrido dentro de la ventana.
 
@@ -106,7 +116,7 @@ def slots_esperados(
     if no_antes_de and no_antes_de > desde:
         desde = no_antes_de
 
-    slot = ahora.replace(minute=MINUTO_CRON, second=0, microsecond=0)
+    slot = ahora.replace(minute=minuto, second=0, microsecond=0)
     if slot > ahora:
         slot -= timedelta(hours=1)
 
@@ -172,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
 
     por_slot: dict[datetime, dict] = {}
     for run in runs:
-        if run["event"] != "schedule":
+        if run["event"] not in EVENTOS_VALIDOS:
             continue
         inicio = datetime.fromisoformat(run["startedAt"].replace("Z", "+00:00"))
         if inicio < desde:
