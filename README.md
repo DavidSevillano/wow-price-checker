@@ -536,6 +536,24 @@ Todo lo que se tapa queda escrito en el log de la pasada:
     la cuento como venta.
 ```
 
+**Ojo con varias cuentas de WoW.** `/reload` recarga **solo la sesion en la que
+lo haces**. Si tienes WoW 1, WoW 2 y WoW 3, recargar en una deja a las otras
+corriendo el addon viejo, que no apunta nada: sus reposteos siguen saliendo como
+ventas y no hay forma de notarlo mirando el aviso. Paso el 2026-08-31 con
+Adanlin, de WoW 3, mientras las 19 cancelaciones registradas eran todas de
+WoW 2.
+
+Por eso `sync_subastas.py` lo canta en cada pasada:
+
+```
+⚠️  Estas cuentas de WoW siguen con el addon viejo y no apuntan tus
+    cancelaciones: 403840080#1, 403840080#3. Entra con cada una y haz /reload,
+    o sus reposteos saldran como ventas.
+```
+
+Lo detecta por la clave `canceladas` del volcado, que el addon nuevo escribe
+siempre, tenga o no cancelaciones dentro.
+
 **Lo que sigue sin cubrirse:** que canceles y no vuelvas a entrar al juego a
 hacer `/reload` antes de la pasada siguiente. Ahi la cancelacion no llega a
 tiempo y sale como venta.

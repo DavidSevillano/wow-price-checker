@@ -25,6 +25,7 @@ from pathlib import Path
 from wowalerts.misubastas import (
     MisSubastasError,
     escribir_snapshot,
+    cuentas_con_addon_viejo,
     leer_canceladas_de_wow,
     leer_de_wow,
 )
@@ -189,6 +190,18 @@ def run(args: argparse.Namespace) -> int:
     canceladas = leer_canceladas_de_wow(wow_root)
     if canceladas:
         log.info("%s cancelacion(es) apuntadas por el addon.", len(canceladas))
+
+    # /reload solo recarga la sesion en la que lo haces. Con varias cuentas de
+    # WoW es facil dejarse una con el addon viejo, y entonces sus reposteos
+    # siguen saliendo como ventas sin que nada lo cante.
+    viejas = cuentas_con_addon_viejo(wow_root)
+    if viejas:
+        log.warning(
+            "⚠️  Estas cuentas de WoW siguen con el addon viejo y no apuntan tus "
+            "cancelaciones: %s. Entra con cada una y haz /reload, o sus "
+            "reposteos saldran como ventas.",
+            ", ".join(viejas),
+        )
 
     personajes = leer_personajes(wow_root)
 

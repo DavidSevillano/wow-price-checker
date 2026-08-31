@@ -237,6 +237,28 @@ def canceladas_de_payload(payload: Mapping) -> set[int]:
     return ids
 
 
+def apunta_cancelaciones(payload: Mapping) -> bool:
+    """Si ese volcado lo escribio un addon que ya apunta las cancelaciones.
+
+    La clave la escribe siempre el addon nuevo, tenga o no cancelaciones dentro,
+    asi que su ausencia significa que esa cuenta sigue con el addon viejo. Y eso
+    importa: /reload solo recarga la sesion en la que lo haces, asi que con
+    varias cuentas de WoW abiertas es facil dejarse una atras y que sus
+    reposteos sigan saliendo como ventas.
+    """
+    return "canceladas" in payload
+
+
+def cuentas_con_addon_viejo(wow_root: str | Path) -> list[str]:
+    """Las cuentas de WoW cuyo volcado aun no apunta cancelaciones."""
+    viejas: list[str] = []
+    for fichero in encontrar_savedvariables(wow_root):
+        if not apunta_cancelaciones(leer_payload(fichero)):
+            # .../WTF/Account/<cuenta>/SavedVariables/WowAlertsExport.lua
+            viejas.append(fichero.parts[-3])
+    return viejas
+
+
 def leer_canceladas_de_wow(wow_root: str | Path) -> set[int]:
     """Las cancelaciones apuntadas por el addon en todas tus cuentas."""
     ids: set[int] = set()

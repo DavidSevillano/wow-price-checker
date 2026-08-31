@@ -216,3 +216,17 @@ def test_las_cancelaciones_se_leen_de_la_carpeta(tmp_path):
 
 def test_una_carpeta_sin_volcados_no_tiene_cancelaciones(tmp_path):
     assert leer_canceladas(tmp_path) == set()
+
+
+def test_un_payload_sin_la_clave_es_addon_viejo():
+    """La clave la escribe siempre el addon nuevo, aunque no haya cancelado nada."""
+    from wowalerts.misubastas import apunta_cancelaciones
+
+    assert apunta_cancelaciones({"personajes": {}}) is False
+
+
+def test_un_payload_con_la_clave_vacia_es_addon_nuevo():
+    from wowalerts.misubastas import apunta_cancelaciones
+
+    assert apunta_cancelaciones({"personajes": {}, "canceladas": []}) is True
+    assert apunta_cancelaciones({"personajes": {}, "canceladas": {}}) is True
