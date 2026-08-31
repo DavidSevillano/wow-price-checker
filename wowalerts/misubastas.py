@@ -233,6 +233,43 @@ def escribir_snapshot(path: str | Path, subastas: Sequence[MyAuction]) -> bool:
     return True
 
 
+def leer_snapshots(origen: str | Path) -> list[MyAuction]:
+    """Lee el volcado de todas tus maquinas y los une.
+
+    Cada maquina escribe su propio fichero (el PC uno, la Steam Deck otro),
+    porque compartir uno haria que cada una borrase los personajes de la otra
+    al subir. Aqui se unen por id de subasta, sin mirar cual es mas reciente:
+    una subasta que aparezca en un fichero viejo y ya no exista se descarta
+    sola mas adelante, al no estar en el volcado de Blizzard.
+
+    Acepta tambien un fichero suelto, que es como estaba antes de haber dos
+    maquinas.
+    """
+    origen = Path(origen)
+    if origen.is_file():
+        return leer_snapshot(origen)
+    if not origen.is_dir():
+        log.warning(
+            "No existe %s: no se de ninguna subasta tuya. Ejecuta "
+            "sync_subastas.py en tu PC para generarlo.",
+            origen,
+        )
+        return []
+
+    por_id: dict[int, MyAuction] = {}
+    ficheros = sorted(origen.glob("*.json"))
+    for fichero in ficheros:
+        for subasta in leer_snapshot(fichero):
+            por_id.setdefault(subasta.auction_id, subasta)
+
+    log.info(
+        "%s subasta(s) tuyas, de %s maquina(s).", len(por_id), len(ficheros)
+    )
+    return sorted(
+        por_id.values(), key=lambda s: (s.realm, s.character, s.auction_id)
+    )
+
+
 def leer_snapshot(path: str | Path) -> list[MyAuction]:
     """Lee mis_subastas.json. Un fichero que no existe son cero subastas."""
     path = Path(path)

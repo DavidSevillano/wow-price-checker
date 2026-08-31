@@ -95,6 +95,31 @@ def escribir_personajes(path: str | Path, personajes: Sequence[Personaje]) -> bo
     return True
 
 
+def leer_rosters(origen: str | Path) -> list[Personaje]:
+    """Une la lista de personajes de todas tus maquinas.
+
+    En la Steam Deck solo estan las carpetas de los personajes con los que has
+    jugado alli, asi que ninguna maquina tiene la lista completa: hay que
+    juntarlas. Un personaje que aparezca en las dos se cuenta una vez.
+
+    Acepta tambien un fichero suelto, que es como estaba antes de haber dos
+    maquinas.
+    """
+    origen = Path(origen)
+    if origen.is_file():
+        return leer_roster(origen)
+    if not origen.is_dir():
+        log.debug("No existe %s: no se que personajes tienes.", origen)
+        return []
+
+    unicos: dict[tuple[str, str], Personaje] = {}
+    for fichero in sorted(origen.glob("*.json")):
+        for personaje in leer_roster(fichero):
+            unicos.setdefault((personaje.realm, personaje.name), personaje)
+
+    return sorted(unicos.values(), key=lambda p: (p.account or 0, p.realm, p.name))
+
+
 def leer_roster(path: str | Path) -> list[Personaje]:
     """Lee mis_personajes.json. Un fichero que no existe son cero personajes."""
     path = Path(path)

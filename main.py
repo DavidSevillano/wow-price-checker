@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 from wowalerts.blizzard import BlizzardAuthError, BlizzardClient, BlizzardError
 from wowalerts.config import ConfigError, load_config
 from wowalerts.items import ItemResolutionError, resolve_item_ids
-from wowalerts.misubastas import MisSubastasError, leer_snapshot
+from wowalerts.misubastas import MisSubastasError, leer_snapshots
 from wowalerts.notifier import (
     DiscordError,
     DiscordNotifier,
@@ -34,7 +34,7 @@ from wowalerts.notifier import (
     realm_names_for,
 )
 from wowalerts.personajes import (
-    leer_roster,
+    leer_rosters,
     por_nombre_de_reino,
     quien_puede_comprar,
 )
@@ -106,19 +106,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--undercut",
         action="store_true",
         help="En vez de buscar chollos, avisa si alguien ha adelantado a tus "
-        "propias subastas de los objetos vigilados. Necesita mis_subastas.json, "
-        "que genera sync_subastas.py en tu PC.",
+        "propias subastas de los objetos vigilados. Necesita la carpeta "
+        "mis_subastas, que genera sync_subastas.py en cada maquina.",
     )
     parser.add_argument(
         "--personajes",
-        default="mis_personajes.json",
-        help="Lista de tus personajes, para decir con quien entrar a por cada "
-        "chollo. La genera sync_subastas.py en tu PC.",
+        default="mis_personajes",
+        help="Carpeta con la lista de tus personajes, un fichero por maquina. "
+        "Sirve para decir con quien entrar a por cada chollo.",
     )
     parser.add_argument(
         "--mis-subastas",
-        default="mis_subastas.json",
-        help="Ruta del volcado de tus subastas (por defecto: mis_subastas.json).",
+        default="mis_subastas",
+        help="Carpeta con el volcado de tus subastas, un fichero por maquina "
+        "(por defecto: mis_subastas).",
     )
     parser.add_argument(
         "-v",
@@ -195,7 +196,7 @@ def compradores_para(roster_path: str, realm_names) -> dict[int, str]:
     todos los reinos que comparten casa de subastas, y el escaneo lo pide de
     todas formas para el aviso.
     """
-    roster = leer_roster(roster_path)
+    roster = leer_rosters(roster_path)
     if not roster:
         return {}
 
@@ -237,7 +238,7 @@ def run_undercut(
     ignore_state: bool,
 ) -> int:
     """Una pasada de vigilancia sobre tus propias subastas."""
-    todas = leer_snapshot(mis_subastas_path)
+    todas = leer_snapshots(mis_subastas_path)
     # Solo interesan los objetos que vigila config.yaml: el resto de lo que
     # tengas puesto (monturas, mochilas, decoracion) no es el negocio.
     mis_subastas = [s for s in todas if s.item_id in rules_by_item_id]

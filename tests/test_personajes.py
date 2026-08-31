@@ -7,6 +7,7 @@ from wowalerts.personajes import (
     escribir_personajes,
     leer_personajes,
     leer_roster,
+    leer_rosters,
     por_nombre_de_reino,
     quien_puede_comprar,
 )
@@ -138,3 +139,23 @@ def test_con_muchos_personajes_muestra_unos_pocos():
     assert "Pj1" in texto
     assert "y 3 mas" in texto
     assert "Pj4" not in texto
+
+
+def test_une_los_personajes_de_dos_maquinas(tmp_path):
+    """En la Deck solo estan los personajes con los que has jugado alli."""
+    escribir_personajes(
+        tmp_path / "pc.json", [Personaje("Uno", "Kazzak", "kazzak", 2)]
+    )
+    escribir_personajes(
+        tmp_path / "deck.json", [Personaje("Dos", "Ysondre", "ysondre", 3)]
+    )
+
+    assert {p.name for p in leer_rosters(tmp_path)} == {"Uno", "Dos"}
+
+
+def test_un_personaje_en_las_dos_maquinas_se_cuenta_una_vez(tmp_path):
+    kazza = Personaje("Kbardan", "Kazzak", "kazzak", 2)
+    escribir_personajes(tmp_path / "pc.json", [kazza])
+    escribir_personajes(tmp_path / "deck.json", [kazza])
+
+    assert leer_rosters(tmp_path) == [kazza]

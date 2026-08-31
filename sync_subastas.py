@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import platform
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -28,23 +30,39 @@ log = logging.getLogger("sync")
 EXIT_OK = 0
 EXIT_ERROR = 1
 
-# Sitios donde suele estar WoW. La primera que exista gana.
+# Sitios donde suele estar WoW. La primera que exista gana. Las de Linux son
+# para la Steam Deck, donde WoW vive en la tarjeta SD o dentro del prefijo de
+# Proton, segun como lo hayas instalado.
 RUTAS_HABITUALES = (
     r"D:\Juegos\World of Warcraft\_retail_",
     r"C:\Program Files (x86)\World of Warcraft\_retail_",
     r"C:\Program Files\World of Warcraft\_retail_",
     r"D:\World of Warcraft\_retail_",
     r"D:\Games\World of Warcraft\_retail_",
+    "/run/media/deck/EmuSD/World of Warcraft/_retail_",
+    "~/Games/world-of-warcraft/drive_c/Program Files (x86)/World of Warcraft/_retail_",
+    "~/.local/share/lutris/runners/wine/World of Warcraft/_retail_",
 )
 
 
 def detectar_wow_root(candidatas=RUTAS_HABITUALES) -> Path | None:
     """Primera carpeta de WoW que exista y tenga WTF dentro."""
     for ruta in candidatas:
-        path = Path(ruta)
+        path = Path(ruta).expanduser()
         if (path / "WTF").is_dir():
             return path
     return None
+
+
+def nombre_de_maquina() -> str:
+    """Nombre corto de este equipo, para que cada uno escriba su propio fichero.
+
+    Si el PC y la Steam Deck compartieran fichero, cada uno borraria al subir
+    los personajes con los que has jugado en el otro.
+    """
+    crudo = platform.node().split(".")[0] or "equipo"
+    limpio = re.sub(r"[^a-zA-Z0-9_-]+", "-", crudo).strip("-").lower()
+    return limpio or "equipo"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,14 +77,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--salida",
-        default="mis_subastas.json",
-        help="Fichero donde escribir el volcado (por defecto: mis_subastas.json).",
+        default="mis_subastas",
+        help="Carpeta donde escribir el volcado (por defecto: mis_subastas). "
+        "Dentro, un fichero por maquina.",
     )
     parser.add_argument(
         "--personajes",
-        default="mis_personajes.json",
-        help="Fichero con la lista de tus personajes, para que los avisos de "
+        default="mis_personajes",
+        help="Carpeta con la lista de tus personajes, para que los avisos de "
         "chollo digan con quien entrar a comprarlos.",
+    )
+    parser.add_argument(
+        "--maquina",
+        default=None,
+        help="Nombre de este equipo. Por defecto el del sistema. Cada maquina "
+        "escribe su propio fichero para no pisar la de las demas.",
     )
     parser.add_argument(
         "--dry-run",
@@ -110,6 +135,21 @@ def subir(ficheros: list[str], push: bool) -> int:
     if not push:
         return EXIT_OK
 
+    # Antes de subir, traerse lo que haya subido la otra maquina. Sin esto, el
+    # primer push de la Steam Deck rebota en cuanto el PC haya subido algo.
+    #
+    # Con --autostash porque esto corre desatendido: si te has dejado algo a
+    # medias en la carpeta, el rebase se negaria a empezar y la sincronizacion
+    # se quedaria parada sin que te enteres.
+    traer = git("pull", "--rebase", "--autostash")
+    if traer.returncode != 0:
+        log.error(
+            "git pull --rebase ha fallado: %s\n"
+            "Resuelvelo a mano en la carpeta del proyecto y vuelve a intentarlo.",
+            traer.stderr.strip(),
+        )
+        return EXIT_ERROR
+
     empuje = git("push")
     if empuje.returncode != 0:
         log.error(
@@ -138,15 +178,20 @@ def run(args: argparse.Namespace) -> int:
 
     personajes = leer_personajes(wow_root)
 
+    maquina = args.maquina or nombre_de_maquina()
+    fichero_subastas = str(Path(args.salida) / f"{maquina}.json")
+    fichero_personajes = str(Path(args.personajes) / f"{maquina}.json")
+    log.info("Escribiendo como maquina %r.", maquina)
+
     if args.dry_run:
         log.info("--dry-run: no escribo ni subo nada.")
         return EXIT_OK
 
     cambiados = []
-    if escribir_snapshot(args.salida, subastas):
-        cambiados.append(args.salida)
-    if escribir_personajes(args.personajes, personajes):
-        cambiados.append(args.personajes)
+    if escribir_snapshot(fichero_subastas, subastas):
+        cambiados.append(fichero_subastas)
+    if escribir_personajes(fichero_personajes, personajes):
+        cambiados.append(fichero_personajes)
 
     if not cambiados:
         log.info("Sin cambios respecto a lo ya subido.")

@@ -21,9 +21,11 @@ if (-not (Test-Path $script)) {
 
 # Con los cmdlets y no con schtasks.exe: las rutas llevan espacios, y schtasks
 # parte el comando por su cuenta en cuanto los ve.
+# --maquina pc: cada equipo escribe su propio fichero, para que el PC y la
+# Steam Deck no se borren los personajes el uno al otro al subir.
 $accion = New-ScheduledTaskAction `
     -Execute $python `
-    -Argument "`"$script`"" `
+    -Argument "`"$script`" --maquina pc" `
     -WorkingDirectory $proyecto
 
 # Un unico disparador que se repite indefinidamente. La primera pasada sale un
