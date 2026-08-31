@@ -27,6 +27,7 @@ from wowalerts.blizzard import BlizzardAuthError, BlizzardClient, BlizzardError
 from wowalerts.config import ConfigError, load_config
 from wowalerts.items import ItemResolutionError, resolve_item_ids
 from wowalerts.misubastas import MisSubastasError, leer_snapshots
+from wowalerts.panel import build_panel
 from wowalerts.notifier import (
     DiscordError,
     DiscordNotifier,
@@ -42,6 +43,7 @@ from wowalerts.realms import RealmResolutionError, resolve_connected_realms
 from wowalerts.scanner import scan_realms
 from wowalerts.snapshot import dump_is_stale, expected_dump_at
 from wowalerts.state import (
+    JsonMapCache,
     ItemIconCache,
     ItemIdCache,
     NotifiedAuctions,
@@ -226,6 +228,26 @@ def agrupar_por_reino(mis_subastas, realm_ids_por_reino) -> dict[int, list]:
     return grupos
 
 
+def actualizar_panel(notifier, state_dir: Path, mis_subastas, undercuts, snapshot_at):
+    """Reescribe el mensaje fijado con el estado de todas tus subastas.
+
+    El id del mensaje se guarda entre pasadas: sin el habria que publicar uno
+    nuevo cada hora, que es exactamente lo que el panel evita.
+    """
+    memoria = JsonMapCache(state_dir / "panel.json", "panel")
+    anterior = memoria.get("message_id")
+
+    nuevo = notifier.upsert_panel(
+        build_panel(mis_subastas, undercuts, snapshot_at), anterior
+    )
+    if nuevo and nuevo != anterior:
+        memoria.set("message_id", nuevo)
+        memoria.save()
+        log.info("📊 Panel publicado. Fijalo en el canal para tenerlo a mano.")
+    elif nuevo:
+        log.info("📊 Panel actualizado.")
+
+
 def run_undercut(
     client,
     config,
@@ -297,6 +319,12 @@ def run_undercut(
             snapshot_at.strftime("%H:%M"),
             edad,
         )
+
+    # El panel se reescribe siempre, tambien cuando no hay novedades: su gracia
+    # es decir como estas, y "todo primero" es una respuesta tan util como una
+    # lista de cosas que atender.
+    if notifier and not dry_run:
+        actualizar_panel(notifier, state_dir, mis_subastas, todos, snapshot_at)
 
     frescos = todos if ignore_state else notified.filter_new(todos)
     repetidos = len(todos) - len(frescos)

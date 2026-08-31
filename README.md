@@ -395,3 +395,27 @@ La lista sale de las carpetas de WoW, no del addon, asi que incluye tambien los
 personajes que no tienen ninguna subasta puesta. La genera `sync_subastas.py`
 junto al volcado de subastas, en `mis_personajes.json`, y se actualiza sola
 cuando creas un personaje nuevo.
+
+### 5.8 El panel de estado
+
+Ademas de los avisos, el vigilante mantiene **un unico mensaje** en el canal de
+undercuts que reescribe cada hora con el estado de todas tus subastas:
+
+```
+📊 Tus subastas
+Tus 57 subastas vigiladas van primeras. Nada que hacer.
+
+**Mbarval · WoW 2** — 6 vigiladas, todas primeras ✅
+**Dbardan · WoW 2** — 4 vigiladas, 1 adelantada
+⚠️ Zapatillas del culto siseante — ~~50.000~~ **30.000 g**
+```
+
+**Fijalo en el canal** (clic derecho en el mensaje > Fijar) y lo tienes a un
+toque desde el movil. Los avisos te cuentan lo que ha cambiado; el panel te
+cuenta como estas.
+
+Los personajes que tienen algo que atender salen arriba, y de cada uno solo se
+detallan las subastas adelantadas: listar las que van bien seria ilegible.
+
+No se publica uno nuevo cada hora: se reescribe el mismo, cuyo id se guarda en
+`.state/panel.json`. Si lo borras, la pasada siguiente crea otro.

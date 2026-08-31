@@ -352,3 +352,42 @@ def test_ninguna_tarjeta_pasa_de_los_limites_de_discord():
         embed = mensaje["embeds"][0]
         assert len(embed["description"]) <= 4096
         assert len(embed["title"]) <= 256
+
+
+# -- Panel de estado --------------------------------------------------------
+
+from wowalerts.notifier import build_undercut_messages as _bum  # noqa: F401
+
+PANEL = {"embeds": [{"title": "📊 Tus subastas"}]}
+
+
+def test_el_panel_se_crea_la_primera_vez_y_devuelve_su_id(requests_mock):
+    requests_mock.post(WEBHOOK + "?wait=true", json={"id": "12345"}, status_code=200)
+    notifier = DiscordNotifier(WEBHOOK, session=requests.Session())
+
+    assert notifier.upsert_panel(PANEL, None) == "12345"
+
+
+def test_el_panel_reescribe_el_mensaje_que_ya_existe(requests_mock):
+    editar = requests_mock.patch(WEBHOOK + "/messages/12345", status_code=200)
+    notifier = DiscordNotifier(WEBHOOK, session=requests.Session())
+
+    assert notifier.upsert_panel(PANEL, "12345") == "12345"
+    assert editar.call_count == 1
+
+
+def test_si_el_mensaje_del_panel_ya_no_existe_se_crea_otro(requests_mock):
+    """Lo puedes haber borrado, o haberse perdido la memoria entre pasadas."""
+    requests_mock.patch(WEBHOOK + "/messages/viejo", status_code=404)
+    requests_mock.post(WEBHOOK + "?wait=true", json={"id": "nuevo"}, status_code=200)
+    notifier = DiscordNotifier(WEBHOOK, session=requests.Session())
+
+    assert notifier.upsert_panel(PANEL, "viejo") == "nuevo"
+
+
+def test_un_fallo_del_panel_no_tumba_la_pasada(requests_mock):
+    """El panel es un extra; los avisos son lo importante."""
+    requests_mock.post(WEBHOOK + "?wait=true", status_code=500)
+    notifier = DiscordNotifier(WEBHOOK, session=requests.Session())
+
+    assert notifier.upsert_panel(PANEL, None) is None

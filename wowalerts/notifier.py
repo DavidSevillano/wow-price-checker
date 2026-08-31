@@ -340,6 +340,54 @@ class DiscordNotifier:
             self._post(message)
         return list(undercuts[:MAX_DEALS_PER_RUN])
 
+    def upsert_panel(self, payload: Mapping[str, Any], message_id: str | None) -> str | None:
+        """Crea el mensaje del panel o reescribe el que ya existe.
+
+        Devuelve el id del mensaje, que hay que guardar para poder reescribirlo
+        en la pasada siguiente en vez de ir dejando uno nuevo cada hora.
+
+        Si el guardado ya no existe (lo borraste, o se perdio la memoria), se
+        crea uno nuevo en vez de fallar: el panel es informativo y no merece
+        tumbar la pasada.
+        """
+        if message_id:
+            respuesta = self._post_raw(
+                f"{self.webhook_url}/messages/{message_id}", payload, method="PATCH"
+            )
+            if respuesta is not None and respuesta.status_code in (200, 204):
+                return message_id
+            log.warning(
+                "El mensaje del panel %s ya no existe; creo uno nuevo.", message_id
+            )
+
+        # wait=true hace que Discord devuelva el mensaje creado, que es de donde
+        # sale el id para poder reescribirlo despues.
+        respuesta = self._post_raw(f"{self.webhook_url}?wait=true", payload)
+        if respuesta is None or respuesta.status_code not in (200, 204):
+            log.warning("No he podido publicar el panel.")
+            return None
+
+        try:
+            return str(respuesta.json().get("id") or "") or None
+        except requests.exceptions.JSONDecodeError:
+            return None
+
+    def _post_raw(
+        self, url: str, payload: Mapping[str, Any], method: str = "POST"
+    ) -> requests.Response | None:
+        """Peticion suelta al webhook, sin reintentos ni excepciones.
+
+        El panel es un extra: si falla, se avisa en el log y la pasada sigue.
+        Los avisos de verdad usan `_post`, que si reintenta y protesta.
+        """
+        try:
+            return self.session.request(
+                method, url, json=payload, timeout=self.timeout
+            )
+        except requests.RequestException as exc:
+            log.warning("Fallo hablando con Discord para el panel: %s", exc)
+            return None
+
     def send_warning(self, title: str, text: str) -> None:
         """Aviso sobre el estado del propio bot, no sobre precios."""
         self._post(
