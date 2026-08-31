@@ -7,7 +7,7 @@
 
 local FORMAT_VERSION = 1
 -- Version del addon, para saber que codigo se esta ejecutando de verdad.
-local ADDON_VERSION = "1.6"
+local ADDON_VERSION = "1.8"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 
@@ -19,11 +19,6 @@ WowAlertsExportDB = WowAlertsExportDB or {}
 -- mismas: comparando eso, el aviso saltaba siempre.
 local huellaEnDisco = nil
 
--- El juego solo conoce tus subastas mientras la Casa de Subastas esta abierta:
--- con ella cerrada, GetNumOwnedAuctions() devuelve 0. La regla para no perder
--- datos por eso esta en guardar(), y no depende de ningun evento: una bandera
--- levantada al abrir la casa se pierde con cualquier /reload, y entonces el
--- addon se queda creyendo que esta cerrada para siempre.
 
 -- ---------------------------------------------------------------------------
 --  Codificacion JSON minima (solo los tipos que usamos)
@@ -157,6 +152,14 @@ end
 --  Volcado
 -- ---------------------------------------------------------------------------
 
+-- Si la ventana de la casa de subastas esta abierta ahora mismo. Se le
+-- pregunta al juego en vez de recordarlo en una bandera: una bandera se pierde
+-- con cualquier /reload, y entonces el addon se queda creyendo que esta
+-- cerrada para siempre.
+local function casaAbierta()
+    return AuctionHouseFrame ~= nil and AuctionHouseFrame:IsShown()
+end
+
 -- Pedirle al servidor tus subastas. Con la casa de subastas cerrada esto no
 -- vale para nada y puede protestar, asi que se envuelve en pcall.
 local function pedirSubastas()
@@ -173,10 +176,34 @@ local function pedirSubastasPronto()
         return
     end
     refrescoPendiente = true
-    C_Timer.After(2, function()
+    C_Timer.After(1, function()
         refrescoPendiente = false
         pedirSubastas()
     end)
+end
+
+-- Mientras la casa de subastas este abierta se vuelve a preguntar cada pocos
+-- segundos. Es la red que hace que el recuento acabe cuadrando aunque algun
+-- evento de publicar o cancelar no llegue: publicar treinta objetos y cerrar
+-- dejaba el numero de antes hasta la visita siguiente.
+local repaso = nil
+
+local function empezarRepaso()
+    if repaso then
+        return
+    end
+    repaso = C_Timer.NewTicker(10, function()
+        if casaAbierta() then
+            pedirSubastas()
+        end
+    end)
+end
+
+local function pararRepaso()
+    if repaso then
+        repaso:Cancel()
+        repaso = nil
+    end
 end
 
 
@@ -205,11 +232,12 @@ local function guardar()
     local recogidas = recogerSubastas()
     local previo = datos[clave]
 
-    -- Leer cero subastas teniendo ya algo guardado no significa que las hayas
-    -- cancelado: significa que ahora mismo no se pueden leer, casi siempre
-    -- porque la casa de subastas esta cerrada. Conservar lo anterior es la
-    -- opcion segura, porque el vigilante descarta solo las que ya no existen.
-    if #recogidas == 0 and previo and #(previo.auctions or {}) > 0 then
+    -- Leer cero con la casa de subastas cerrada no significa que las hayas
+    -- cancelado: significa que ahora mismo no se pueden leer. Con la casa
+    -- abierta, en cambio, un cero es un cero de verdad y hay que guardarlo: si
+    -- no, un personaje al que se le acaban todas las subastas se queda con el
+    -- recuento viejo para siempre.
+    if #recogidas == 0 and not casaAbierta() and previo and #(previo.auctions or {}) > 0 then
         return nil
     end
 
@@ -300,8 +328,10 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         end
     elseif event == "AUCTION_HOUSE_SHOW" then
         pedirSubastas()
+        empezarRepaso()
         resumirPronto()
     elseif event == "AUCTION_HOUSE_CLOSED" then
+        pararRepaso()
         -- Al cerrar ya esta todo entregado y guardado: se cuenta sin esperar, y
         -- es el momento en que el recordatorio de /reload sirve para algo.
         resumir(true)

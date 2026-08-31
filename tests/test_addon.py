@@ -43,7 +43,20 @@ function GetDetailedItemLevelInfo() return ILVL end
 
 SlashCmdList = {}
 
-C_Timer = { After = function(_, fn) fn() end }
+REPASOS = 0
+C_Timer = {
+    After = function(_, fn) fn() end,
+    -- El repaso periodico se guarda para dispararlo a mano en los tests.
+    NewTicker = function(_, fn)
+        REPASOS = REPASOS + 1
+        REPASAR = fn
+        return { Cancel = function() REPASAR = nil end }
+    end,
+}
+
+-- La ventana de la casa de subastas: el addon le pregunta si esta abierta.
+CASA_ABIERTA = false
+AuctionHouseFrame = { IsShown = function() return CASA_ABIERTA end }
 
 C_AuctionHouse = {
     GetNumOwnedAuctions = function() return #SUBASTAS end,
@@ -82,6 +95,7 @@ def subasta(auction_id=1, item_id=200000, buyout=90_000_000, quantity=1, link=LI
 
 def recoger(lua):
     """Abre la casa de subastas y deja que el addon recoja lo que hay."""
+    lua.globals().CASA_ABIERTA = True
     lua.globals().DISPARAR("AUCTION_HOUSE_SHOW")
     lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
 
@@ -224,10 +238,25 @@ def test_leer_cero_no_borra_lo_ya_recogido():
     assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
 
     # Cierras la casa de subastas: el juego ya no sabe que tienes puesto.
+    lua.globals().CASA_ABIERTA = False
     lua.globals().SUBASTAS = lua.table_from([])
     lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
 
     assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
+
+
+def test_con_la_casa_abierta_un_cero_si_se_guarda():
+    """Se le acaban todas las subastas a un personaje. Con la casa abierta el
+    cero es de verdad, y si no se guarda el recuento viejo se queda para
+    siempre."""
+    lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
+    recoger(lua)
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
+
+    lua.globals().SUBASTAS = lua.table_from([])
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+    assert volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"] == []
 
 
 def test_el_comando_funciona_sin_haber_visto_abrir_la_casa():
@@ -322,6 +351,7 @@ def test_al_cerrar_la_casa_sale_un_mensaje_con_lo_guardado():
     lua.globals().mensajes = lua.table_from([])
 
     # Con la casa cerrada el juego ya no devuelve nada, pero lo guardado sigue.
+    lua.globals().CASA_ABIERTA = False
     lua.globals().SUBASTAS = lua.table_from([])
     lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
 
@@ -342,3 +372,35 @@ def test_postear_y_cancelar_no_llena_el_chat():
     assert " ".join(lua.globals().mensajes.values()) == ""
     # Pero si que se ha ido guardando por el camino.
     assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 11
+
+
+def test_mientras_la_casa_esta_abierta_se_repasa_solo():
+    """La red por si algun evento de publicar no llega: publicar treinta
+    objetos y cerrar dejaba el recuento viejo hasta la visita siguiente."""
+    lua = runtime(subastas=[subasta()])
+    recoger(lua)
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 1
+
+    # Posteas mas, sin que llegue ningun evento de creacion.
+    lua.globals().SUBASTAS = lua.table_from([subasta(auction_id=i) for i in range(1, 33)])
+    lua.globals().REPASAR()
+
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 32
+
+
+def test_el_repaso_se_para_al_cerrar_la_casa():
+    lua = runtime(subastas=[subasta()])
+    recoger(lua)
+    lua.globals().CASA_ABIERTA = False
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+
+    assert lua.globals().REPASAR is None
+
+
+def test_no_se_acumula_un_repaso_por_cada_apertura():
+    lua = runtime(subastas=[subasta()])
+    recoger(lua)
+    recoger(lua)
+    recoger(lua)
+
+    assert lua.globals().REPASOS == 1
