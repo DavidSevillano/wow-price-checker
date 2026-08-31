@@ -23,6 +23,7 @@ def vigilada(auction_id=1, oro=9000, caduca=None, visto=None, **kwargs):
         "auction_id": auction_id,
         "item_id": ITEM,
         "item_name": "Greaves of the Noxious Depths",
+        "ilvl": 311,
         "buyout_copper": oro * ORO,
         "quantity": 1,
         "character": "Pepe",
@@ -570,3 +571,23 @@ def test_la_marca_de_desaparicion_sobrevive_al_disco(tmp_path):
     )
     memoria.save()
     assert SeguimientoVentas(path).del_reino(1)[1].desaparecida_at == T0
+
+
+def test_la_venta_dice_de_que_ilvl_era():
+    """Con el mismo objeto a 292, 295 y 305, sin el ilvl no sabes cual se fue."""
+    previa = vigilada(caduca=T0 + timedelta(hours=2), ilvl=295)
+    ventas, _, _ = desaparece({1: previa})
+    assert ventas[0].subasta.ilvl == 295
+
+
+def test_el_ilvl_se_copia_de_la_subasta_del_addon():
+    _, seguidas, _ = revisar_reino({}, [mia()], [viva()], 1, T0, None, 12, 5)
+    assert seguidas[1].ilvl == 311
+
+
+def test_el_ilvl_sobrevive_al_disco(tmp_path):
+    path = tmp_path / "ventas.json"
+    memoria = SeguimientoVentas(path)
+    memoria.actualizar_reino(1, {1: vigilada(ilvl=298)}, UltimoVolcado(T0, 900))
+    memoria.save()
+    assert SeguimientoVentas(path).del_reino(1)[1].ilvl == 298

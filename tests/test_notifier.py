@@ -448,12 +448,14 @@ def una_venta(
     oro=10000,
     auction_id=1,
     cantidad=1,
+    ilvl=295,
 ):
     return Venta(
         subasta=SubastaVigilada(
             auction_id=auction_id,
             item_id=200000,
             item_name=objeto,
+            ilvl=ilvl,
             buyout_copper=oro * 10_000,
             quantity=cantidad,
             character=personaje,

@@ -324,6 +324,10 @@ def _venta_line(venta: Venta) -> str:
     nombre = venta.subasta.item_name
     if len(nombre) > MAX_ITEM_NAME:
         nombre = nombre[: MAX_ITEM_NAME - 1].rstrip() + "…"
+    if venta.subasta.ilvl:
+        # Con el mismo objeto puesto a varios ilvl, sin esto no sabes cual se ha
+        # vendido y la unica forma de comprobarlo es el buzon.
+        nombre += f" ({venta.subasta.ilvl})"
     if venta.subasta.quantity > 1:
         nombre += f" ×{venta.subasta.quantity}"
     return f"• {nombre} — **{format_gold(venta.neto_gold)} g**"

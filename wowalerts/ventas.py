@@ -60,6 +60,9 @@ class SubastaVigilada:
     auction_id: int
     item_id: int
     item_name: str
+    # Hace falta en el aviso: el mismo objeto se vende a 292, 295, 298 y 305, y
+    # sin el ilvl no se sabe cual de todas se ha ido.
+    ilvl: int
     buyout_copper: int
     quantity: int
     character: str
@@ -123,6 +126,7 @@ def _vigilada_de(mia: MyAuction, dump_at: datetime) -> SubastaVigilada:
         auction_id=mia.auction_id,
         item_id=mia.item_id,
         item_name=mia.item_name,
+        ilvl=mia.ilvl,
         buyout_copper=mia.buyout_copper,
         quantity=mia.quantity,
         character=mia.character,
