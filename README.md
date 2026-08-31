@@ -387,9 +387,17 @@ subastas de 100 g salian compitiendo contra listados de 10.000 g.
 
   Ojo a lo que eso significa al leer el aviso: **ahi solo van las nuevas**. Si
   un personaje tiene tres adelantadas y dos ya te las avise, veras "1 nueva", no
-  "3". Por eso el titulo dice *nueva* y, cuando hay omitidas, el mensaje lleva
-  una linea diciendo cuantas son. **La foto completa esta siempre en el panel
-  fijado**, que se reescribe cada hora con todas.
+  "3". Por eso el titulo dice *nueva* y, cuando hay omitidas, el mensaje las
+  **nombra** en la cabecera:
+
+  ```
+  🔁 Y 1 que ya te avise y sigue adelantada: Ebardan — Zapatillas del culto siseante
+  ```
+
+  Se nombran hasta seis; a partir de ahi se dice cuantas faltan y se remite al
+  panel. Un recuento a secas no servia de nada: sin saber cual es, no puedes ir
+  a arreglarla. **La foto completa esta siempre en el panel fijado**, que se
+  reescribe cada hora con todas.
 - **Nada de avisos fantasma.** Si una subasta tuya ya no aparece en la casa de
   subastas (vendida, caducada o cancelada), se descarta sola.
 - **Tus otros personajes cuentan como rivales hasta que los visites.** Si

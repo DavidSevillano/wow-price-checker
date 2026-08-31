@@ -338,13 +338,33 @@ def test_el_recuento_dice_que_son_solo_las_nuevas():
 
 def test_se_avisa_de_las_que_ya_estaban_avisadas():
     """Si no, ves "1 nueva" y crees que ese personaje solo tiene una."""
-    mensajes = build_undercut_messages([un_undercut()], repetidos=5)
-    assert "5" in mensajes[0]["content"]
-    assert "panel" in mensajes[0]["content"].lower()
+    ya = [un_undercut(personaje="Ana", objeto="Grebas", auction_id=7)]
+    mensajes = build_undercut_messages([un_undercut()], ya_avisados=ya)
+    assert "1" in mensajes[0]["content"]
+
+
+def test_las_ya_avisadas_se_nombran():
+    """Un recuento a secas no sirve para nada: hay que decir cuales son."""
+    ya = [un_undercut(personaje="Ana", objeto="Zapatillas", auction_id=7)]
+    contenido = build_undercut_messages([un_undercut()], ya_avisados=ya)[0]["content"]
+    assert "Ana" in contenido
+    assert "Zapatillas" in contenido
+
+
+def test_una_lista_larga_de_ya_avisadas_se_recorta():
+    ya = [
+        un_undercut(personaje=f"Pj{i}", objeto="Grebas", auction_id=100 + i)
+        for i in range(12)
+    ]
+    contenido = build_undercut_messages([un_undercut()], ya_avisados=ya)[0]["content"]
+    assert "panel" in contenido.lower()
+    assert "Pj0" in contenido
+    # No caben las doce: se nombran unas cuantas y se dice cuantas faltan.
+    assert "Pj11" not in contenido
 
 
 def test_sin_repetidos_no_se_anade_nada():
-    mensajes = build_undercut_messages([un_undercut()], repetidos=0)
+    mensajes = build_undercut_messages([un_undercut()], ya_avisados=[])
     assert "content" not in mensajes[0]
 
 

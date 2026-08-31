@@ -406,9 +406,20 @@ def run_mis_subastas(
             )
 
         frescos = todos if ignore_state else notified.filter_new(todos)
-        repetidos = len(todos) - len(frescos)
-        if repetidos:
-            log.info("🔁 %s undercut(s) ya avisados, omitidos.", repetidos)
+        # Los repetidos no se tiran: van nombrados en la cabecera del aviso,
+        # porque un personaje con tres adelantadas de las que dos son repetidas
+        # aparecia con una sola y parecia que las otras se habian arreglado.
+        claves_frescas = {
+            (u.realm_id, u.mine.auction_id, u.rival_auction_id) for u in frescos
+        }
+        ya_avisados = [
+            u
+            for u in todos
+            if (u.realm_id, u.mine.auction_id, u.rival_auction_id)
+            not in claves_frescas
+        ]
+        if ya_avisados:
+            log.info("🔁 %s undercut(s) ya avisados, omitidos.", len(ya_avisados))
 
         if not frescos:
             log.info("😌 Nadie nuevo te ha adelantado.")
@@ -430,7 +441,7 @@ def run_mis_subastas(
                 )
 
             if not dry_run:
-                enviados = notifier_undercut.send_undercuts(frescos, repetidos)
+                enviados = notifier_undercut.send_undercuts(frescos, ya_avisados)
                 log.info("📨 Enviados a Discord %s aviso(s).", len(enviados))
                 # Solo se marcan los que han salido de verdad, igual que con los
                 # chollos.
