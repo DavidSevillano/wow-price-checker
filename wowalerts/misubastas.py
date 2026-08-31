@@ -213,7 +213,63 @@ def leer_de_wow(wow_root: str | Path) -> list[MyAuction] | None:
     return subastas_de_payloads(fusionar_payloads(payloads))
 
 
-def escribir_snapshot(path: str | Path, subastas: Sequence[MyAuction]) -> bool:
+def canceladas_de_payload(payload: Mapping) -> set[int]:
+    """Los ids de subasta que el addon ha visto que cancelaste tu.
+
+    El addon las guarda como un mapa 'id -> cuando', pero su codificador escribe
+    una lista vacia cuando no hay ninguna, asi que aqui se aceptan las dos
+    formas. Solo interesan los ids: el cuando es para que el addon pode.
+    """
+    crudas = payload.get("canceladas")
+    if isinstance(crudas, dict):
+        claves = crudas.keys()
+    elif isinstance(crudas, list):
+        claves = crudas
+    else:
+        return set()
+
+    ids: set[int] = set()
+    for clave in claves:
+        try:
+            ids.add(int(clave))
+        except (TypeError, ValueError):
+            log.debug("Cancelacion con id ilegible, la ignoro: %r", clave)
+    return ids
+
+
+def leer_canceladas_de_wow(wow_root: str | Path) -> set[int]:
+    """Las cancelaciones apuntadas por el addon en todas tus cuentas."""
+    ids: set[int] = set()
+    for fichero in encontrar_savedvariables(wow_root):
+        ids |= canceladas_de_payload(leer_payload(fichero))
+    return ids
+
+
+def leer_canceladas(origen: str | Path) -> set[int]:
+    """Las cancelaciones del volcado de todas tus maquinas.
+
+    Se unen sin mirar cual es mas reciente: una cancelacion es un hecho que no
+    caduca, y el addon ya se encarga de podar las viejas.
+    """
+    origen = Path(origen)
+    ficheros = [origen] if origen.is_file() else sorted(origen.glob("*.json"))
+
+    ids: set[int] = set()
+    for fichero in ficheros:
+        try:
+            datos = json.loads(fichero.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(datos, dict):
+            ids |= canceladas_de_payload(datos)
+    return ids
+
+
+def escribir_snapshot(
+    path: str | Path,
+    subastas: Sequence[MyAuction],
+    canceladas: Iterable[int] = (),
+) -> bool:
     """Escribe mis_subastas.json. Devuelve True solo si el contenido ha cambiado.
 
     No lleva marcas de tiempo a proposito: asi dos volcados con las mismas
@@ -225,6 +281,9 @@ def escribir_snapshot(path: str | Path, subastas: Sequence[MyAuction]) -> bool:
         {
             "version": SNAPSHOT_VERSION,
             "auctions": [_to_json(s) for s in subastas],
+            # Ordenadas para que dos volcados iguales den bytes iguales y el
+            # sincronizador no genere commits vacios.
+            "canceladas": sorted(set(canceladas)),
         },
         indent=2,
         ensure_ascii=False,

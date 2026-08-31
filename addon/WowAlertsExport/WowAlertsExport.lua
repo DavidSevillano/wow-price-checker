@@ -7,7 +7,7 @@
 
 local FORMAT_VERSION = 1
 -- Version del addon, para saber que codigo se esta ejecutando de verdad.
-local ADDON_VERSION = "1.8"
+local ADDON_VERSION = "1.9"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 
@@ -207,6 +207,37 @@ local function pararRepaso()
 end
 
 
+-- ---------------------------------------------------------------------------
+--  Cancelaciones
+-- ---------------------------------------------------------------------------
+--  Cancelar una subasta y venderla se ven igual desde fuera: en las dos
+--  desaparece de la casa de subastas. El unico que sabe cual ha sido es el
+--  juego, asi que se apunta aqui y el vigilante lo consulta antes de cantar una
+--  venta.
+
+-- Cuantos dias se recuerda una cancelacion. Con la pasada cada hora sobra de
+-- largo; el limite existe solo para que la lista no crezca sin fin.
+local DIAS_CANCELADAS = 3
+
+local function apuntarCancelada(auctionID)
+    if type(auctionID) ~= "number" then
+        return
+    end
+
+    local canceladas = WowAlertsExportDB.canceladas or {}
+    canceladas[tostring(auctionID)] = time()
+
+    local corte = time() - DIAS_CANCELADAS * 86400
+    for id, cuando in pairs(canceladas) do
+        if type(cuando) ~= "number" or cuando < corte then
+            canceladas[id] = nil
+        end
+    end
+
+    WowAlertsExportDB.canceladas = canceladas
+end
+
+
 local function claveDePersonaje()
     local nombre = UnitName("player")
     local reino = GetRealmName()
@@ -253,6 +284,7 @@ local function guardar()
     WowAlertsExportDB.payload = encode({
         version = FORMAT_VERSION,
         personajes = datos,
+        canceladas = WowAlertsExportDB.canceladas or {},
     })
     WowAlertsExportDB.huella = huellaDe(datos)
 
@@ -335,7 +367,14 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         -- Al cerrar ya esta todo entregado y guardado: se cuenta sin esperar, y
         -- es el momento en que el recordatorio de /reload sirve para algo.
         resumir(true)
-    elseif event == "AUCTION_HOUSE_AUCTION_CREATED" or event == "AUCTION_CANCELED" then
+    elseif event == "AUCTION_CANCELED" then
+        -- arg1 es el id de la subasta cancelada. Se guarda antes de nada y se
+        -- vuelca ya: si esperaramos a OWNED_AUCTIONS_UPDATED y ese evento no
+        -- llegara, la cancelacion se perderia y saldria como venta.
+        apuntarCancelada(arg1)
+        guardar()
+        pedirSubastasPronto()
+    elseif event == "AUCTION_HOUSE_AUCTION_CREATED" then
         pedirSubastasPronto()
     elseif event == "OWNED_AUCTIONS_UPDATED" then
         guardar()
@@ -353,6 +392,12 @@ SlashCmdList["WOWALERTS"] = function()
 
     print(("|cffffd200WoW Alerts v%s|r · %s de %s"):format(ADDON_VERSION, nombre, reino))
     print(("  tengo guardadas |cff00ff00%d|r subasta(s) de este personaje."):format(guardadas()))
+
+    local n = 0
+    for _ in pairs(WowAlertsExportDB.canceladas or {}) do
+        n = n + 1
+    end
+    print(("  y |cff00ff00%d|r cancelacion(es) apuntada(s), para no cantarlas como ventas."):format(n))
     print("  pidiendo las de ahora mismo...")
 
     pedirSubastas()

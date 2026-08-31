@@ -318,6 +318,11 @@ def _vigilada_a_json(vigilada: SubastaVigilada) -> dict:
         "no_caduca_antes_de": vigilada.no_caduca_antes_de.isoformat(),
         "visto_at": vigilada.visto_at.isoformat(),
         "adelantada": vigilada.adelantada,
+        "desaparecida_at": (
+            vigilada.desaparecida_at.isoformat()
+            if vigilada.desaparecida_at is not None
+            else None
+        ),
     }
 
 
@@ -363,6 +368,7 @@ def _leer_seguimiento(raw: Any) -> dict[str, SubastaVigilada]:
                 no_caduca_antes_de=caduca,
                 visto_at=visto,
                 adelantada=bool(entrada.get("adelantada", False)),
+                desaparecida_at=_fecha(entrada.get("desaparecida_at")),
             )
         except (KeyError, TypeError, ValueError):
             log.debug("Entrada de seguimiento ilegible, la descarto: %r", entrada)

@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 from wowalerts.blizzard import BlizzardAuthError, BlizzardClient, BlizzardError
 from wowalerts.config import ConfigError, load_config
 from wowalerts.items import ItemResolutionError, resolve_item_ids
-from wowalerts.misubastas import MisSubastasError, leer_snapshots
+from wowalerts.misubastas import MisSubastasError, leer_canceladas, leer_snapshots
 from wowalerts.panel import build_panel
 from wowalerts.notifier import (
     DiscordError,
@@ -332,6 +332,10 @@ def run_mis_subastas(
         state_dir / "undercuts.json", config.settings.state_retention_runs
     )
     seguimiento = SeguimientoVentas(state_dir / "ventas.json")
+    # Lo que el addon ha visto que cancelaste: nada de eso es una venta.
+    canceladas = leer_canceladas(mis_subastas_path) if hacer_ventas else set()
+    if canceladas:
+        log.info("🚫 %s cancelacion(es) conocidas del addon.", len(canceladas))
 
     if hacer_ventas:
         # Un reino donde queda algo por resolver se mira aunque el volcado del
@@ -379,6 +383,7 @@ def run_mis_subastas(
                 config.settings.listing_hours,
                 config.settings.ah_cut_pct,
                 {u.mine.auction_id for u in del_reino_undercuts},
+                canceladas,
             )
             ventas.extend(del_reino)
             seguimiento.actualizar_reino(realm_id, seguidas, ultimo)

@@ -179,3 +179,40 @@ def test_una_maquina_sin_volcado_todavia_no_es_un_error(tmp_path):
     hora sin motivo."""
     (tmp_path / "WTF" / "Account").mkdir(parents=True)
     assert leer_de_wow(tmp_path) is None
+
+
+# -- Cancelaciones ----------------------------------------------------------
+
+from wowalerts.misubastas import canceladas_de_payload, leer_canceladas
+
+
+def test_las_cancelaciones_salen_del_payload():
+    payload = {"canceladas": {"12345": 1756000000, "999": 1756000001}}
+    assert canceladas_de_payload(payload) == {12345, 999}
+
+
+def test_un_payload_sin_cancelaciones_no_falla():
+    assert canceladas_de_payload({"personajes": {}}) == set()
+
+
+def test_una_lista_vacia_de_lua_se_acepta():
+    # El codificador del addon escribe [] cuando la tabla esta vacia.
+    assert canceladas_de_payload({"canceladas": []}) == set()
+
+
+def test_las_claves_que_no_son_numeros_se_ignoran():
+    assert canceladas_de_payload({"canceladas": {"ab": 1, "7": 2}}) == {7}
+
+
+def test_las_cancelaciones_se_leen_de_la_carpeta(tmp_path):
+    (tmp_path / "pc.json").write_text(
+        '{"version": 1, "auctions": [], "canceladas": [1, 2]}', encoding="utf-8"
+    )
+    (tmp_path / "deck.json").write_text(
+        '{"version": 1, "auctions": [], "canceladas": [3]}', encoding="utf-8"
+    )
+    assert leer_canceladas(tmp_path) == {1, 2, 3}
+
+
+def test_una_carpeta_sin_volcados_no_tiene_cancelaciones(tmp_path):
+    assert leer_canceladas(tmp_path) == set()

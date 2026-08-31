@@ -177,15 +177,25 @@ def test_se_devuelve_la_foto_de_este_volcado():
 # -- Deteccion de la venta --------------------------------------------------
 
 UNA_HORA_DESPUES = T0 + timedelta(hours=1)
+DOS_HORAS = T0 + timedelta(hours=2)
+
+
+def desaparece(seguidas, cuando=UNA_HORA_DESPUES, luego=None, **kw):
+    """Dos pasadas seguidas sin aparecer, que es lo que hace falta para vender.
+
+    La primera solo la deja pendiente; la segunda decide. Envuelto aqui porque
+    lo hacen casi todos los tests de deteccion.
+    """
+    luego = luego if luego is not None else cuando + timedelta(hours=1)
+    _, pendientes, _ = revisar_reino(seguidas, [], [], 1, cuando, None, 12, 5, **kw)
+    return revisar_reino(pendientes, [], [], 1, luego, None, 12, 5, **kw)
 
 
 def test_desaparecer_antes_de_poder_caducar_es_una_venta():
     # Vista en LONG a las 14:31: le quedaban 2 h como minimo. A las 15:31 ya no
     # esta, asi que no ha caducado.
     previa = vigilada(caduca=T0 + timedelta(hours=2))
-    ventas, seguidas, _ = revisar_reino(
-        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
-    )
+    ventas, seguidas, _ = desaparece({1: previa})
     assert len(ventas) == 1
     assert ventas[0].subasta.auction_id == 1
     assert ventas[0].realm_id == 1
@@ -195,9 +205,7 @@ def test_desaparecer_antes_de_poder_caducar_es_una_venta():
 
 def test_desaparecer_pudiendo_haber_caducado_no_avisa():
     previa = vigilada(caduca=T0 + timedelta(minutes=30))
-    ventas, seguidas, _ = revisar_reino(
-        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
-    )
+    ventas, seguidas, _ = desaparece({1: previa})
     assert ventas == []
     # Caducada o vendida, ya no existe: sale del seguimiento igualmente.
     assert seguidas == {}
@@ -206,11 +214,9 @@ def test_desaparecer_pudiendo_haber_caducado_no_avisa():
 def test_una_venta_no_se_repite():
     """Al salir del seguimiento, la pasada siguiente ya no la conoce."""
     previa = vigilada(caduca=T0 + timedelta(hours=2))
-    _, seguidas, _ = revisar_reino(
-        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
-    )
+    _, seguidas, _ = desaparece({1: previa})
     ventas, _, _ = revisar_reino(
-        seguidas, [], [], 1, UNA_HORA_DESPUES + timedelta(hours=1), None, 12, 5
+        seguidas, [], [], 1, T0 + timedelta(hours=3), None, 12, 5
     )
     assert ventas == []
 
@@ -228,9 +234,7 @@ def test_una_subasta_nunca_vista_viva_no_puede_venderse():
 def test_la_venta_conserva_los_datos_aunque_el_addon_la_olvide():
     """Vendes, /reload, el sync sube el volcado ya sin ella: aun asi se anuncia."""
     previa = vigilada(caduca=T0 + timedelta(hours=2), oro=12000)
-    ventas, _, _ = revisar_reino(
-        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
-    )
+    ventas, _, _ = desaparece({1: previa})
     assert ventas[0].subasta.item_name == "Greaves of the Noxious Depths"
     assert ventas[0].subasta.character == "Pepe"
     assert ventas[0].subasta.account == 3
@@ -242,16 +246,17 @@ def test_las_ventas_salen_ordenadas_por_importe():
         1: vigilada(auction_id=1, oro=5000, caduca=T0 + timedelta(hours=2)),
         2: vigilada(auction_id=2, oro=20000, caduca=T0 + timedelta(hours=2)),
     }
-    ventas, _, _ = revisar_reino(
-        seguidas, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
-    )
+    ventas, _, _ = desaparece(seguidas)
     assert [v.subasta.auction_id for v in ventas] == [2, 1]
 
 
 def test_la_comision_llega_a_la_venta():
     previa = vigilada(caduca=T0 + timedelta(hours=2), oro=10000)
-    ventas, _, _ = revisar_reino(
+    _, pendientes, _ = revisar_reino(
         {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, ah_cut_pct=10
+    )
+    ventas, _, _ = revisar_reino(
+        pendientes, [], [], 1, DOS_HORAS, None, 12, ah_cut_pct=10
     )
     assert ventas[0].neto_gold == 9000
 
@@ -277,7 +282,7 @@ def test_nacida_bajo_observacion_y_vendida_a_las_cinco_horas():
     )
 
     cinco_horas = T0 + timedelta(hours=5)
-    ventas, _, _ = revisar_reino(seguidas, [], [], 1, cinco_horas, ultimo, 12, 5)
+    ventas, _, _ = desaparece(seguidas, cuando=cinco_horas)
     assert len(ventas) == 1
     assert ventas[0].subasta.auction_id == 501
 
@@ -290,7 +295,7 @@ def test_nacida_bajo_observacion_y_desaparecida_pasadas_las_doce_horas():
     )
 
     doce_horas = T0 + timedelta(hours=12)
-    ventas, _, _ = revisar_reino(seguidas, [], [], 1, doce_horas, ultimo, 12, 5)
+    ventas, _, _ = desaparece(seguidas, cuando=doce_horas)
     assert ventas == []
 
 
@@ -429,9 +434,7 @@ def test_dejar_de_estar_adelantada_devuelve_la_deteccion_de_venta():
     _, seguidas, _ = revisar_reino(
         {1: previa}, [mia()], [viva()], 1, T0, None, 12, 5, adelantadas=set()
     )
-    ventas, _, _ = revisar_reino(
-        seguidas, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
-    )
+    ventas, _, _ = desaparece(seguidas)
     assert len(ventas) == 1
 
 
@@ -467,3 +470,103 @@ def test_un_reposteo_suprimido_se_deja_por_escrito(caplog):
 
     assert "reposteada" in caplog.text
     assert "Pepe" in caplog.text
+
+
+# -- Espera de una pasada y lista de cancelaciones --------------------------
+
+DOS_HORAS_DESPUES = T0 + timedelta(hours=2)
+
+
+def test_desaparecer_no_se_canta_en_la_misma_pasada():
+    """Se espera una pasada por si llega la cancelacion desde el juego."""
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+    ventas, seguidas, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
+    )
+    assert ventas == []
+    # Sigue en seguimiento, pero anotada como desaparecida.
+    assert seguidas[1].desaparecida_at == UNA_HORA_DESPUES
+
+
+def test_si_sigue_sin_aparecer_en_la_siguiente_se_canta():
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+    _, seguidas, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
+    )
+    ventas, quedan, _ = revisar_reino(
+        seguidas, [], [], 1, DOS_HORAS_DESPUES, None, 12, 5
+    )
+    assert len(ventas) == 1
+    assert quedan == {}
+
+
+def test_la_caducidad_se_juzga_por_cuando_desaparecio():
+    """El dato es el momento en que se fue, no el de la pasada que decide.
+
+    Sin esto, la espera de una pasada empujaria a la subasta mas alla de su
+    fecha de caducidad y se perderian ventas buenas.
+    """
+    # Cota justo entre la desaparicion (T0+1h) y la decision (T0+2h).
+    previa = vigilada(caduca=T0 + timedelta(hours=2))
+    _, seguidas, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
+    )
+    ventas, _, _ = revisar_reino(
+        seguidas, [], [], 1, DOS_HORAS_DESPUES, None, 12, 5
+    )
+    assert len(ventas) == 1
+    assert ventas[0].detectada_at == UNA_HORA_DESPUES
+
+
+def test_una_cancelacion_que_llega_a_tiempo_evita_el_aviso():
+    """El caso que motiva toda la espera."""
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+    _, seguidas, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
+    )
+    ventas, quedan, _ = revisar_reino(
+        seguidas, [], [], 1, DOS_HORAS_DESPUES, None, 12, 5, canceladas={1}
+    )
+    assert ventas == []
+    assert quedan == {}
+
+
+def test_una_cancelacion_ya_conocida_se_descarta_sin_esperar():
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+    ventas, quedan, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5, canceladas={1}
+    )
+    assert ventas == []
+    assert quedan == {}
+
+
+def test_una_pendiente_que_reaparece_deja_de_estarlo():
+    """Un reino que fallo, o un volcado raro: si vuelve, no se ha vendido."""
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+    _, seguidas, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
+    )
+    assert seguidas[1].desaparecida_at is not None
+    _, vuelta, _ = revisar_reino(
+        seguidas, [mia()], [viva()], 1, DOS_HORAS_DESPUES, None, 12, 5
+    )
+    assert vuelta[1].desaparecida_at is None
+
+
+def test_una_adelantada_no_espera_ni_una_pasada():
+    previa = vigilada(caduca=T0 + timedelta(hours=5), adelantada=True)
+    ventas, quedan, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
+    )
+    assert ventas == []
+    assert quedan == {}
+
+
+def test_la_marca_de_desaparicion_sobrevive_al_disco(tmp_path):
+    path = tmp_path / "ventas.json"
+    memoria = SeguimientoVentas(path)
+    memoria.actualizar_reino(
+        1, {1: vigilada(desaparecida_at=T0)}, UltimoVolcado(T0, 900)
+    )
+    memoria.save()
+    assert SeguimientoVentas(path).del_reino(1)[1].desaparecida_at == T0

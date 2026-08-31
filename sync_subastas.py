@@ -22,7 +22,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from wowalerts.misubastas import MisSubastasError, escribir_snapshot, leer_de_wow
+from wowalerts.misubastas import (
+    MisSubastasError,
+    escribir_snapshot,
+    leer_canceladas_de_wow,
+    leer_de_wow,
+)
 from wowalerts.personajes import escribir_personajes, leer_personajes
 
 log = logging.getLogger("sync")
@@ -179,6 +184,12 @@ def run(args: argparse.Namespace) -> int:
         return EXIT_OK
     log.info("%s subasta(s) tuyas leidas de %s.", len(subastas), wow_root)
 
+    # Sin esto, cada vez que cancelas para repostear el vigilante lo cantaria
+    # como una venta: desde la API las dos cosas se ven igual.
+    canceladas = leer_canceladas_de_wow(wow_root)
+    if canceladas:
+        log.info("%s cancelacion(es) apuntadas por el addon.", len(canceladas))
+
     personajes = leer_personajes(wow_root)
 
     maquina = args.maquina or nombre_de_maquina()
@@ -191,7 +202,7 @@ def run(args: argparse.Namespace) -> int:
         return EXIT_OK
 
     cambiados = []
-    if escribir_snapshot(fichero_subastas, subastas):
+    if escribir_snapshot(fichero_subastas, subastas, canceladas):
         cambiados.append(fichero_subastas)
     if escribir_personajes(fichero_personajes, personajes):
         cambiados.append(fichero_personajes)

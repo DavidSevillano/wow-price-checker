@@ -461,43 +461,60 @@ convertiria su caducacion en una venta falsa.
   producen exactamente el mismo dato, y avisar de todas seria peor: **toda
   subasta que no se vende acaba desapareciendo justo ahi**, asi que el canal se
   llenaria de falsas alarmas.
-- **Las ventas de una subasta que te estaban adelantando.** Ver mas abajo.
+- **Las ventas de una subasta que te estaban adelantando**, ni las de una que
+  hayas cancelado. Ver mas abajo.
 - **Objetos que no esten en `config.yaml`.**
 
 ### 6.3 Los reposteos no cuentan como ventas
 
-Cancelar una subasta y venderla se ven exactamente igual desde la API: en las
-dos desaparece. Y como el aviso de undercut existe justamente para mandarte a
-repostear, **cada aviso de undercut fabricaba una venta falsa a la hora
-siguiente**. Paso de verdad: los tres undercuts avisados a las 10:33 del
-2026-08-31 volvieron como tres ventas a las 11:33, mismos objetos y mismos
-precios.
+Cancelar una subasta y venderla se ven **exactamente igual** desde la API: en
+las dos desaparece. Y si reprecias a menudo, cada reposteo tuyo saldria como una
+venta. Paso: el 2026-08-31 llegaron 13 avisos de venta, todos falsos, todos
+reposteos.
 
-La regla que lo corrige: **si la ultima vez que vi tu subasta te la estaban
-adelantando y luego desaparece, la has reposteado tu**. No se avisa.
+Hay dos defensas, y hacen falta las dos.
 
-El precio a pagar es que, si una subasta adelantada se vende de verdad, no te
-enteras. Es un precio bajo: estar adelantado significa que hay algo mas barato
-que lo tuyo, o sea que es justo la que menos probabilidades tiene de venderse.
+**La lista de cancelaciones del addon.** El addon apunta el id de cada subasta
+que cancelas y lo sube con el volcado. Es el dato preciso: una cancelacion es
+una cancelacion, no hay que adivinar nada. Necesita el addon **v1.9 o
+posterior**; si vienes de una version anterior, vuelve a copiarlo (apartado
+5.1).
 
-Y dura poco: en cuanto el rival se va o reposteas, la marca se quita en la
-pasada siguiente y esa subasta vuelve a poder avisar de su venta. La supresion
-cubre solo la ventana en la que de verdad estas reposteando.
-
-Lo que sigue sin poder distinguirse es que canceles una subasta que **no**
-estaba adelantada: eso si sale como venta.
-
-Cada reposteo que se tapa queda escrito en el log de la pasada, para que puedas
-distinguir "no has vendido nada" de "he tapado seis reposteos":
+**La espera de una pasada.** Aqui esta el problema que obliga a esperar:
 
 ```
-↩️  Bbarral de Zapatillas del culto siseante: ha desaparecido, pero te la
-    estaban adelantando. La doy por reposteada, no por vendida.
+16:20  cancelas          -> desaparece del volcado de Blizzard de las 16:31
+16:33  pasada            -> cantaria la venta falsa
+16:35  el sync sube la cancelacion desde el juego   <- llega tarde
 ```
 
-**La marca solo existe desde la pasada siguiente a que te avise del undercut.**
-Una subasta tiene que verse viva y adelantada una vez para quedar marcada; si
-reposteas antes de eso, esa vez sale como venta.
+Blizzard se entera de tus cancelaciones **antes** que el addon, porque WoW solo
+escribe a disco al hacer `/reload`. Por eso una subasta que desaparece no se
+canta en el acto: se queda pendiente y solo se anuncia en la pasada siguiente,
+si para entonces no ha aparecido en la lista de cancelaciones. Eso le da al
+sync una hora entera de margen.
+
+**Coste: las ventas llegan con una hora mas de retraso**, entre 1 y 2 horas en
+vez de hasta 1. A cambio, no te mienten.
+
+La fecha de caducidad se sigue juzgando por **cuando desaparecio la subasta**,
+no por cuando se toma la decision. Si no, la espera empujaria a la subasta mas
+alla de su plazo y se perderian ventas buenas.
+
+Como tercera red queda la marca de undercut: si la ultima vez que se vio viva le
+estaban adelantando, se da por reposteada sin esperar. Cubre el caso en que
+reposteas por mi aviso, que es el unico que puedo anticipar.
+
+Todo lo que se tapa queda escrito en el log de la pasada:
+
+```
+↩️  Dbardan de Zapatillas del culto siseante: la cancelaste tu, asi que no
+    la cuento como venta.
+```
+
+**Lo que sigue sin cubrirse:** que canceles y no vuelvas a entrar al juego a
+hacer `/reload` antes de la pasada siguiente. Ahi la cancelacion no llega a
+tiempo y sale como venta.
 
 ### 6.4 Canal propio
 

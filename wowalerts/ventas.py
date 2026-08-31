@@ -75,6 +75,12 @@ class SubastaVigilada:
     # subasta adelantada desaparece, lo que ha pasado es que has ido a
     # repostearla: el aviso de undercut existe justamente para eso.
     adelantada: bool = False
+    # Hora del volcado en el que se la vio faltar por primera vez. Mientras vale
+    # None sigue viva. Una subasta que falta no se canta como vendida hasta la
+    # pasada siguiente, para dar tiempo a que llegue del juego la noticia de que
+    # la cancelaste tu: el volcado de Blizzard se entera de tus cancelaciones
+    # antes que el addon, que solo escribe a disco al hacer /reload.
+    desaparecida_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +143,7 @@ def revisar_reino(
     listing_hours: int = 12,
     ah_cut_pct: int = 5,
     adelantadas: AbstractSet[int] = frozenset(),
+    canceladas: AbstractSet[int] = frozenset(),
 ) -> tuple[list[Venta], dict[int, SubastaVigilada], UltimoVolcado]:
     """Las ventas de este reino, el seguimiento actualizado y su foto nueva.
 
@@ -146,7 +153,8 @@ def revisar_reino(
     afirmar que una subasta acabe de publicarse.
 
     `adelantadas` son las subastas tuyas que alguien esta adelantando ahora
-    mismo, para no confundir un reposteo con una venta.
+    mismo, y `canceladas` las que el addon ha visto que retiraste tu: ni unas ni
+    otras son ventas.
     """
     mias_por_id = {m.auction_id: m for m in mis_subastas}
 
@@ -195,6 +203,7 @@ def revisar_reino(
             no_caduca_antes_de=max(cotas),
             visto_at=dump_at,
             adelantada=adelantada,
+            desaparecida_at=None,
         )
 
     ventas: list[Venta] = []
@@ -202,39 +211,62 @@ def revisar_reino(
         if auction_id in vivas:
             continue
 
+        if auction_id in canceladas:
+            log.info(
+                "↩️  %s de %s: la cancelaste tu, asi que no la cuento como venta.",
+                vigilada.character,
+                vigilada.item_name,
+            )
+            continue
+
         if vigilada.adelantada:
             # El aviso de undercut te manda a repostear, asi que una subasta
             # adelantada que desaparece la has cancelado tu. Sin esta guarda,
             # cada aviso de undercut fabricaba una venta falsa a la hora
             # siguiente.
-            # A nivel info y no debug a proposito: sin esto no se puede
-            # distinguir "no has vendido nada" de "he tapado seis reposteos", y
-            # esa diferencia es justo la que hay que poder auditar.
             log.info(
                 "↩️  %s de %s: ha desaparecido, pero te la estaban adelantando. "
                 "La doy por reposteada, no por vendida.",
                 vigilada.character,
                 vigilada.item_name,
             )
-        elif dump_at < vigilada.no_caduca_antes_de:
+            continue
+
+        if vigilada.desaparecida_at is None:
+            # Falta por primera vez: se espera una pasada. Blizzard se entera de
+            # tus cancelaciones antes que el addon, que solo vuelca a disco al
+            # hacer /reload, asi que cantar la venta ya seria adelantarse a la
+            # unica fuente capaz de desmentirla.
+            nuevas[auction_id] = replace(vigilada, desaparecida_at=dump_at)
+            log.debug(
+                "Tu subasta %s de %s ha desaparecido. Espero una pasada por si "
+                "resulta que la cancelaste.",
+                auction_id,
+                vigilada.item_name,
+            )
+            continue
+
+        # Segunda pasada seguida sin aparecer y sin noticia de cancelacion.
+        # Se juzga con la hora en que se fue, no con la de ahora: si no, la
+        # espera empujaria la subasta mas alla de su fecha de caducidad y se
+        # perderian ventas buenas.
+        if vigilada.desaparecida_at < vigilada.no_caduca_antes_de:
             ventas.append(
                 Venta(
                     subasta=vigilada,
                     realm_id=realm_id,
-                    detectada_at=dump_at,
+                    detectada_at=vigilada.desaparecida_at,
                     ah_cut_pct=ah_cut_pct,
                 )
             )
         else:
             log.debug(
-                "Tu subasta %s de %s ha desaparecido, pero ya podia haber "
-                "caducado (su plazo vencia a las %s): no la cuento como venta.",
+                "Tu subasta %s de %s ya podia haber caducado cuando desaparecio "
+                "(su plazo vencia a las %s): no la cuento como venta.",
                 auction_id,
                 vigilada.item_name,
                 vigilada.no_caduca_antes_de,
             )
-        # Vendida o caducada, ya no existe: en ninguno de los dos casos sigue
-        # en el seguimiento, y por eso una venta no se puede avisar dos veces.
 
     ventas.sort(key=lambda v: v.neto_copper, reverse=True)
     return ventas, nuevas, UltimoVolcado(dump_at, max_auction_id)
