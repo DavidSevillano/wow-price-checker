@@ -22,31 +22,31 @@ region: eu
 # ----------------------------------------------------------------------------
 items:
   - name: "Greaves of the Noxious Depths"
-    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+    max_price_by_ilvl: { 295: 5000, 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
 
   - name: "Temple Delver's Mystic Helm"
-    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+    max_price_by_ilvl: { 295: 5000, 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
 
   - name: "Slitherscale Girdle"
-    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+    max_price_by_ilvl: { 295: 5000, 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
 
   - name: "Slippers of the Hissing Cult"
-    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+    max_price_by_ilvl: { 295: 5000, 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
 
   - name: "Pauldrons of the Forgotten Sacrifice"
-    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+    max_price_by_ilvl: { 295: 5000, 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
 
   - name: "Venom Rite Mantle"
-    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+    max_price_by_ilvl: { 295: 5000, 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
 
   - name: "Crushing Coiler Coif"
-    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+    max_price_by_ilvl: { 295: 5000, 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
 
   - name: "Fanged Brute's Greatbelt"
-    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+    max_price_by_ilvl: { 295: 5000, 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
 
   - name: "Bound Serpent's Jade Eye"
-    max_price_by_ilvl: { 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
+    max_price_by_ilvl: { 295: 5000, 298: 9000, 305: 40000, 308: 60000, 311: 90000 }
 
 # ----------------------------------------------------------------------------
 #  MAPA DE BONUS ID -> ILVL
