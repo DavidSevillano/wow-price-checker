@@ -430,7 +430,7 @@ def run_mis_subastas(
                 )
 
             if not dry_run:
-                enviados = notifier_undercut.send_undercuts(frescos)
+                enviados = notifier_undercut.send_undercuts(frescos, repetidos)
                 log.info("📨 Enviados a Discord %s aviso(s).", len(enviados))
                 # Solo se marcan los que han salido de verdad, igual que con los
                 # chollos.

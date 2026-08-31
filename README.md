@@ -384,6 +384,12 @@ subastas de 100 g salian compitiendo contra listados de 10.000 g.
   vez por hora. No hay forma de esquivarlo con la API oficial.
 - **Un aviso por rival.** Mientras sea el mismo el que te adelanta, no se
   repite. Si reposteas y te vuelven a adelantar, aviso nuevo.
+
+  Ojo a lo que eso significa al leer el aviso: **ahi solo van las nuevas**. Si
+  un personaje tiene tres adelantadas y dos ya te las avise, veras "1 nueva", no
+  "3". Por eso el titulo dice *nueva* y, cuando hay omitidas, el mensaje lleva
+  una linea diciendo cuantas son. **La foto completa esta siempre en el panel
+  fijado**, que se reescribe cada hora con todas.
 - **Nada de avisos fantasma.** Si una subasta tuya ya no aparece en la casa de
   subastas (vendida, caducada o cancelada), se descarta sola.
 - **Tus otros personajes cuentan como rivales hasta que los visites.** Si

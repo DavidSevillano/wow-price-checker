@@ -321,13 +321,31 @@ def test_el_recuento_va_en_la_cabecera():
     mensajes = build_undercut_messages(
         [un_undercut(auction_id=1), un_undercut(auction_id=2)]
     )
-    assert "2 subastas" in texto(mensajes[0])
+    assert "2 nuevas" in texto(mensajes[0])
 
 
 def test_una_sola_subasta_va_en_singular():
     contenido = texto(build_undercut_messages([un_undercut()])[0])
-    assert "1 subasta" in contenido
-    assert "subastas" not in contenido
+    assert "1 nueva" in contenido
+    assert "nuevas" not in contenido
+
+
+def test_el_recuento_dice_que_son_solo_las_nuevas():
+    """"1 subasta" se leia como el total del personaje, y no lo es."""
+    contenido = texto(build_undercut_messages([un_undercut()])[0])
+    assert "nueva" in contenido
+
+
+def test_se_avisa_de_las_que_ya_estaban_avisadas():
+    """Si no, ves "1 nueva" y crees que ese personaje solo tiene una."""
+    mensajes = build_undercut_messages([un_undercut()], repetidos=5)
+    assert "5" in mensajes[0]["content"]
+    assert "panel" in mensajes[0]["content"].lower()
+
+
+def test_sin_repetidos_no_se_anade_nada():
+    mensajes = build_undercut_messages([un_undercut()], repetidos=0)
+    assert "content" not in mensajes[0]
 
 
 def test_un_personaje_con_muchisimas_se_parte_en_varios_mensajes():

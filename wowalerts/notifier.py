@@ -228,7 +228,9 @@ def _repartir(lineas: list[str], presupuesto: int) -> list[list[str]]:
     return grupos
 
 
-def build_undercut_messages(undercuts: Sequence[Undercut]) -> list[dict[str, Any]]:
+def build_undercut_messages(
+    undercuts: Sequence[Undercut], repetidos: int = 0
+) -> list[dict[str, Any]]:
     """Un mensaje por personaje, con sus subastas adelantadas en una tarjeta.
 
     Agrupar por personaje es lo que hace el aviso accionable: cada mensaje es
@@ -264,7 +266,10 @@ def build_undercut_messages(undercuts: Sequence[Undercut]) -> list[dict[str, Any
         if account is not None:
             quien += f" · WoW {account}"
 
-        plural = "subastas" if len(suyas) != 1 else "subasta"
+        # "1 subasta" se leia como el total de ese personaje, y no lo es: aqui
+        # solo van las que no se hayan avisado ya. Decir "nueva" evita creer que
+        # un personaje con tres adelantadas solo tiene una.
+        plural = "nuevas" if len(suyas) != 1 else "nueva"
         titulo = f"{quien} — {len(suyas)} {plural}"
         continuacion = f"{quien} · sigue"
 
@@ -283,6 +288,14 @@ def build_undercut_messages(undercuts: Sequence[Undercut]) -> list[dict[str, Any
                     ]
                 }
             )
+
+    if repetidos and messages:
+        # Sin esta linea, un personaje con tres adelantadas de las que dos ya se
+        # avisaron aparece con una sola y parece que las otras se arreglaron.
+        messages[0]["content"] = (
+            f"🔁 Y {repetidos} que ya te avise antes y siguen adelantadas. "
+            "El panel fijado tiene la foto completa."
+        )
 
     return messages
 
@@ -399,13 +412,15 @@ class DiscordNotifier:
             self._post(message)
         return deals_to_send(deals)
 
-    def send_undercuts(self, undercuts: Sequence[Undercut]) -> list[Undercut]:
+    def send_undercuts(
+        self, undercuts: Sequence[Undercut], repetidos: int = 0
+    ) -> list[Undercut]:
         """Envia los undercuts y devuelve los que de verdad han salido.
 
         Como en `send_deals`, lo que no cabe no se marca como avisado y sale en
         la pasada siguiente.
         """
-        for message in build_undercut_messages(undercuts):
+        for message in build_undercut_messages(undercuts, repetidos):
             self._post(message)
         return list(undercuts[:MAX_DEALS_PER_RUN])
 
