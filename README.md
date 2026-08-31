@@ -288,6 +288,16 @@ Copia la carpeta `addon/WowAlertsExport` a tu carpeta de addons:
 Copy-Item -Recurse -Force addon/WowAlertsExport "D:/Juegos/World of Warcraft/_retail_/Interface/AddOns/"
 ```
 
+En la Steam Deck no hace falta saberse la ruta: hay un script que se la
+pregunta a `sync_subastas.py`, que ya sabe buscarla.
+
+```bash
+bash instalar_addon_deck.sh
+```
+
+Vuelve a ejecutarlo **cada vez que cambie el addon**. Para saber que version
+tienes cargada, dentro del juego: `/wa`.
+
 Entra al juego y **abre la Casa de Subastas**: en el chat general te dira
 cuantas subastas tuyas ha registrado. Si tienes personajes vendiendo en varios
 reinos, repitelo con cada uno; el addon los va acumulando.
