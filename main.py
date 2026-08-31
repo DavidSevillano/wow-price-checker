@@ -356,10 +356,14 @@ def run_mis_subastas(
         if snapshot.taken_at and (snapshot_at is None or snapshot.taken_at > snapshot_at):
             snapshot_at = snapshot.taken_at
 
+        # Se calculan siempre que se pida cualquiera de las dos vigilancias:
+        # las ventas los necesitan para no confundir un reposteo tuyo con una
+        # venta, aunque no se vayan a avisar.
+        del_reino_undercuts = find_undercuts(
+            snapshot.auctions, mias, config.bonus_ilvl_map, realm_id
+        )
         if hacer_undercut:
-            todos.extend(
-                find_undercuts(snapshot.auctions, mias, config.bonus_ilvl_map, realm_id)
-            )
+            todos.extend(del_reino_undercuts)
 
         if hacer_ventas:
             # Sin Last-Modified se usa el reloj, que con el cron a y 33 queda a
@@ -374,6 +378,7 @@ def run_mis_subastas(
                 seguimiento.anterior(realm_id),
                 config.settings.listing_hours,
                 config.settings.ah_cut_pct,
+                {u.mine.auction_id for u in del_reino_undercuts},
             )
             ventas.extend(del_reino)
             seguimiento.actualizar_reino(realm_id, seguidas, ultimo)

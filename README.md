@@ -461,12 +461,33 @@ convertiria su caducacion en una venta falsa.
   producen exactamente el mismo dato, y avisar de todas seria peor: **toda
   subasta que no se vende acaba desapareciendo justo ahi**, asi que el canal se
   llenaria de falsas alarmas.
-- **Las cancelaciones salen como ventas.** Si retiras una subasta con tiempo de
-  sobra, el vigilante la ve desaparecer antes de poder caducar y la canta como
-  vendida. No hay forma de distinguirlo con esta API.
+- **Las ventas de una subasta que te estaban adelantando.** Ver mas abajo.
 - **Objetos que no esten en `config.yaml`.**
 
-### 6.3 Canal propio
+### 6.3 Los reposteos no cuentan como ventas
+
+Cancelar una subasta y venderla se ven exactamente igual desde la API: en las
+dos desaparece. Y como el aviso de undercut existe justamente para mandarte a
+repostear, **cada aviso de undercut fabricaba una venta falsa a la hora
+siguiente**. Paso de verdad: los tres undercuts avisados a las 10:33 del
+2026-08-31 volvieron como tres ventas a las 11:33, mismos objetos y mismos
+precios.
+
+La regla que lo corrige: **si la ultima vez que vi tu subasta te la estaban
+adelantando y luego desaparece, la has reposteado tu**. No se avisa.
+
+El precio a pagar es que, si una subasta adelantada se vende de verdad, no te
+enteras. Es un precio bajo: estar adelantado significa que hay algo mas barato
+que lo tuyo, o sea que es justo la que menos probabilidades tiene de venderse.
+
+Y dura poco: en cuanto el rival se va o reposteas, la marca se quita en la
+pasada siguiente y esa subasta vuelve a poder avisar de su venta. La supresion
+cubre solo la ventana en la que de verdad estas reposteando.
+
+Lo que sigue sin poder distinguirse es que canceles una subasta que **no**
+estaba adelantada: eso si sale como venta.
+
+### 6.4 Canal propio
 
 Crea un webhook en el canal que quieras y ponlo en `.env`:
 
@@ -483,7 +504,7 @@ Si lo dejas vacio, las ventas van al canal general. Para comprobarlo:
 En GitHub Actions hace falta el mismo valor como secret del repositorio, con ese
 mismo nombre.
 
-### 6.4 Probarlo
+### 6.5 Probarlo
 
 ```bash
 .venv\Scripts\python.exe main.py --ventas --dry-run
@@ -501,7 +522,7 @@ Actions:
 .venv\Scripts\python.exe main.py --undercut --ventas
 ```
 
-### 6.5 Las cifras
+### 6.6 Las cifras
 
 Van **en neto**: el precio al que estaba puesta menos la comision que se queda
 la casa de subastas, que es lo que de verdad te llega al buzon. El porcentaje se

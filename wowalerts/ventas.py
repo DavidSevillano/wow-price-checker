@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Mapping, Sequence
+from typing import AbstractSet, Mapping, Sequence
 
 from .config import COPPER_PER_GOLD
 from .misubastas import MyAuction
@@ -71,6 +71,10 @@ class SubastaVigilada:
     # Hora del ultimo volcado en el que se vio viva. Sirve para olvidarla si el
     # reino deja de escanearse.
     visto_at: datetime
+    # Si la ultima vez que se vio viva alguien la habia adelantado. Cuando una
+    # subasta adelantada desaparece, lo que ha pasado es que has ido a
+    # repostearla: el aviso de undercut existe justamente para eso.
+    adelantada: bool = False
 
 
 @dataclass(frozen=True)
@@ -132,6 +136,7 @@ def revisar_reino(
     anterior: UltimoVolcado | None,
     listing_hours: int = 12,
     ah_cut_pct: int = 5,
+    adelantadas: AbstractSet[int] = frozenset(),
 ) -> tuple[list[Venta], dict[int, SubastaVigilada], UltimoVolcado]:
     """Las ventas de este reino, el seguimiento actualizado y su foto nueva.
 
@@ -139,6 +144,9 @@ def revisar_reino(
     None cuando es la primera vez o cuando el reino fallo, y entonces no se
     aplica la cota de nacimiento: sin saber que habia antes, no se puede
     afirmar que una subasta acabe de publicarse.
+
+    `adelantadas` son las subastas tuyas que alguien esta adelantando ahora
+    mismo, para no confundir un reposteo con una venta.
     """
     mias_por_id = {m.auction_id: m for m in mis_subastas}
 
@@ -172,8 +180,21 @@ def revisar_reino(
             if previa is not None
             else _vigilada_de(mias_por_id[auction_id], dump_at)
         )
+
+        # Si el addon ya no la conoce no se puede recalcular su undercut, asi
+        # que se conserva lo ultimo que se supo: callarse de mas es preferible a
+        # inventarse una venta.
+        adelantada = (
+            auction_id in adelantadas
+            if auction_id in mias_por_id
+            else base.adelantada
+        )
+
         nuevas[auction_id] = replace(
-            base, no_caduca_antes_de=max(cotas), visto_at=dump_at
+            base,
+            no_caduca_antes_de=max(cotas),
+            visto_at=dump_at,
+            adelantada=adelantada,
         )
 
     ventas: list[Venta] = []
@@ -181,7 +202,18 @@ def revisar_reino(
         if auction_id in vivas:
             continue
 
-        if dump_at < vigilada.no_caduca_antes_de:
+        if vigilada.adelantada:
+            # El aviso de undercut te manda a repostear, asi que una subasta
+            # adelantada que desaparece la has cancelado tu. Sin esta guarda,
+            # cada aviso de undercut fabricaba una venta falsa a la hora
+            # siguiente.
+            log.debug(
+                "Tu subasta %s de %s ha desaparecido, pero te la estaban "
+                "adelantando: la doy por reposteada, no por vendida.",
+                auction_id,
+                vigilada.item_name,
+            )
+        elif dump_at < vigilada.no_caduca_antes_de:
             ventas.append(
                 Venta(
                     subasta=vigilada,

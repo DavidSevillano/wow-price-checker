@@ -383,3 +383,75 @@ def test_un_reino_ya_resuelto_deja_de_mirarse(tmp_path):
     memoria.save()
 
     assert SeguimientoVentas(path).reinos_con_seguimiento() == set()
+
+
+# -- Reposteos tras un aviso de undercut ------------------------------------
+
+
+def test_una_subasta_adelantada_que_desaparece_es_un_reposteo():
+    """El aviso de undercut existe para que vayas a repostear.
+
+    Si te aviso de que te han adelantado y la subasta desaparece justo despues,
+    la has cancelado tu para reponerla, no se ha vendido.
+    """
+    previa = vigilada(caduca=T0 + timedelta(hours=2), adelantada=True)
+    ventas, seguidas, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
+    )
+    assert ventas == []
+    # Cancelada al fin y al cabo: ya no existe, sale del seguimiento.
+    assert seguidas == {}
+
+
+def test_la_marca_de_adelantada_se_pone_al_verla_viva():
+    _, seguidas, _ = revisar_reino(
+        {}, [mia()], [viva()], 1, T0, None, 12, 5, adelantadas={1}
+    )
+    assert seguidas[1].adelantada is True
+
+
+def test_sin_undercut_la_marca_se_quita():
+    """Si el rival se va, la subasta deja de estar adelantada."""
+    previa = vigilada(adelantada=True)
+    _, seguidas, _ = revisar_reino(
+        {1: previa}, [mia()], [viva()], 1, T0, None, 12, 5, adelantadas=set()
+    )
+    assert seguidas[1].adelantada is False
+
+
+def test_dejar_de_estar_adelantada_devuelve_la_deteccion_de_venta():
+    """La supresion dura solo la ventana en la que reposteas.
+
+    Adelantada en una pasada, ya no en la siguiente: si desaparece despues, es
+    una venta y se avisa.
+    """
+    previa = vigilada(caduca=T0 + timedelta(hours=5), adelantada=True)
+    _, seguidas, _ = revisar_reino(
+        {1: previa}, [mia()], [viva()], 1, T0, None, 12, 5, adelantadas=set()
+    )
+    ventas, _, _ = revisar_reino(
+        seguidas, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
+    )
+    assert len(ventas) == 1
+
+
+def test_si_el_addon_ya_no_la_conoce_se_conserva_la_marca():
+    """Sin datos para recalcular el undercut, no se borra lo que ya sabia.
+
+    Callarse de mas es preferible a inventarse una venta.
+    """
+    previa = vigilada(caduca=T0 + timedelta(hours=5), adelantada=True)
+    _, seguidas, _ = revisar_reino(
+        {1: previa}, [], [viva()], 1, T0, None, 12, 5, adelantadas=set()
+    )
+    assert seguidas[1].adelantada is True
+
+
+def test_la_marca_sobrevive_al_disco(tmp_path):
+    path = tmp_path / "ventas.json"
+    memoria = SeguimientoVentas(path)
+    memoria.actualizar_reino(
+        1, {1: vigilada(adelantada=True)}, UltimoVolcado(T0, 900)
+    )
+    memoria.save()
+    assert SeguimientoVentas(path).del_reino(1)[1].adelantada is True
