@@ -182,15 +182,22 @@ def encontrar_savedvariables(wow_root: str | Path) -> list[Path]:
     return sorted(Path(wow_root).glob(patron))
 
 
-def leer_de_wow(wow_root: str | Path) -> list[MyAuction]:
-    """Lee y fusiona todo lo que haya exportado el addon."""
+def leer_de_wow(wow_root: str | Path) -> list[MyAuction] | None:
+    """Lee y fusiona todo lo que haya exportado el addon.
+
+    Devuelve None cuando el addon no ha volcado nada todavia. No es un error:
+    en una maquina recien montada es lo normal hasta que juegas alli con el
+    addon puesto, y tratarlo como fallo haria que la sincronizacion programada
+    diera error cada cuarto de hora sin motivo.
+    """
     ficheros = encontrar_savedvariables(wow_root)
     if not ficheros:
-        raise MisSubastasError(
-            f"No encuentro ningun WowAlertsExport.lua bajo {wow_root}.\n"
-            "Comprueba la ruta de WoW y que has entrado al juego con el addon "
-            "activado al menos una vez."
+        log.warning(
+            "Todavia no hay ningun WowAlertsExport.lua bajo %s. Entra al juego "
+            "en esta maquina con el addon activado y abre la Casa de Subastas.",
+            wow_root,
         )
+        return None
     log.info("Leyendo %s volcado(s) del addon.", len(ficheros))
 
     payloads = []

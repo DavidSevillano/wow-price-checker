@@ -10,6 +10,7 @@ from wowalerts.misubastas import (
     cuenta_de_ruta,
     extraer_payload,
     fusionar_payloads,
+    leer_de_wow,
     slugify_realm,
     subastas_de_payloads,
 )
@@ -170,3 +171,11 @@ def test_la_cuenta_se_deduce_igual_con_barras_de_cualquier_tipo():
     assert cuenta_de_ruta("D:/Juegos/WoW/WTF/Account/403840080#2/SavedVariables/W.lua") == 2
     assert cuenta_de_ruta(r"D:\Juegos\WoW\WTF\Account\403840080#2\SavedVariables\W.lua") == 2
     assert cuenta_de_ruta("403840080#2") == 2
+
+
+def test_una_maquina_sin_volcado_todavia_no_es_un_error(tmp_path):
+    """En la Steam Deck recien montada no hay nada hasta que juegas alli. Si
+    eso fuera un error, la sincronizacion programada fallaria cada cuarto de
+    hora sin motivo."""
+    (tmp_path / "WTF" / "Account").mkdir(parents=True)
+    assert leer_de_wow(tmp_path) is None

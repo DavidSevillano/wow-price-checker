@@ -174,6 +174,9 @@ def run(args: argparse.Namespace) -> int:
         return EXIT_ERROR
 
     subastas = leer_de_wow(wow_root)
+    if subastas is None:
+        # Nada que sincronizar todavia, pero la maquina esta bien configurada.
+        return EXIT_OK
     log.info("%s subasta(s) tuyas leidas de %s.", len(subastas), wow_root)
 
     personajes = leer_personajes(wow_root)
