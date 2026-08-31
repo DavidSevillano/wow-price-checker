@@ -487,6 +487,18 @@ cubre solo la ventana en la que de verdad estas reposteando.
 Lo que sigue sin poder distinguirse es que canceles una subasta que **no**
 estaba adelantada: eso si sale como venta.
 
+Cada reposteo que se tapa queda escrito en el log de la pasada, para que puedas
+distinguir "no has vendido nada" de "he tapado seis reposteos":
+
+```
+↩️  Bbarral de Zapatillas del culto siseante: ha desaparecido, pero te la
+    estaban adelantando. La doy por reposteada, no por vendida.
+```
+
+**La marca solo existe desde la pasada siguiente a que te avise del undercut.**
+Una subasta tiene que verse viva y adelantada una vez para quedar marcada; si
+reposteas antes de eso, esa vez sale como venta.
+
 ### 6.4 Canal propio
 
 Crea un webhook en el canal que quieras y ponlo en `.env`:

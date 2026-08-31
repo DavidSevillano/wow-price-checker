@@ -207,10 +207,13 @@ def revisar_reino(
             # adelantada que desaparece la has cancelado tu. Sin esta guarda,
             # cada aviso de undercut fabricaba una venta falsa a la hora
             # siguiente.
-            log.debug(
-                "Tu subasta %s de %s ha desaparecido, pero te la estaban "
-                "adelantando: la doy por reposteada, no por vendida.",
-                auction_id,
+            # A nivel info y no debug a proposito: sin esto no se puede
+            # distinguir "no has vendido nada" de "he tapado seis reposteos", y
+            # esa diferencia es justo la que hay que poder auditar.
+            log.info(
+                "↩️  %s de %s: ha desaparecido, pero te la estaban adelantando. "
+                "La doy por reposteada, no por vendida.",
+                vigilada.character,
                 vigilada.item_name,
             )
         elif dump_at < vigilada.no_caduca_antes_de:

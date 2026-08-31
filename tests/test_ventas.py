@@ -455,3 +455,15 @@ def test_la_marca_sobrevive_al_disco(tmp_path):
     )
     memoria.save()
     assert SeguimientoVentas(path).del_reino(1)[1].adelantada is True
+
+
+def test_un_reposteo_suprimido_se_deja_por_escrito(caplog):
+    """Sin esta linea no se distingue 'no has vendido' de 'he tapado seis'."""
+    import logging
+
+    previa = vigilada(caduca=T0 + timedelta(hours=2), adelantada=True)
+    with caplog.at_level(logging.INFO, logger="wowalerts.ventas"):
+        revisar_reino({1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5)
+
+    assert "reposteada" in caplog.text
+    assert "Pepe" in caplog.text
