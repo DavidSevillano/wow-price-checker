@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 
 from wowalerts.misubastas import MisSubastasError, escribir_snapshot, leer_de_wow
+from wowalerts.personajes import escribir_personajes, leer_personajes
 
 log = logging.getLogger("sync")
 
@@ -62,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fichero donde escribir el volcado (por defecto: mis_subastas.json).",
     )
     parser.add_argument(
+        "--personajes",
+        default="mis_personajes.json",
+        help="Fichero con la lista de tus personajes, para que los avisos de "
+        "chollo digan con quien entrar a comprarlos.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Dice que haria, sin escribir ni subir nada.",
@@ -80,9 +87,9 @@ def git(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], capture_output=True, text=True, check=False)
 
 
-def subir(salida: str, push: bool) -> int:
-    """Commitea el volcado y, si toca, lo sube."""
-    add = git("add", salida)
+def subir(ficheros: list[str], push: bool) -> int:
+    """Commitea lo que haya cambiado y, si toca, lo sube."""
+    add = git("add", *ficheros)
     if add.returncode != 0:
         log.error("git add ha fallado: %s", add.stderr.strip())
         return EXIT_ERROR
@@ -129,16 +136,24 @@ def run(args: argparse.Namespace) -> int:
     subastas = leer_de_wow(wow_root)
     log.info("%s subasta(s) tuyas leidas de %s.", len(subastas), wow_root)
 
+    personajes = leer_personajes(wow_root)
+
     if args.dry_run:
         log.info("--dry-run: no escribo ni subo nada.")
         return EXIT_OK
 
-    if not escribir_snapshot(args.salida, subastas):
+    cambiados = []
+    if escribir_snapshot(args.salida, subastas):
+        cambiados.append(args.salida)
+    if escribir_personajes(args.personajes, personajes):
+        cambiados.append(args.personajes)
+
+    if not cambiados:
         log.info("Sin cambios respecto a lo ya subido.")
         return EXIT_OK
 
-    log.info("%s actualizado.", args.salida)
-    return subir(args.salida, push=not args.no_push)
+    log.info("Actualizado: %s.", ", ".join(cambiados))
+    return subir(cambiados, push=not args.no_push)
 
 
 def main(argv: list[str] | None = None) -> int:

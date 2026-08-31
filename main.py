@@ -33,6 +33,11 @@ from wowalerts.notifier import (
     format_gold,
     realm_names_for,
 )
+from wowalerts.personajes import (
+    leer_roster,
+    por_nombre_de_reino,
+    quien_puede_comprar,
+)
 from wowalerts.realms import RealmResolutionError, resolve_connected_realms
 from wowalerts.scanner import scan_realms
 from wowalerts.snapshot import dump_is_stale, expected_dump_at
@@ -105,6 +110,12 @@ def build_parser() -> argparse.ArgumentParser:
         "que genera sync_subastas.py en tu PC.",
     )
     parser.add_argument(
+        "--personajes",
+        default="mis_personajes.json",
+        help="Lista de tus personajes, para decir con quien entrar a por cada "
+        "chollo. La genera sync_subastas.py en tu PC.",
+    )
+    parser.add_argument(
         "--mis-subastas",
         default="mis_subastas.json",
         help="Ruta del volcado de tus subastas (por defecto: mis_subastas.json).",
@@ -144,19 +155,21 @@ def parse_realm_ids(raw: str) -> list[int]:
     return sorted(set(ids))
 
 
-def print_deals(deals, realm_names) -> None:
+def print_deals(deals, realm_names, compradores=None) -> None:
     """Vuelca los chollos por consola (lo que se enviaria a Discord)."""
     for deal in deals:
         ilvl = f"ilvl {deal.ilvl}" if deal.ilvl_confirmed else "ilvl SIN CONFIRMAR"
         realm = realm_names.get(deal.realm_id, f"Reino {deal.realm_id}")
+        quien = (compradores or {}).get(deal.realm_id)
         log.info(
-            "  %s | %s g (%s, limite %s g, -%.0f%%) | %s",
+            "  %s | %s g (%s, limite %s g, -%.0f%%) | %s%s",
             deal.item_name,
             format_gold(deal.price_gold),
             ilvl,
             format_gold(deal.threshold_gold),
             deal.discount_pct,
             realm,
+            f" | ir con: {quien}" if quien else "",
         )
 
 
@@ -175,7 +188,25 @@ def resolve_icons(client, cache, deals) -> dict[int, str]:
     return urls
 
 
-def agrupar_por_reino(mis_subastas, realm_ids_por_slug) -> dict[int, list]:
+def compradores_para(roster_path: str, realm_names) -> dict[int, str]:
+    """Con que personaje tuyo se puede comprar un chollo de cada reino.
+
+    No cuesta ni una peticion: el nombre de un connected realm ya trae dentro
+    todos los reinos que comparten casa de subastas, y el escaneo lo pide de
+    todas formas para el aviso.
+    """
+    roster = leer_roster(roster_path)
+    if not roster:
+        return {}
+
+    indice = por_nombre_de_reino(roster)
+    return {
+        realm_id: quien_puede_comprar(indice, nombre)
+        for realm_id, nombre in realm_names.items()
+    }
+
+
+def agrupar_por_reino(mis_subastas, realm_ids_por_reino) -> dict[int, list]:
     """Agrupa tus subastas por connected realm.
 
     Varios reinos comparten connected realm, asi que agrupar por ahi y no por
@@ -183,7 +214,7 @@ def agrupar_por_reino(mis_subastas, realm_ids_por_slug) -> dict[int, list]:
     """
     grupos: dict[int, list] = {}
     for subasta in mis_subastas:
-        realm_id = realm_ids_por_slug.get(subasta.realm_slug)
+        realm_id = realm_ids_por_reino.get(subasta.realm)
         if realm_id is None:
             log.warning(
                 "Omito las subastas de %s: no se a que reino conectado pertenece.",
@@ -223,17 +254,17 @@ def run_undercut(
         "📋 %s de tus %s subastas son de objetos vigilados, en %s reino(s).",
         len(mis_subastas),
         len(todas),
-        len({s.realm_slug for s in mis_subastas}),
+        len({s.realm for s in mis_subastas}),
     )
 
     realm_cache = RealmIdCache(state_dir / "realm_ids.json")
-    realm_ids_por_slug = resolve_connected_realms(
-        client, realm_cache, (s.realm_slug for s in mis_subastas), strict=False
+    realm_ids_por_reino = resolve_connected_realms(
+        client, realm_cache, (s.realm for s in mis_subastas), strict=False
     )
     if not dry_run:
         realm_cache.save()
 
-    grupos = agrupar_por_reino(mis_subastas, realm_ids_por_slug)
+    grupos = agrupar_por_reino(mis_subastas, realm_ids_por_reino)
     if not grupos:
         raise RealmResolutionError(
             "No he podido resolver ninguno de tus reinos. Sin eso no puedo "
@@ -391,6 +422,7 @@ def run(args: argparse.Namespace) -> int:
             notified,
             icon_cache,
             notifier,
+            args.personajes,
             dry_run=args.dry_run,
             ignore_state=args.ignore_state,
         )
@@ -444,6 +476,7 @@ def scan_once(
     notified,
     icon_cache,
     notifier,
+    roster_path: str,
     *,
     dry_run: bool,
     ignore_state: bool,
@@ -492,8 +525,9 @@ def scan_once(
 
     if fresh:
         realm_names = realm_names_for(fresh, client.connected_realm_name)
+        compradores = compradores_para(roster_path, realm_names)
         log.info("🎉 %s chollo(s) nuevos:", len(fresh))
-        print_deals(fresh, realm_names)
+        print_deals(fresh, realm_names, compradores)
 
         if dry_run:
             log.info("🧪 --dry-run: no envio nada a Discord ni guardo el estado.")
@@ -501,7 +535,7 @@ def scan_once(
             icon_urls = resolve_icons(client, icon_cache, fresh)
             icon_cache.save()
             sent = notifier.send_deals(
-                fresh, realm_names, icon_urls, result.snapshot_at
+                fresh, realm_names, icon_urls, result.snapshot_at, compradores
             )
             log.info("📨 Enviados a Discord %s chollo(s).", len(sent))
 

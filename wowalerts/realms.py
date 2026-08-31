@@ -23,10 +23,16 @@ class RealmResolutionError(Exception):
 def resolve_connected_realms(
     client,
     cache,
-    realm_slugs: Iterable[str],
+    realm_names: Iterable[str],
     strict: bool = True,
 ) -> dict[str, int]:
-    """Devuelve {slug: connected realm id} para los reinos indicados.
+    """Devuelve {nombre de reino: connected realm id} para los reinos dados.
+
+    La clave es el nombre tal cual lo escribe el juego, y no el slug, porque
+    hay nombres de los que no se puede deducir ninguno: un reino ruso se llama
+    'Ревущий фьорд' y su slug es 'revushchiy-fiord'. Quitarle a eso todo lo que
+    no sea A-Z deja la cadena vacia, asi que la unica via es buscarlo por
+    nombre en el indice de Blizzard.
 
     Con `strict=False` los reinos que fallen se omiten con un aviso en el log,
     en vez de tumbar la pasada entera: mas vale vigilar cinco reinos de seis que
@@ -35,63 +41,77 @@ def resolve_connected_realms(
     resultado: dict[str, int] = {}
     indice: list[dict] | None = None
 
-    for slug in dict.fromkeys(realm_slugs):
-        cacheado = cache.get(slug)
+    for nombre in dict.fromkeys(realm_names):
+        cacheado = cache.get(nombre)
         if isinstance(cacheado, int):
-            resultado[slug] = cacheado
+            resultado[nombre] = cacheado
             continue
 
-        try:
-            realm_id = client.connected_realm_id_for(slug)
-        except BlizzardError as exc:
-            if strict:
-                raise RealmResolutionError(
-                    f"No he podido consultar el reino {slug!r}: {exc}"
-                ) from exc
-            log.warning("Reino %s omitido: %s", slug, exc)
-            continue
+        slug = slugify_realm(nombre)
+        realm_id = None
+
+        if slug:
+            try:
+                realm_id = client.connected_realm_id_for(slug)
+            except BlizzardError as exc:
+                if strict:
+                    raise RealmResolutionError(
+                        f"No he podido consultar el reino {nombre!r}: {exc}"
+                    ) from exc
+                log.warning("Reino %s omitido: %s", nombre, exc)
+                continue
 
         if realm_id is None:
-            # El slug no le suena a Blizzard. Segunda via: buscar el slug
-            # oficial por nombre en el indice, que se pide una sola vez.
+            # El slug no vale, o no se ha podido construir. Segunda via: buscar
+            # el slug oficial por nombre en el indice, que se pide una sola vez.
             if indice is None:
                 indice = client.realm_index()
-            oficial = _buscar_en_indice(indice, slug)
+            oficial = _buscar_en_indice(indice, nombre)
             if oficial and oficial != slug:
                 try:
                     realm_id = client.connected_realm_id_for(oficial)
                 except BlizzardError as exc:
-                    log.warning("Reino %s (%s) omitido: %s", slug, oficial, exc)
+                    log.warning("Reino %s (%s) omitido: %s", nombre, oficial, exc)
 
         if realm_id is None:
             if strict:
                 raise RealmResolutionError(
-                    f"Blizzard no conoce ningun reino llamado {slug!r}. "
+                    f"Blizzard no conoce ningun reino llamado {nombre!r}. "
                     "Comprueba el nombre en el juego."
                 )
-            log.warning("Reino %s omitido: Blizzard no lo conoce.", slug)
+            log.warning("Reino %s omitido: Blizzard no lo conoce.", nombre)
             continue
 
-        resultado[slug] = realm_id
-        cache.set(slug, realm_id)
+        resultado[nombre] = realm_id
+        cache.set(nombre, realm_id)
 
     return resultado
 
 
-def _buscar_en_indice(indice: list[dict], slug: str) -> str | None:
-    """Slug oficial del reino cuyo nombre o slug coincide, o None.
+def _buscar_en_indice(indice: list[dict], nombre: str) -> str | None:
+    """Slug oficial del reino que se llama asi, o None.
 
-    La comparacion se hace solo con letras y numeros, sin guiones ni espacios:
-    si se llega hasta aqui es porque el slug deducido del nombre no ha valido,
-    asi que comparar separadores seria repetir el mismo error.
+    Primero se compara el nombre entero contra los del reino en todos los
+    idiomas, que es lo unico que salva a los reinos rusos. Despues, como red
+    adicional, las formas reducidas a letras y numeros, que salvan diferencias
+    de guiones y espacios.
     """
-    objetivo = _solo_alfanumerico(slug)
+    objetivo = nombre.strip().casefold()
+    reducido = _solo_alfanumerico(nombre)
+
     for realm in indice:
-        candidatos = {
-            _solo_alfanumerico(str(realm.get("slug", ""))),
-            _solo_alfanumerico(str(realm.get("name", ""))),
-        }
-        if objetivo in candidatos:
+        nombres = [str(n) for n in realm.get("names") or []]
+        if any(n.strip().casefold() == objetivo for n in nombres):
+            oficial = realm.get("slug")
+            return oficial if isinstance(oficial, str) else None
+
+    if not reducido:
+        return None
+
+    for realm in indice:
+        formas = {_solo_alfanumerico(str(realm.get("slug", "")))}
+        formas.update(_solo_alfanumerico(str(n)) for n in realm.get("names") or [])
+        if reducido in formas:
             oficial = realm.get("slug")
             return oficial if isinstance(oficial, str) else None
     return None

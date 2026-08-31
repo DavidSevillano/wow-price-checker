@@ -481,7 +481,7 @@ def test_agrupa_las_subastas_por_reino_conectado():
         una_mia(2, "Dun Modr", "dun-modr"),
         una_mia(3, "Sanguino", "sanguino"),
     ]
-    grupos = agrupar_por_reino(mias, {"sanguino": 1379, "dun-modr": 1379})
+    grupos = agrupar_por_reino(mias, {"Sanguino": 1379, "Dun Modr": 1379})
     # Los dos reinos comparten connected realm: una sola descarga.
     assert list(grupos) == [1379]
     assert len(grupos[1379]) == 3
@@ -489,6 +489,6 @@ def test_agrupa_las_subastas_por_reino_conectado():
 
 def test_las_subastas_de_reinos_sin_resolver_se_omiten():
     mias = [una_mia(1, "Sanguino", "sanguino"), una_mia(2, "Fantasma", "fantasma")]
-    grupos = agrupar_por_reino(mias, {"sanguino": 1379})
+    grupos = agrupar_por_reino(mias, {"Sanguino": 1379})
     assert list(grupos) == [1379]
     assert len(grupos[1379]) == 1

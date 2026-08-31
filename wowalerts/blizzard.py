@@ -228,15 +228,20 @@ class BlizzardClient:
         return _realm_id_from_href(href)
 
     def realm_index(self) -> list[dict]:
-        """Todos los reinos de la region, con su slug oficial y su nombre.
+        """Todos los reinos de la region, con su slug oficial y todos sus nombres.
 
         Es la red de seguridad de `connected_realm_id_for`: una sola peticion
         que permite dar con el slug bueno cuando el deducido del nombre no
-        acierta. El indice no trae el connected realm, asi que despues hay que
-        volver a preguntar con el slug correcto.
+        acierta. Se pide sin locale para que lleguen los nombres en todos los
+        idiomas: un reino ruso se llama 'Ревущий фьорд' en el juego, pero su
+        slug es una transliteracion que no hay forma de deducir del nombre. El
+        indice no trae el connected realm, asi que despues hay que volver a
+        preguntar con el slug correcto.
         """
         response = self._api_get(
-            "/data/wow/realm/index", namespace=f"dynamic-{self.region}"
+            "/data/wow/realm/index",
+            namespace=f"dynamic-{self.region}",
+            localized=False,
         )
         if response.status_code != 200:
             raise BlizzardError(
@@ -248,9 +253,14 @@ class BlizzardClient:
             slug = realm.get("slug")
             if not isinstance(slug, str):
                 continue
-            reinos.append(
-                {"slug": slug, "name": _realm_display_name(realm, self.locale) or slug}
-            )
+            nombre = realm.get("name")
+            if isinstance(nombre, dict):
+                nombres = [v for v in nombre.values() if isinstance(v, str) and v]
+            elif isinstance(nombre, str) and nombre:
+                nombres = [nombre]
+            else:
+                nombres = []
+            reinos.append({"slug": slug, "names": nombres or [slug]})
         return reinos
 
     def auctions(self, realm_id: int) -> AuctionSnapshot:

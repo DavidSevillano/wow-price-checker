@@ -74,6 +74,7 @@ def build_embed(
     realm_name: str,
     icon_url: str | None = None,
     snapshot_at: datetime | None = None,
+    quien_compra: str | None = None,
 ) -> dict[str, Any]:
     """Tarjeta de Discord para un chollo."""
     if deal.ilvl_confirmed:
@@ -105,6 +106,10 @@ def build_embed(
         fields.append(
             {"name": "Cantidad", "value": str(deal.quantity), "inline": True}
         )
+    if quien_compra:
+        # Un chollo en un reino donde no tienes a nadie no se puede comprar, y
+        # saberlo antes de abrir el juego ahorra el viaje.
+        fields.append({"name": "Ir con", "value": quien_compra, "inline": False})
 
     embed: dict[str, Any] = {
         "title": deal.item_name,
@@ -148,6 +153,7 @@ def build_messages(
     realm_names: Mapping[int, str],
     icon_urls: Mapping[int, str] | None = None,
     snapshot_at: datetime | None = None,
+    compradores: Mapping[int, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Convierte los chollos en mensajes listos para el webhook.
 
@@ -175,6 +181,7 @@ def build_messages(
                     realm_names.get(deal.realm_id, f"Reino {deal.realm_id}"),
                     (icon_urls or {}).get(deal.item_id),
                     snapshot_at,
+                    (compradores or {}).get(deal.realm_id),
                 )
                 for deal in chunk
             ]
@@ -308,6 +315,7 @@ class DiscordNotifier:
         realm_names: Mapping[int, str],
         icon_urls: Mapping[int, str] | None = None,
         snapshot_at: datetime | None = None,
+        compradores: Mapping[int, str] | None = None,
     ) -> list[Deal]:
         """Envia los chollos y devuelve exactamente los que se han entregado.
 
@@ -315,7 +323,9 @@ class DiscordNotifier:
         llama marcar como avisados solo los que de verdad han salido. Marcarlos
         todos haria desaparecer para siempre los que no cupieron en el aviso.
         """
-        messages = build_messages(deals, realm_names, icon_urls, snapshot_at)
+        messages = build_messages(
+            deals, realm_names, icon_urls, snapshot_at, compradores
+        )
         for message in messages:
             self._post(message)
         return deals_to_send(deals)

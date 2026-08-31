@@ -378,3 +378,20 @@ subastas de 100 g salian compitiendo contra listados de 10.000 g.
   vendes lo mismo con dos personajes y solo has abierto la Casa de Subastas con
   uno, el otro parece competencia. Abre la CdS con cada personaje que venda y el
   problema desaparece.
+
+### 5.7 Con que personaje ir a por un chollo
+
+Los avisos de chollo llevan un campo **Ir con** que dice con que personaje
+tuyo, y de que cuenta, puedes comprarlo:
+
+```
+Ir con: Hbarfel · WoW 3
+```
+
+Y cuando el chollo esta en un reino donde no tienes a nadie, tambien lo dice,
+que es igual de util: te ahorra abrir el juego para nada.
+
+La lista sale de las carpetas de WoW, no del addon, asi que incluye tambien los
+personajes que no tienen ninguna subasta puesta. La genera `sync_subastas.py`
+junto al volcado de subastas, en `mis_personajes.json`, y se actualiza sola
+cuando creas un personaje nuevo.
