@@ -13,8 +13,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+
+from .ventas import SubastaVigilada, UltimoVolcado
 
 log = logging.getLogger(__name__)
 
@@ -197,3 +200,179 @@ class RealmIdCache(JsonMapCache):
 
     def __init__(self, path: str | Path) -> None:
         super().__init__(path, "realms")
+
+
+class SeguimientoVentas:
+    """Las subastas tuyas que sigo para detectar cuando se venden.
+
+    Guarda dos cosas por reino: la foto del ultimo volcado leido con exito (su
+    hora y su id maximo) y una copia de cada subasta tuya viva, con la fecha mas
+    temprana en la que podria caducar.
+
+    La copia de los datos del objeto es deliberada: cuando vendes y haces
+    /reload, el volcado del addon deja de mencionar la subasta, y sin esta copia
+    la venta no se podria anunciar.
+    """
+
+    #: Entradas mas viejas que esto se descartan al guardar. Lo normal es que una
+    #: entrada salga sola al desaparecer su subasta; esto solo limpia los reinos
+    #: que se dejan de escanear porque has dejado de vender alli.
+    MAX_DIAS = 7
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        data = _read_json(self.path) or {}
+        self._realms = _leer_realms(data.get("realms"))
+        self._seguimiento = _leer_seguimiento(data.get("seguimiento"))
+
+    def del_reino(self, realm_id: int) -> dict[int, SubastaVigilada]:
+        """Lo que estaba siguiendo en ese reino la pasada anterior."""
+        prefijo = f"{realm_id}:"
+        return {
+            vigilada.auction_id: vigilada
+            for clave, vigilada in self._seguimiento.items()
+            if clave.startswith(prefijo)
+        }
+
+    def anterior(self, realm_id: int) -> UltimoVolcado | None:
+        """La foto del ultimo volcado leido con exito de ese reino."""
+        return self._realms.get(str(realm_id))
+
+    def reinos_con_seguimiento(self) -> set[int]:
+        """Reinos donde queda alguna subasta tuya por resolver.
+
+        Hay que seguir mirandolos aunque el volcado del addon ya no mencione
+        ninguna subasta tuya alli: si vendes la ultima de un reino y haces
+        /reload, esa venta solo se puede detectar volviendo a ese reino. Como
+        las entradas salen del seguimiento en cuanto se resuelven, la lista se
+        vacia sola y no se descarga nada de mas.
+        """
+        reinos: set[int] = set()
+        for clave in self._seguimiento:
+            realm, _, _ = clave.partition(":")
+            if realm.isdigit():
+                reinos.add(int(realm))
+        return reinos
+
+    def actualizar_reino(
+        self,
+        realm_id: int,
+        seguidas: Mapping[int, SubastaVigilada],
+        ultimo: UltimoVolcado,
+    ) -> None:
+        """Reemplaza lo que sabia de ese reino. No toca los demas."""
+        prefijo = f"{realm_id}:"
+        self._seguimiento = {
+            clave: vigilada
+            for clave, vigilada in self._seguimiento.items()
+            if not clave.startswith(prefijo)
+        }
+        for auction_id, vigilada in seguidas.items():
+            self._seguimiento[f"{prefijo}{auction_id}"] = vigilada
+        self._realms[str(realm_id)] = ultimo
+
+    def save(self) -> None:
+        corte = datetime.now(timezone.utc) - timedelta(days=self.MAX_DIAS)
+        vivas = {
+            clave: vigilada
+            for clave, vigilada in self._seguimiento.items()
+            if vigilada.visto_at > corte
+        }
+        olvidadas = len(self._seguimiento) - len(vivas)
+        if olvidadas:
+            log.debug("Olvidadas %s subastas viejas del seguimiento.", olvidadas)
+        self._seguimiento = vivas
+
+        _write_json_atomic(
+            self.path,
+            {
+                "version": STATE_VERSION,
+                "realms": {
+                    realm: {
+                        "dump_at": ultimo.dump_at.isoformat(),
+                        "max_auction_id": ultimo.max_auction_id,
+                    }
+                    for realm, ultimo in self._realms.items()
+                },
+                "seguimiento": {
+                    clave: _vigilada_a_json(vigilada)
+                    for clave, vigilada in vivas.items()
+                },
+            },
+        )
+
+    def __len__(self) -> int:
+        return len(self._seguimiento)
+
+
+def _vigilada_a_json(vigilada: SubastaVigilada) -> dict:
+    return {
+        "auction_id": vigilada.auction_id,
+        "item_id": vigilada.item_id,
+        "item_name": vigilada.item_name,
+        "buyout": vigilada.buyout_copper,
+        "quantity": vigilada.quantity,
+        "character": vigilada.character,
+        "realm": vigilada.realm,
+        "account": vigilada.account,
+        "no_caduca_antes_de": vigilada.no_caduca_antes_de.isoformat(),
+        "visto_at": vigilada.visto_at.isoformat(),
+    }
+
+
+def _leer_realms(raw: Any) -> dict[str, UltimoVolcado]:
+    if not isinstance(raw, dict):
+        return {}
+    salida: dict[str, UltimoVolcado] = {}
+    for realm, entrada in raw.items():
+        if not isinstance(entrada, dict):
+            continue
+        fecha = _fecha(entrada.get("dump_at"))
+        max_id = entrada.get("max_auction_id")
+        if fecha is None or not isinstance(max_id, int) or isinstance(max_id, bool):
+            continue
+        salida[str(realm)] = UltimoVolcado(dump_at=fecha, max_auction_id=max_id)
+    return salida
+
+
+def _leer_seguimiento(raw: Any) -> dict[str, SubastaVigilada]:
+    """Las entradas ilegibles se descartan; una sola no debe tumbar la pasada."""
+    if not isinstance(raw, dict):
+        return {}
+    salida: dict[str, SubastaVigilada] = {}
+    for clave, entrada in raw.items():
+        if not isinstance(entrada, dict):
+            continue
+        caduca = _fecha(entrada.get("no_caduca_antes_de"))
+        visto = _fecha(entrada.get("visto_at"))
+        if caduca is None or visto is None:
+            continue
+        try:
+            salida[str(clave)] = SubastaVigilada(
+                auction_id=int(entrada["auction_id"]),
+                item_id=int(entrada["item_id"]),
+                item_name=str(entrada["item_name"]),
+                buyout_copper=int(entrada["buyout"]),
+                quantity=int(entrada.get("quantity", 1)),
+                character=str(entrada.get("character", "")),
+                realm=str(entrada.get("realm", "")),
+                account=entrada.get("account")
+                if isinstance(entrada.get("account"), int)
+                else None,
+                no_caduca_antes_de=caduca,
+                visto_at=visto,
+            )
+        except (KeyError, TypeError, ValueError):
+            log.debug("Entrada de seguimiento ilegible, la descarto: %r", entrada)
+    return salida
+
+
+def _fecha(valor: Any) -> datetime | None:
+    """Una fecha ISO con zona horaria, o None si no se puede leer."""
+    if not isinstance(valor, str):
+        return None
+    try:
+        fecha = datetime.fromisoformat(valor)
+    except ValueError:
+        return None
+    return fecha if fecha.tzinfo is not None else fecha.replace(tzinfo=timezone.utc)

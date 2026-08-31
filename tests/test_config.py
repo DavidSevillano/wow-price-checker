@@ -157,3 +157,38 @@ def test_stale_retries_negativo(tmp_path):
 def test_espera_entre_reintentos_demasiado_corta(tmp_path):
     with pytest.raises(ConfigError, match="al menos 1 segundo"):
         load_config(write(tmp_path, VALID + "  stale_retry_wait_seconds: 0\n"))
+
+
+# -- Ajustes de las ventas --------------------------------------------------
+
+
+def test_ajustes_de_venta_por_defecto(tmp_path):
+    settings = load_config(write(tmp_path, VALID)).settings
+    assert settings.ah_cut_pct == 5
+    assert settings.listing_hours == 12
+
+
+def test_ah_cut_pct_se_puede_cambiar(tmp_path):
+    text = (
+        'region: eu\nitems:\n  - name: "X"\n    max_price_by_ilvl: { 311: 1 }\n'
+        "settings:\n  ah_cut_pct: 0\n"
+    )
+    assert load_config(write(tmp_path, text)).settings.ah_cut_pct == 0
+
+
+def test_ah_cut_pct_fuera_de_rango(tmp_path):
+    text = (
+        'region: eu\nitems:\n  - name: "X"\n    max_price_by_ilvl: { 311: 1 }\n'
+        "settings:\n  ah_cut_pct: 100\n"
+    )
+    with pytest.raises(ConfigError, match="ah_cut_pct"):
+        load_config(write(tmp_path, text))
+
+
+def test_listing_hours_fuera_de_rango(tmp_path):
+    text = (
+        'region: eu\nitems:\n  - name: "X"\n    max_price_by_ilvl: { 311: 1 }\n'
+        "settings:\n  listing_hours: 0\n"
+    )
+    with pytest.raises(ConfigError, match="listing_hours"):
+        load_config(write(tmp_path, text))

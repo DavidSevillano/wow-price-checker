@@ -74,13 +74,19 @@ jobs:
       - name: Vigilar mis subastas
         # Se ejecuta aunque el escaneo de chollos haya ido mal: son dos
         # vigilancias independientes y una no debe silenciar a la otra.
+        #
+        # Undercuts y ventas van juntos a proposito, y no en pasos separados:
+        # comparten la descarga, y sobre todo el seguimiento de ventas tiene que
+        # actualizarse TODAS las horas, se venda o no, porque cada pasada afina
+        # las fechas de caducidad de las que sigue.
         if: '!cancelled()'
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           DISCORD_UNDERCUT_WEBHOOK_URL: ${{ secrets.DISCORD_UNDERCUT_WEBHOOK_URL }}
+          DISCORD_VENTAS_WEBHOOK_URL: ${{ secrets.DISCORD_VENTAS_WEBHOOK_URL }}
           BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
           BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
-        run: python main.py --undercut ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: python main.py --undercut --ventas ${{ inputs.dry_run && '--dry-run' || '' }}
 
       - name: Guardar memoria de avisos
         # Tambien cuando el escaneo va mal: lo ya avisado sigue siendo valido y

@@ -164,3 +164,22 @@ settings:
 
   # Cuanto esperar entre intentos.
   stale_retry_wait_seconds: 120
+
+  # --------------------------------------------------------------------------
+  #  Ventas de tus propias subastas
+  # --------------------------------------------------------------------------
+  # Comision que se queda la casa de subastas al vender algo. Es lo que separa
+  # el precio al que publicas de lo que llega de verdad al buzon.
+  ah_cut_pct: 5
+
+  # Cuantas horas dejas puestas tus subastas. Ojo: aqui va la duracion MAS
+  # CORTA que uses nunca, no la habitual.
+  #
+  # De este numero sale la deteccion de ventas. Si una subasta no estaba en el
+  # volcado de las 14:31 y si en el de las 15:31, se publico entre esas dos
+  # horas, asi que no puede caducar antes de las 02:31. Si desaparece antes, se
+  # ha vendido: es imposible que haya caducado.
+  #
+  # Poner aqui mas horas de las reales convertiria caducaciones en ventas
+  # falsas. Poner menos solo hace la deteccion mas floja, nunca incorrecta.
+  listing_hours: 12

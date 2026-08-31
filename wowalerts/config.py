@@ -61,6 +61,16 @@ class Settings:
     # desactiva y la pasada se conforma con lo que haya.
     stale_retries: int = 2
     stale_retry_wait_seconds: int = 120
+    # ------------------------------------------------------------------------
+    #  Ventas de tus propias subastas
+    # ------------------------------------------------------------------------
+    # Comision que se queda la casa de subastas al vender, en porcentaje. Es lo
+    # que separa el precio al que publicas de lo que llega al buzon.
+    ah_cut_pct: int = 5
+    # Duracion MAS CORTA con la que publicas, en horas. Va la mas corta y no la
+    # habitual porque de aqui sale una cota: con una duracion mayor que la real
+    # se afirmarian ventas que en realidad son caducaciones.
+    listing_hours: int = 12
 
 
 @dataclass(frozen=True)
@@ -242,6 +252,8 @@ def _parse_settings(value: Any) -> Settings:
                     "stale_retry_wait_seconds", defaults.stale_retry_wait_seconds
                 )
             ),
+            ah_cut_pct=int(value.get("ah_cut_pct", defaults.ah_cut_pct)),
+            listing_hours=int(value.get("listing_hours", defaults.listing_hours)),
         )
     except (TypeError, ValueError) as exc:
         raise ConfigError(f"'settings' tiene un valor con formato incorrecto: {exc}") from exc
@@ -258,6 +270,16 @@ def _parse_settings(value: Any) -> Settings:
         raise ConfigError("'dump_minute' es un minuto del reloj: entre 0 y 59.")
     if settings.stale_retries < 0:
         raise ConfigError("'stale_retries' no puede ser negativo (0 lo desactiva).")
+    if not 0 <= settings.ah_cut_pct < 100:
+        raise ConfigError(
+            "'ah_cut_pct' es el porcentaje que se queda la casa de subastas: "
+            "entre 0 y 99."
+        )
+    if not 1 <= settings.listing_hours <= 48:
+        raise ConfigError(
+            "'listing_hours' son las horas de tus publicaciones: entre 1 y 48. "
+            "Pon la duracion MAS CORTA que uses, no la habitual."
+        )
     if settings.stale_retry_wait_seconds < 1:
         raise ConfigError("'stale_retry_wait_seconds' debe ser al menos 1 segundo.")
 

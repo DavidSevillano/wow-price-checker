@@ -475,6 +475,20 @@ def test_el_parser_acepta_undercut():
     assert _parser().parse_args(["--undercut"]).undercut is True
 
 
+def test_el_parser_acepta_ventas():
+    assert _parser().parse_args(["--ventas"]).ventas is True
+
+
+def test_undercut_y_ventas_se_combinan():
+    args = _parser().parse_args(["--undercut", "--ventas"])
+    assert args.undercut is True
+    assert args.ventas is True
+
+
+def test_por_defecto_no_hay_ventas():
+    assert _parser().parse_args([]).ventas is False
+
+
 def test_agrupa_las_subastas_por_reino_conectado():
     mias = [
         una_mia(1, "Sanguino", "sanguino"),

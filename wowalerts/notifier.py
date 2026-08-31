@@ -16,6 +16,7 @@ import requests
 
 from .scanner import Deal
 from .undercut import Undercut
+from .ventas import Venta
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ COLOR_GREAT = 0xF1C40F       # amarillo: bastante por debajo
 COLOR_STEAL = 0x2ECC71       # verde: chollo serio
 COLOR_WARNING = 0xE74C3C     # rojo: aviso de salud del bot
 COLOR_UNDERCUT = 0xC0392B    # rojo oscuro: te han adelantado
+COLOR_VENTA = 0xD4AF37       # oro viejo: dinero que entra
 # Limite duro de Discord para la descripcion de un embed.
 MAX_EMBED_DESCRIPTION = 4096
 # Tope propio de lineas por mensaje: mas de esto ya no se lee de un vistazo.
@@ -285,6 +287,73 @@ def build_undercut_messages(undercuts: Sequence[Undercut]) -> list[dict[str, Any
     return messages
 
 
+def _venta_line(venta: Venta) -> str:
+    """Una linea del aviso: que se ha vendido y cuanto llega al buzon."""
+    nombre = venta.subasta.item_name
+    if len(nombre) > MAX_ITEM_NAME:
+        nombre = nombre[: MAX_ITEM_NAME - 1].rstrip() + "…"
+    if venta.subasta.quantity > 1:
+        nombre += f" ×{venta.subasta.quantity}"
+    return f"• {nombre} — **{format_gold(venta.neto_gold)} g**"
+
+
+def build_venta_messages(ventas: Sequence[Venta]) -> list[dict[str, Any]]:
+    """Un mensaje por personaje, con lo que se le ha vendido esta hora.
+
+    Se agrupa por personaje por el mismo motivo que los undercuts: cada mensaje
+    es un viaje al buzon de un personaje concreto. Las cifras van en neto, que
+    es lo que de verdad te llega tras la comision de la casa de subastas.
+    """
+    if not ventas:
+        return []
+
+    shown = list(ventas[:MAX_DEALS_PER_RUN])
+
+    por_personaje: dict[tuple[str, str, object], list[Venta]] = {}
+    for venta in shown:
+        clave = (
+            venta.subasta.character,
+            venta.subasta.realm,
+            venta.subasta.account,
+        )
+        por_personaje.setdefault(clave, []).append(venta)
+
+    messages: list[dict[str, Any]] = []
+    for (character, _realm, account), suyas in por_personaje.items():
+        quien = f"💰 {character}"
+        if account is not None:
+            quien += f" · WoW {account}"
+
+        plural = "ventas" if len(suyas) != 1 else "venta"
+        titulo = f"{quien} — {len(suyas)} {plural}"
+        continuacion = f"{quien} · sigue"
+
+        lineas = [_venta_line(v) for v in suyas]
+        if len(suyas) > 1:
+            total = sum(v.neto_gold for v in suyas)
+            lineas.append(f"**Total: {format_gold(total)} g**")
+
+        grupos = _repartir(lineas, MAX_EMBED_DESCRIPTION)
+        for indice, grupo in enumerate(grupos):
+            messages.append(
+                {
+                    "embeds": [
+                        {
+                            "title": titulo if indice == 0 else continuacion,
+                            "description": "\n".join(grupo),
+                            "color": COLOR_VENTA,
+                            # La hora del volcado en que se noto la
+                            # desaparicion, no la del envio. Discord la pinta en
+                            # la zona horaria de quien lee.
+                            "timestamp": suyas[0].detectada_at.isoformat(),
+                        }
+                    ]
+                }
+            )
+
+    return messages
+
+
 class DiscordNotifier:
     """Cliente minimo del webhook de Discord."""
 
@@ -339,6 +408,12 @@ class DiscordNotifier:
         for message in build_undercut_messages(undercuts):
             self._post(message)
         return list(undercuts[:MAX_DEALS_PER_RUN])
+
+    def send_ventas(self, ventas: Sequence[Venta]) -> list[Venta]:
+        """Envia las ventas y devuelve las que de verdad han salido."""
+        for message in build_venta_messages(ventas):
+            self._post(message)
+        return list(ventas[:MAX_DEALS_PER_RUN])
 
     def upsert_panel(self, payload: Mapping[str, Any], message_id: str | None) -> str | None:
         """Crea el mensaje del panel o reescribe el que ya existe.

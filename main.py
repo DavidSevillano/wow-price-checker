@@ -49,8 +49,10 @@ from wowalerts.state import (
     NotifiedAuctions,
     NotifiedUndercuts,
     RealmIdCache,
+    SeguimientoVentas,
 )
 from wowalerts.undercut import find_undercuts
+from wowalerts.ventas import revisar_reino
 
 log = logging.getLogger("wowalerts")
 
@@ -110,6 +112,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="En vez de buscar chollos, avisa si alguien ha adelantado a tus "
         "propias subastas de los objetos vigilados. Necesita la carpeta "
         "mis_subastas, que genera sync_subastas.py en cada maquina.",
+    )
+    parser.add_argument(
+        "--ventas",
+        action="store_true",
+        help="Avisa en su propio canal de las subastas tuyas que se han "
+        "vendido. Se combina con --undercut para hacer las dos vigilancias "
+        "con una sola descarga.",
     )
     parser.add_argument(
         "--personajes",
@@ -173,6 +182,23 @@ def print_deals(deals, realm_names, compradores=None) -> None:
             deal.discount_pct,
             realm,
             f" | ir con: {quien}" if quien else "",
+        )
+
+
+def print_ventas(ventas) -> None:
+    """Vuelca las ventas por consola (lo que se enviaria a Discord)."""
+    for venta in ventas:
+        cuenta = (
+            f"WoW {venta.subasta.account}"
+            if venta.subasta.account is not None
+            else venta.subasta.realm
+        )
+        log.info(
+            "  %s | %s g netos | %s (%s)",
+            venta.subasta.item_name,
+            format_gold(venta.neto_gold),
+            venta.subasta.character,
+            cuenta,
         )
 
 
@@ -248,18 +274,26 @@ def actualizar_panel(notifier, state_dir: Path, mis_subastas, undercuts, snapsho
         log.info("📊 Panel actualizado.")
 
 
-def run_undercut(
+def run_mis_subastas(
     client,
     config,
     rules_by_item_id,
-    notifier,
+    notifier_undercut,
+    notifier_ventas,
     state_dir: Path,
     mis_subastas_path: str,
     *,
+    hacer_undercut: bool,
+    hacer_ventas: bool,
     dry_run: bool,
     ignore_state: bool,
 ) -> int:
-    """Una pasada de vigilancia sobre tus propias subastas."""
+    """Una pasada de vigilancia sobre tus propias subastas.
+
+    Undercuts y ventas comparten la descarga: son las mismas subastas de los
+    mismos reinos, leidas del mismo volcado. Cada vigilancia manda su aviso a
+    su canal.
+    """
     todas = leer_snapshots(mis_subastas_path)
     # Solo interesan los objetos que vigila config.yaml: el resto de lo que
     # tengas puesto (monturas, mochilas, decoracion) no es el negocio.
@@ -297,20 +331,52 @@ def run_undercut(
     notified = NotifiedUndercuts(
         state_dir / "undercuts.json", config.settings.state_retention_runs
     )
+    seguimiento = SeguimientoVentas(state_dir / "ventas.json")
+
+    if hacer_ventas:
+        # Un reino donde queda algo por resolver se mira aunque el volcado del
+        # addon ya no mencione ninguna subasta tuya alli. Si no, al vender la
+        # ultima de un reino y hacer /reload, esa venta no se detectaria nunca.
+        for realm_id in seguimiento.reinos_con_seguimiento():
+            grupos.setdefault(realm_id, [])
 
     todos: list = []
+    ventas: list = []
     snapshot_at = None
     for realm_id, mias in grupos.items():
         try:
             snapshot = client.auctions(realm_id)
         except BlizzardError as exc:
+            # El reino no se evalua esta hora. Es importante no tocar su
+            # seguimiento: si diera por desaparecidas sus subastas, una caida de
+            # Blizzard se convertiria en una rafaga de ventas inventadas.
             log.warning("Reino %s: %s", realm_id, exc)
             continue
+
         if snapshot.taken_at and (snapshot_at is None or snapshot.taken_at > snapshot_at):
             snapshot_at = snapshot.taken_at
-        todos.extend(
-            find_undercuts(snapshot.auctions, mias, config.bonus_ilvl_map, realm_id)
-        )
+
+        if hacer_undercut:
+            todos.extend(
+                find_undercuts(snapshot.auctions, mias, config.bonus_ilvl_map, realm_id)
+            )
+
+        if hacer_ventas:
+            # Sin Last-Modified se usa el reloj, que con el cron a y 33 queda a
+            # dos minutos del volcado real: buena aproximacion.
+            dump_at = snapshot.taken_at or datetime.now(timezone.utc)
+            del_reino, seguidas, ultimo = revisar_reino(
+                seguimiento.del_reino(realm_id),
+                mias,
+                snapshot.auctions,
+                realm_id,
+                dump_at,
+                seguimiento.anterior(realm_id),
+                config.settings.listing_hours,
+                config.settings.ah_cut_pct,
+            )
+            ventas.extend(del_reino)
+            seguimiento.actualizar_reino(realm_id, seguidas, ultimo)
 
     if snapshot_at:
         edad = (datetime.now(timezone.utc) - snapshot_at).total_seconds() / 60
@@ -320,54 +386,76 @@ def run_undercut(
             edad,
         )
 
-    # El panel se reescribe siempre, tambien cuando no hay novedades: su gracia
-    # es decir como estas, y "todo primero" es una respuesta tan util como una
-    # lista de cosas que atender.
-    if notifier and not dry_run:
-        actualizar_panel(notifier, state_dir, mis_subastas, todos, snapshot_at)
+    if hacer_undercut:
+        # El panel se reescribe siempre, tambien cuando no hay novedades: su
+        # gracia es decir como estas, y "todo primero" es una respuesta tan util
+        # como una lista de cosas que atender.
+        if notifier_undercut and not dry_run:
+            actualizar_panel(
+                notifier_undercut, state_dir, mis_subastas, todos, snapshot_at
+            )
 
-    frescos = todos if ignore_state else notified.filter_new(todos)
-    repetidos = len(todos) - len(frescos)
-    if repetidos:
-        log.info("🔁 %s undercut(s) ya avisados, omitidos.", repetidos)
+        frescos = todos if ignore_state else notified.filter_new(todos)
+        repetidos = len(todos) - len(frescos)
+        if repetidos:
+            log.info("🔁 %s undercut(s) ya avisados, omitidos.", repetidos)
 
-    if not frescos:
-        log.info("😌 Nadie nuevo te ha adelantado.")
-        if not dry_run:
-            notified.save()
-        return EXIT_OK
+        if not frescos:
+            log.info("😌 Nadie nuevo te ha adelantado.")
+        else:
+            log.info("⚔️ Te han adelantado en %s subasta(s):", len(frescos))
+            for undercut in frescos:
+                cuenta = (
+                    f"WoW {undercut.mine.account}"
+                    if undercut.mine.account is not None
+                    else undercut.mine.realm
+                )
+                log.info(
+                    "  %s | tuya %s g vs %s g | %s (%s)",
+                    undercut.mine.item_name,
+                    format_gold(undercut.my_price_gold),
+                    format_gold(undercut.rival_price_gold),
+                    undercut.mine.character,
+                    cuenta,
+                )
 
-    log.info("⚔️ Te han adelantado en %s subasta(s):", len(frescos))
-    for undercut in frescos:
-        cuenta = (
-            f"WoW {undercut.mine.account}"
-            if undercut.mine.account is not None
-            else undercut.mine.realm
-        )
-        log.info(
-            "  %s | tuya %s g vs %s g | %s (%s)",
-            undercut.mine.item_name,
-            format_gold(undercut.my_price_gold),
-            format_gold(undercut.rival_price_gold),
-            undercut.mine.character,
-            cuenta,
-        )
+            if not dry_run:
+                enviados = notifier_undercut.send_undercuts(frescos)
+                log.info("📨 Enviados a Discord %s aviso(s).", len(enviados))
+                # Solo se marcan los que han salido de verdad, igual que con los
+                # chollos.
+                for undercut in enviados:
+                    notified.mark(
+                        notified.key(
+                            undercut.realm_id,
+                            undercut.mine.auction_id,
+                            undercut.rival_auction_id,
+                        )
+                    )
+
+    if hacer_ventas:
+        if not ventas:
+            log.info("💤 No se te ha vendido nada esta hora.")
+        else:
+            total = format_gold(sum(v.neto_gold for v in ventas))
+            log.info("💰 %s venta(s), %s g netos:", len(ventas), total)
+            print_ventas(ventas)
+
+            if not dry_run:
+                enviadas = notifier_ventas.send_ventas(ventas)
+                log.info("📨 Enviadas a Discord %s venta(s).", len(enviadas))
 
     if dry_run:
         log.info("🧪 --dry-run: no envio nada a Discord ni guardo el estado.")
         return EXIT_OK
 
-    enviados = notifier.send_undercuts(frescos)
-    log.info("📨 Enviados a Discord %s aviso(s).", len(enviados))
-
-    # Solo se marcan los que han salido de verdad, igual que con los chollos.
-    for undercut in enviados:
-        notified.mark(
-            notified.key(
-                undercut.realm_id, undercut.mine.auction_id, undercut.rival_auction_id
-            )
-        )
-    notified.save()
+    if hacer_undercut:
+        notified.save()
+    # Se guarda DESPUES de enviar: si Discord falla, la excepcion sube y el
+    # seguimiento se queda como estaba, asi que la pasada siguiente vuelve a
+    # detectar esas ventas en vez de perderlas.
+    if hacer_ventas:
+        seguimiento.save()
     return EXIT_OK
 
 
@@ -377,24 +465,43 @@ def run(args: argparse.Namespace) -> int:
     config = load_config(args.config)
 
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "")
-    if args.undercut:
-        # Los undercuts van a su propio canal: son avisos de otra naturaleza que
-        # los chollos y mezclarlos hace que se pierdan unos entre otros. Si no
-        # hay canal propio configurado, se usa el de siempre.
-        webhook_url = os.getenv("DISCORD_UNDERCUT_WEBHOOK_URL", "") or webhook_url
+    # Cada vigilancia va a su canal: son avisos de naturaleza distinta y
+    # mezclarlos hace que se pierdan unos entre otros. Si no hay canal propio
+    # configurado, se usa el de siempre.
+    undercut_url = os.getenv("DISCORD_UNDERCUT_WEBHOOK_URL", "") or webhook_url
+    ventas_url = os.getenv("DISCORD_VENTAS_WEBHOOK_URL", "") or webhook_url
+
     notifier = DiscordNotifier(webhook_url) if webhook_url else None
+    notifier_undercut = DiscordNotifier(undercut_url) if undercut_url else None
+    notifier_ventas = DiscordNotifier(ventas_url) if ventas_url else None
 
     if args.test_discord:
-        if notifier is None:
+        # Se prueba el canal de la vigilancia que se haya pedido.
+        prueba = notifier
+        if args.ventas:
+            prueba = notifier_ventas
+        elif args.undercut:
+            prueba = notifier_undercut
+        if prueba is None:
             raise DiscordError(
                 "Falta DISCORD_WEBHOOK_URL, asi que no hay nada que probar.\n"
                 "Copia .env.example a .env y rellenalo."
             )
-        notifier.send_test()
+        prueba.send_test()
         log.info("✅ Mensaje de prueba enviado. Miralo en Discord.")
         return EXIT_OK
 
-    if notifier is None and not args.dry_run:
+    # La guarda mira el canal de la vigilancia pedida, no siempre el general:
+    # con --ventas y solo DISCORD_VENTAS_WEBHOOK_URL puesto, hay donde escribir.
+    if args.undercut or args.ventas:
+        hacen_falta = []
+        if args.undercut:
+            hacen_falta.append(notifier_undercut)
+        if args.ventas:
+            hacen_falta.append(notifier_ventas)
+    else:
+        hacen_falta = [notifier]
+    if not args.dry_run and any(n is None for n in hacen_falta):
         raise DiscordError(
             "Falta DISCORD_WEBHOOK_URL. Copia .env.example a .env y rellenalo, "
             "o usa --dry-run si solo quieres ver los resultados por consola."
@@ -420,14 +527,17 @@ def run(args: argparse.Namespace) -> int:
     if not args.dry_run:
         item_cache.save()
 
-    if args.undercut:
-        return run_undercut(
+    if args.undercut or args.ventas:
+        return run_mis_subastas(
             client,
             config,
             rules_by_item_id,
-            notifier,
+            notifier_undercut,
+            notifier_ventas,
             state_dir,
             args.mis_subastas,
+            hacer_undercut=args.undercut,
+            hacer_ventas=args.ventas,
             dry_run=args.dry_run,
             ignore_state=args.ignore_state,
         )

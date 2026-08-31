@@ -229,6 +229,7 @@ gh run list --workflow="WoW Price Monitor" --limit 10
 | `--realms 1305,1378` | Escanea solo esos reinos. Ideal para probar rapido. |
 | `--test-discord` | Manda un mensaje de prueba al webhook y termina. |
 | `--ignore-state` | Avisa tambien de chollos ya notificados antes. |
+| `--ventas` | Avisa de tus subastas vendidas, en su propio canal. |
 | `--config otro.yaml` | Usa otro fichero de configuracion. |
 | `--state-dir ruta` | Cambia donde se guarda la memoria (por defecto `.state/`). |
 | `-v` | Muestra cada subasta vista, con sus bonus ids. |
@@ -252,8 +253,9 @@ wowalerts/
   scanner.py           Que cuenta como chollo (logica pura)
   state.py             Memoria entre ejecuciones
   notifier.py          Embeds y envio a Discord
+  ventas.py            Que cuenta como venta y que como caducidad
   snapshot.py          Si el volcado leido es el de esta hora
-tests/                 153 tests, sin tocar la red
+tests/                 347 tests, sin tocar la red
 ```
 
 Para pasar los tests:
@@ -419,3 +421,88 @@ detallan las subastas adelantadas: listar las que van bien seria ilegible.
 
 No se publica uno nuevo cada hora: se reescribe el mismo, cuyo id se guarda en
 `.state/panel.json`. Si lo borras, la pasada siguiente crea otro.
+
+## 6. Avisos de venta
+
+Ademas de avisarte de los undercuts, el vigilante te dice **que se te ha
+vendido**, en su propio canal, sin tener que entrar al juego a mirar el buzon.
+Como los undercuts, solo mira los objetos que vigila `config.yaml`.
+
+### 6.1 Como sabe que se ha vendido
+
+La API de Blizzard **no publica ventas**: solo una foto por hora de lo que sigue
+vivo. Una subasta tuya que desaparece pudo venderse, caducar o cancelarse, y
+desde fuera las tres se ven igual.
+
+Se separan asi: de cada subasta tuya se guarda **la fecha mas temprana en la que
+podria caducar**. Si desaparece antes de esa fecha, es imposible que haya
+caducado. Esa fecha se afina cada hora con dos pistas:
+
+- **El tramo de tiempo restante.** Blizzard publica si a una subasta le quedan
+  mas de 12 h, entre 2 y 12 h, entre 30 min y 2 h, o menos de 30 min. Verla en
+  el tramo de 2-12 h garantiza dos horas de vida: si a la hora siguiente no
+  esta, no ha caducado.
+- **La ventana de nacimiento.** Si no estaba en el volcado de las 14:31 y si en
+  el de las 15:31, se publico entre esas dos horas. Con `listing_hours: 12`, no
+  puede caducar antes de las 02:31.
+
+La segunda pista es la buena, y solo vale para las subastas que se publican
+estando el vigilante en marcha. Las que ya estaban puestas cuando lo montaste se
+apoyan solo en la primera hasta que las reposteas.
+
+Que una subasta sea nueva se decide por su **id**, que crece con el tiempo
+dentro de un reino, y no por si el addon la habia exportado ya: el addon puede
+tardar dias en volcarla, y tomarla por recien nacida el dia que aparece
+convertiria su caducacion en una venta falsa.
+
+### 6.2 Lo que no vas a ver
+
+- **Las ventas de la ultima hora del listado.** Ahi una venta y una caducacion
+  producen exactamente el mismo dato, y avisar de todas seria peor: **toda
+  subasta que no se vende acaba desapareciendo justo ahi**, asi que el canal se
+  llenaria de falsas alarmas.
+- **Las cancelaciones salen como ventas.** Si retiras una subasta con tiempo de
+  sobra, el vigilante la ve desaparecer antes de poder caducar y la canta como
+  vendida. No hay forma de distinguirlo con esta API.
+- **Objetos que no esten en `config.yaml`.**
+
+### 6.3 Canal propio
+
+Crea un webhook en el canal que quieras y ponlo en `.env`:
+
+```
+DISCORD_VENTAS_WEBHOOK_URL=https://discord.com/api/webhooks/...
+```
+
+Si lo dejas vacio, las ventas van al canal general. Para comprobarlo:
+
+```bash
+.venv\Scripts\python.exe main.py --ventas --test-discord
+```
+
+En GitHub Actions hace falta el mismo valor como secret del repositorio, con ese
+mismo nombre.
+
+### 6.4 Probarlo
+
+```bash
+.venv\Scripts\python.exe main.py --ventas --dry-run
+```
+
+La **primera pasada nunca detecta ventas**, y es lo correcto: solo puede
+declarar vendida una subasta que haya visto viva antes. Sin esa regla, el primer
+arranque cantaria como vendidas todas las que el addon tiene apuntadas y hace
+dias que no existen.
+
+Para hacer las dos vigilancias con una sola descarga, que es como corre en
+Actions:
+
+```bash
+.venv\Scripts\python.exe main.py --undercut --ventas
+```
+
+### 6.5 Las cifras
+
+Van **en neto**: el precio al que estaba puesta menos la comision que se queda
+la casa de subastas, que es lo que de verdad te llega al buzon. El porcentaje se
+ajusta en `config.yaml` con `ah_cut_pct`.

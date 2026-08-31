@@ -391,3 +391,116 @@ def test_un_fallo_del_panel_no_tumba_la_pasada(requests_mock):
     notifier = DiscordNotifier(WEBHOOK, session=requests.Session())
 
     assert notifier.upsert_panel(PANEL, None) is None
+
+
+# -- Avisos de venta --------------------------------------------------------
+
+from datetime import datetime, timezone
+
+from wowalerts.notifier import COLOR_VENTA, build_venta_messages
+from wowalerts.ventas import SubastaVigilada, Venta
+
+CUANDO = datetime(2026, 8, 31, 14, 31, tzinfo=timezone.utc)
+
+
+def una_venta(
+    objeto="Grebas de las profundidades nocivas",
+    personaje="Pepe",
+    cuenta=3,
+    oro=10000,
+    auction_id=1,
+    cantidad=1,
+):
+    return Venta(
+        subasta=SubastaVigilada(
+            auction_id=auction_id,
+            item_id=200000,
+            item_name=objeto,
+            buyout_copper=oro * 10_000,
+            quantity=cantidad,
+            character=personaje,
+            realm="Sanguino",
+            account=cuenta,
+            no_caduca_antes_de=CUANDO,
+            visto_at=CUANDO,
+        ),
+        realm_id=1305,
+        detectada_at=CUANDO,
+        ah_cut_pct=5,
+    )
+
+
+def test_sin_ventas_no_hay_mensajes():
+    assert build_venta_messages([]) == []
+
+
+def test_una_venta_muestra_el_neto():
+    contenido = texto(build_venta_messages([una_venta(oro=10000)])[0])
+    assert "9.500 g" in contenido
+
+
+def test_el_titulo_lleva_personaje_y_cuenta():
+    mensaje = build_venta_messages([una_venta()])[0]
+    assert mensaje["embeds"][0]["title"] == "💰 Pepe · WoW 3 — 1 venta"
+
+
+def test_sin_cuenta_el_titulo_solo_lleva_el_personaje():
+    mensaje = build_venta_messages([una_venta(cuenta=None)])[0]
+    assert mensaje["embeds"][0]["title"] == "💰 Pepe — 1 venta"
+
+
+def test_una_sola_venta_no_lleva_total():
+    contenido = texto(build_venta_messages([una_venta()])[0])
+    assert "Total" not in contenido
+
+
+def test_varias_ventas_del_mismo_personaje_llevan_total():
+    mensajes = build_venta_messages(
+        [
+            una_venta(objeto="Grebas", oro=10000, auction_id=1),
+            una_venta(objeto="Zapatillas", oro=20000, auction_id=2),
+        ]
+    )
+    assert len(mensajes) == 1
+    # 9.500 + 19.000
+    assert "Total: 28.500 g" in texto(mensajes[0])
+
+
+def test_cada_personaje_va_en_su_mensaje():
+    mensajes = build_venta_messages(
+        [
+            una_venta(personaje="Pepe", auction_id=1),
+            una_venta(personaje="Ana", auction_id=2),
+            una_venta(personaje="Pepe", auction_id=3),
+        ]
+    )
+    assert len(mensajes) == 2
+
+
+def test_el_mismo_nombre_en_cuentas_distintas_no_se_mezcla():
+    mensajes = build_venta_messages(
+        [
+            una_venta(personaje="Pepe", cuenta=1, auction_id=1),
+            una_venta(personaje="Pepe", cuenta=3, auction_id=2),
+        ]
+    )
+    assert len(mensajes) == 2
+
+
+def test_el_embed_lleva_color_y_hora_del_volcado():
+    embed = build_venta_messages([una_venta()])[0]["embeds"][0]
+    assert embed["color"] == COLOR_VENTA
+    assert embed["timestamp"] == CUANDO.isoformat()
+
+
+def test_una_venta_de_varias_unidades_lo_dice():
+    contenido = texto(build_venta_messages([una_venta(cantidad=5)])[0])
+    assert "×5" in contenido
+
+
+def test_muchas_ventas_de_un_personaje_se_trocean():
+    """Discord tiene un tope por mensaje; el segundo se marca como sigue."""
+    muchas = [una_venta(auction_id=i) for i in range(25)]
+    mensajes = build_venta_messages(muchas)
+    assert len(mensajes) > 1
+    assert mensajes[1]["embeds"][0]["title"] == "💰 Pepe · WoW 3 · sigue"
