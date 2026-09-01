@@ -506,3 +506,25 @@ def test_las_subastas_de_reinos_sin_resolver_se_omiten():
     grupos = agrupar_por_reino(mias, {"Sanguino": 1379})
     assert list(grupos) == [1379]
     assert len(grupos[1379]) == 1
+
+
+# -- Aviso de personajes con datos caducados --------------------------------
+
+from main import caducados_por_avisar
+
+
+def test_se_avisa_de_los_caducados_nuevos():
+    assert caducados_por_avisar(["Ana", "Luis"], []) == ["Ana", "Luis"]
+
+
+def test_no_se_repite_el_aviso_de_los_mismos():
+    """Si no, te lo cantaria cada hora hasta que los visites."""
+    assert caducados_por_avisar(["Ana", "Luis"], ["Ana", "Luis"]) == []
+
+
+def test_uno_nuevo_vuelve_a_avisar():
+    assert caducados_por_avisar(["Ana", "Luis"], ["Ana"]) == ["Luis"]
+
+
+def test_que_se_arregle_uno_no_dispara_aviso():
+    assert caducados_por_avisar(["Ana"], ["Ana", "Luis"]) == []

@@ -581,6 +581,13 @@ Entra con ellos, abre la Casa de Subastas y haz /reload.
 Pasa sobre todo por cuenta: si juegas una tarde entera en WoW 2, los personajes
 de WoW 3 se quedan con los datos del ultimo dia que entraste.
 
+Ademas del panel y del log, **se avisa por Discord la primera vez que un
+personaje entra en esa lista**, en el canal de undercuts. Solo la primera:
+repetirlo cada hora seria una alarma de las que se aprenden a ignorar. Costo una
+venta real de 142.507 g el 2026-09-01, que no se aviso porque el personaje
+llevaba un dia sin exportar y el aviso estaba enterrado en un panel que nadie
+mira.
+
 **Ojo con varias cuentas de WoW.** `/reload` recarga **solo la sesion en la que
 lo haces**. Si tienes WoW 1, WoW 2 y WoW 3, recargar en una deja a las otras
 corriendo el addon viejo, que no apunta nada: sus reposteos siguen saliendo como

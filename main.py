@@ -291,6 +291,15 @@ def actualizar_panel(
     return enlace
 
 
+def caducados_por_avisar(ahora: list[str], ya_avisados: list[str]) -> list[str]:
+    """Los personajes caducados de los que todavia no se ha avisado.
+
+    Solo los nuevos: el estado dura hasta que los visitas, y cantarlo cada hora
+    seria una alarma que se aprende a ignorar, que es peor que no tenerla.
+    """
+    return sorted(set(ahora) - set(ya_avisados))
+
+
 def run_mis_subastas(
     client,
     config,
@@ -435,6 +444,30 @@ def run_mis_subastas(
             len(caducados),
             ", ".join(sorted(caducados)[:12]),
         )
+
+    # Un personaje caducado deja de vigilarse entero: ni undercuts ni ventas.
+    # Eso es demasiado grave para dejarlo solo en el panel y en el log, asi que
+    # se avisa por Discord la primera vez que aparece.
+    memoria_caducados = JsonMapCache(state_dir / "panel.json", "panel")
+    ya_avisados = memoria_caducados.get("caducados_avisados") or []
+    nuevos = caducados_por_avisar(caducados, ya_avisados)
+    if nuevos and notifier_undercut and not dry_run and not callado:
+        notifier_undercut.send_warning(
+            "Personajes que he dejado de vigilar",
+            f"De estos {len(nuevos)} personaje(s) no me sirve lo que tengo "
+            "apuntado: ninguna de sus subastas conocidas sigue viva, asi que "
+            "**no puedo avisarte ni de undercuts ni de ventas suyas**.\n\n"
+            + ", ".join(nuevos)
+            + "\n\nEntra con cada uno, abre la Casa de Subastas, espera unos "
+            "segundos y haz `/reload`.",
+        )
+        memoria_caducados.set("caducados_avisados", sorted(caducados))
+        memoria_caducados.save()
+    elif set(caducados) != set(ya_avisados) and not dry_run:
+        # Se guarda igualmente para que arreglar uno no reabra el aviso de los
+        # demas la proxima vez.
+        memoria_caducados.set("caducados_avisados", sorted(caducados))
+        memoria_caducados.save()
 
     if hacer_undercut:
         # El panel se reescribe siempre, tambien cuando no hay novedades: su
