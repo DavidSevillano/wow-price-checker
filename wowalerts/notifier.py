@@ -364,13 +364,7 @@ def _venta_line(venta: Venta) -> str:
         nombre += f" ({venta.subasta.ilvl})"
     if venta.subasta.quantity > 1:
         nombre += f" ×{venta.subasta.quantity}"
-    # El bruto va detras porque es el unico numero que aparece en el juego: sin
-    # el, la linea no se puede cotejar contra tu lista de subastas y un objeto
-    # del mismo nombre a otro precio parece que sigue sin venderse.
-    return (
-        f"• {nombre} — **{format_gold(venta.neto_gold)} g** "
-        f"_(estaba a {format_gold(venta.bruto_gold)})_"
-    )
+    return f"• {nombre} — **{format_gold(venta.neto_gold)} g**"
 
 
 def build_venta_messages(ventas: Sequence[Venta]) -> list[dict[str, Any]]:

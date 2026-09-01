@@ -108,10 +108,6 @@ class Venta:
     def neto_gold(self) -> int:
         return self.neto_copper // COPPER_PER_GOLD
 
-    @property
-    def bruto_gold(self) -> int:
-        """El precio al que estaba puesta: el unico que se ve en el juego."""
-        return self.subasta.buyout_copper // COPPER_PER_GOLD
 
 
 def cota_por_time_left(time_left: str, dump_at: datetime) -> datetime:
