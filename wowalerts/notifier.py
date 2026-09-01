@@ -235,7 +235,9 @@ MAX_YA_AVISADAS_NOMBRADAS = 6
 
 
 def build_undercut_messages(
-    undercuts: Sequence[Undercut], ya_avisados: Sequence[Undercut] = ()
+    undercuts: Sequence[Undercut],
+    ya_avisados: Sequence[Undercut] = (),
+    panel_url: str | None = None,
 ) -> list[dict[str, Any]]:
     """Un mensaje por personaje, con sus subastas adelantadas en una tarjeta.
 
@@ -300,12 +302,14 @@ def build_undercut_messages(
         # avisaron aparece con una sola y parece que las otras se arreglaron.
         # Van en su propio bloque y agrupadas por personaje: una lista corrida
         # repitiendo el mismo nombre no se lee.
-        messages.append(_resumen_ya_avisadas(ya_avisados))
+        messages.append(_resumen_ya_avisadas(ya_avisados, panel_url))
 
     return messages
 
 
-def _resumen_ya_avisadas(ya_avisados: Sequence[Undercut]) -> dict[str, Any]:
+def _resumen_ya_avisadas(
+    ya_avisados: Sequence[Undercut], panel_url: str | None = None
+) -> dict[str, Any]:
     """Un bloque con las que siguen adelantadas y ya se avisaron.
 
     Agrupado por personaje, que es como se actua: cada linea es un viaje al
@@ -333,6 +337,9 @@ def _resumen_ya_avisadas(ya_avisados: Sequence[Undercut]) -> dict[str, Any]:
     fuera = len(lineas) - len(dentro)
     if fuera:
         dentro = dentro + [f"_y {fuera} personaje(s) mas: mira el panel fijado._"]
+
+    if panel_url:
+        dentro = dentro + [f"\n[📊 Ver el panel con todas]({panel_url})"]
 
     plural = "siguen" if len(ya_avisados) != 1 else "sigue"
     return {
@@ -463,14 +470,17 @@ class DiscordNotifier:
         return deals_to_send(deals)
 
     def send_undercuts(
-        self, undercuts: Sequence[Undercut], ya_avisados: Sequence[Undercut] = ()
+        self,
+        undercuts: Sequence[Undercut],
+        ya_avisados: Sequence[Undercut] = (),
+        panel_url: str | None = None,
     ) -> list[Undercut]:
         """Envia los undercuts y devuelve los que de verdad han salido.
 
         Como en `send_deals`, lo que no cabe no se marca como avisado y sale en
         la pasada siguiente.
         """
-        for message in build_undercut_messages(undercuts, ya_avisados):
+        for message in build_undercut_messages(undercuts, ya_avisados, panel_url):
             self._post(message)
         return list(undercuts[:MAX_DEALS_PER_RUN])
 
@@ -479,6 +489,29 @@ class DiscordNotifier:
         for message in build_venta_messages(ventas):
             self._post(message)
         return list(ventas[:MAX_DEALS_PER_RUN])
+
+    def panel_url(self, message_id: str) -> str | None:
+        """Enlace directo al mensaje del panel.
+
+        El panel se crea una vez y se edita en su sitio, asi que nunca sube al
+        final del canal y es dificil de encontrar. Con el enlace se llega de un
+        clic desde cualquier aviso.
+
+        El id del servidor y el del canal los da el propio webhook; si no
+        estuviera en un servidor no habria enlace posible, y entonces se
+        devuelve None en vez de montar una url rota.
+        """
+        try:
+            respuesta = self.session.get(self.webhook_url, timeout=self.timeout)
+            datos = respuesta.json()
+        except (requests.RequestException, requests.exceptions.JSONDecodeError):
+            return None
+
+        guild = datos.get("guild_id")
+        canal = datos.get("channel_id")
+        if not guild or not canal:
+            return None
+        return f"https://discord.com/channels/{guild}/{canal}/{message_id}"
 
     def upsert_panel(self, payload: Mapping[str, Any], message_id: str | None) -> str | None:
         """Crea el mensaje del panel o reescribe el que ya existe.

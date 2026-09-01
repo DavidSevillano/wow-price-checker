@@ -561,3 +561,31 @@ def test_muchas_ventas_de_un_personaje_se_trocean():
     mensajes = build_venta_messages(muchas)
     assert len(mensajes) > 1
     assert mensajes[1]["embeds"][0]["title"] == "💰 Pepe · WoW 3 · sigue"
+
+
+# -- Enlace al panel --------------------------------------------------------
+
+
+def test_el_enlace_del_panel_se_monta_con_los_tres_ids(requests_mock):
+    requests_mock.get(
+        WEBHOOK, json={"guild_id": "111", "channel_id": "222"}, status_code=200
+    )
+    notifier = DiscordNotifier(WEBHOOK, session=requests.Session())
+    assert (
+        notifier.panel_url("333") == "https://discord.com/channels/111/222/333"
+    )
+
+
+def test_sin_guild_no_hay_enlace(requests_mock):
+    """Un webhook fuera de un servidor no da guild_id; mejor sin enlace."""
+    requests_mock.get(WEBHOOK, json={"channel_id": "222"}, status_code=200)
+    notifier = DiscordNotifier(WEBHOOK, session=requests.Session())
+    assert notifier.panel_url("333") is None
+
+
+def test_el_enlace_del_panel_va_en_el_bloque_de_repetidas():
+    ya = [un_undercut(personaje="Ana", objeto="Zapatillas", auction_id=7)]
+    mensajes = build_undercut_messages(
+        [un_undercut()], ya_avisados=ya, panel_url="https://discord.com/channels/1/2/3"
+    )
+    assert "https://discord.com/channels/1/2/3" in mensajes[-1]["embeds"][0]["description"]

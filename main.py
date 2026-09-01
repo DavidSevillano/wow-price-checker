@@ -268,12 +268,26 @@ def actualizar_panel(
     nuevo = notifier.upsert_panel(
         build_panel(mis_subastas, undercuts, snapshot_at, caducados), anterior
     )
-    if nuevo and nuevo != anterior:
+    if not nuevo:
+        return None
+
+    # El enlace se calcula una sola vez y se guarda: el panel se edita en su
+    # sitio y nunca sube al final del canal, asi que sin un enlace directo hay
+    # que rebuscarlo a mano cada vez.
+    enlace = memoria.get("url") if nuevo == anterior else None
+    if not enlace:
+        enlace = notifier.panel_url(nuevo)
+
+    if nuevo != anterior or enlace != memoria.get("url"):
         memoria.set("message_id", nuevo)
+        memoria.set("url", enlace)
         memoria.save()
-        log.info("📊 Panel publicado. Fijalo en el canal para tenerlo a mano.")
-    elif nuevo:
-        log.info("📊 Panel actualizado.")
+
+    if nuevo != anterior:
+        log.info("📊 Panel publicado: %s", enlace or "(sin enlace)")
+    else:
+        log.info("📊 Panel actualizado: %s", enlace or "(sin enlace)")
+    return enlace
 
 
 def run_mis_subastas(
@@ -423,8 +437,9 @@ def run_mis_subastas(
         # El panel se reescribe siempre, tambien cuando no hay novedades: su
         # gracia es decir como estas, y "todo primero" es una respuesta tan util
         # como una lista de cosas que atender.
+        panel_url = None
         if notifier_undercut and not dry_run:
-            actualizar_panel(
+            panel_url = actualizar_panel(
                 notifier_undercut,
                 state_dir,
                 mis_subastas,
@@ -469,7 +484,9 @@ def run_mis_subastas(
                 )
 
             if not dry_run:
-                enviados = notifier_undercut.send_undercuts(frescos, ya_avisados)
+                enviados = notifier_undercut.send_undercuts(
+                    frescos, ya_avisados, panel_url
+                )
                 log.info("📨 Enviados a Discord %s aviso(s).", len(enviados))
                 # Solo se marcan los que han salido de verdad, igual que con los
                 # chollos.

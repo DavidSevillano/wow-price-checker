@@ -415,11 +415,17 @@ Los avisos cuentan **lo que ha cambiado**; el panel cuenta **como estas**. Es un
 unico mensaje en el canal de undercuts que se reescribe cada hora con todas tus
 subastas vigiladas y todas las adelantadas, sin filtro de repetidas.
 
-**No lo vas a ver llegar.** Se crea una sola vez y a partir de ahi se edita en su
-sitio, asi que nunca sube al final del canal. Para encontrarlo: sube hasta el
-primer mensaje del canal de undercuts, busca el que se titula **📊 Tus
-subastas**, y **fijalo** (`Click derecho > Fijar mensaje`). Desde el movil, el
-icono del pin arriba del canal te lleva a el.
+**No lo vas a ver llegar.** Se crea una sola vez y a partir de ahi se edita en
+su sitio, asi que nunca sube al final del canal. Tres formas de llegar a el:
+
+- **El enlace del propio aviso.** Cuando hay adelantadas ya avisadas, el bloque
+  gris del final lleva un `📊 Ver el panel con todas` que va directo.
+- **Buscando** `Tus subastas` en el canal, con la lupa de Discord.
+- **En el log de cada pasada**, que imprime su url:
+  `📊 Panel actualizado: https://discord.com/channels/.../...`
+
+Y **fijalo** (`Click derecho > Fijar mensaje`): asi lo tienes en el icono del pin
+del canal, tambien desde el movil.
 
 Si lo borras sin querer, no pasa nada: la pasada siguiente publica uno nuevo,
 pero tendras que volver a fijarlo.
