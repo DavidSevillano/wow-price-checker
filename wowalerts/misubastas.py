@@ -249,6 +249,39 @@ def apunta_cancelaciones(payload: Mapping) -> bool:
     return "canceladas" in payload
 
 
+EXPORTED_AT_RE = re.compile(r'\["exportedAt"\]\s*=\s*(\d+)')
+
+
+def volcado_atrasado(fichero: str | Path) -> tuple[int, int] | None:
+    """(tabla, volcado) si el volcado del addon se ha quedado atras.
+
+    El addon guarda dos cosas: su tabla de personajes y una copia en JSON, que
+    es la unica que se lee desde fuera. El 2026-09-01 esa copia se quedo con los
+    datos del dia anterior mientras la tabla iba al dia, y treinta personajes se
+    pasaron un dia entero sin vigilar sin que nada lo cantara.
+    """
+    fichero = Path(fichero)
+    crudo = fichero.read_text(encoding="utf-8", errors="replace")
+
+    en_tabla = [int(v) for v in EXPORTED_AT_RE.findall(crudo)]
+    if not en_tabla:
+        return None
+
+    try:
+        payload = json.loads(extraer_payload(crudo))
+    except (MisSubastasError, json.JSONDecodeError):
+        return None
+
+    en_volcado = [
+        _exported_at(v)
+        for v in (payload.get("personajes") or {}).values()
+        if isinstance(v, Mapping)
+    ]
+    if max(en_tabla) <= max(en_volcado or [0]):
+        return None
+    return max(en_tabla), max(en_volcado or [0])
+
+
 def cuentas_con_addon_viejo(wow_root: str | Path) -> list[str]:
     """Las cuentas de WoW cuyo volcado aun no apunta cancelaciones."""
     viejas: list[str] = []

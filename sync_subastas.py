@@ -19,6 +19,7 @@ import logging
 import platform
 import re
 import subprocess
+from datetime import datetime
 import sys
 from pathlib import Path
 
@@ -26,7 +27,9 @@ from wowalerts.misubastas import (
     MisSubastasError,
     escribir_snapshot,
     cuentas_con_addon_viejo,
+    encontrar_savedvariables,
     leer_canceladas_de_wow,
+    volcado_atrasado,
     leer_de_wow,
 )
 from wowalerts.personajes import escribir_personajes, leer_personajes
@@ -207,6 +210,21 @@ def run(args: argparse.Namespace) -> int:
     # /reload solo recarga la sesion en la que lo haces. Con varias cuentas de
     # WoW es facil dejarse una con el addon viejo, y entonces sus reposteos
     # siguen saliendo como ventas sin que nada lo cante.
+    # El addon guarda su tabla y una copia en JSON; solo se lee la copia. Si se
+    # queda atras, el vigilante lee datos muertos sin enterarse.
+    for fichero in encontrar_savedvariables(wow_root):
+        atraso = volcado_atrasado(fichero)
+        if atraso:
+            tabla, volcado = atraso
+            log.warning(
+                "⚠️  El volcado de %s se ha quedado atras: su tabla es de %s y "
+                "lo exportado de %s. Entra con esa cuenta y sal al selector de "
+                "personajes para que se ponga al dia.",
+                fichero.parts[-3],
+                datetime.fromtimestamp(tabla).strftime("%d/%m %H:%M"),
+                datetime.fromtimestamp(volcado).strftime("%d/%m %H:%M"),
+            )
+
     viejas = cuentas_con_addon_viejo(wow_root)
     if viejas:
         log.warning(

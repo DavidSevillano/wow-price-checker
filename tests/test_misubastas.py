@@ -230,3 +230,32 @@ def test_un_payload_con_la_clave_vacia_es_addon_nuevo():
 
     assert apunta_cancelaciones({"personajes": {}, "canceladas": []}) is True
     assert apunta_cancelaciones({"personajes": {}, "canceladas": {}}) is True
+
+
+def test_se_detecta_un_volcado_atrasado_respecto_a_la_tabla(tmp_path):
+    """El payload puede quedarse atras y el vigilante lo lee como si nada."""
+    from wowalerts.misubastas import volcado_atrasado
+
+    fichero = tmp_path / "WowAlertsExport.lua"
+    fichero.write_text(
+        'WowAlertsExportDB = {\n'
+        '["personajes"] = {\n["A-B"] = {\n["exportedAt"] = 2000,\n},\n},\n'
+        '["payload"] = "{\\"personajes\\":{\\"A-B\\":{\\"exportedAt\\":1000}}}",\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    assert volcado_atrasado(fichero) == (2000, 1000)
+
+
+def test_un_volcado_al_dia_no_se_marca(tmp_path):
+    from wowalerts.misubastas import volcado_atrasado
+
+    fichero = tmp_path / "WowAlertsExport.lua"
+    fichero.write_text(
+        'WowAlertsExportDB = {\n'
+        '["personajes"] = {\n["A-B"] = {\n["exportedAt"] = 2000,\n},\n},\n'
+        '["payload"] = "{\\"personajes\\":{\\"A-B\\":{\\"exportedAt\\":2000}}}",\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    assert volcado_atrasado(fichero) is None

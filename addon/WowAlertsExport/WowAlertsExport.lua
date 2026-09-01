@@ -7,7 +7,7 @@
 
 local FORMAT_VERSION = 1
 -- Version del addon, para saber que codigo se esta ejecutando de verdad.
-local ADDON_VERSION = "1.10"
+local ADDON_VERSION = "1.11"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 
@@ -304,6 +304,28 @@ local function guardar()
     return #recogidas
 end
 
+-- Rehace la cadena JSON a partir de la tabla del addon.
+--
+-- El payload es lo UNICO que lee el sincronizador, y puede quedarse atras
+-- respecto a la tabla: el 2026-09-01 la tabla tenia 36 personajes de ese dia y
+-- el payload 30 del anterior, con lo que treinta personajes se pasaron un dia
+-- entero sin vigilar. Rehacerlo al salir cierra esa deriva pase lo que pase
+-- durante la sesion, y no necesita la casa de subastas abierta.
+local function regenerarPayload()
+    local datos = WowAlertsExportDB.personajes
+    if not datos or next(datos) == nil then
+        return
+    end
+
+    WowAlertsExportDB.version = FORMAT_VERSION
+    WowAlertsExportDB.payload = encode({
+        version = FORMAT_VERSION,
+        personajes = datos,
+        canceladas = WowAlertsExportDB.canceladas or {},
+    })
+    WowAlertsExportDB.huella = huellaDe(datos)
+end
+
 -- Cuantas subastas hay guardadas de este personaje ahora mismo.
 local function guardadas()
     local previo = (WowAlertsExportDB.personajes or {})[claveDePersonaje()]
@@ -350,6 +372,38 @@ local function resumirPronto()
     end)
 end
 
+-- Horas a partir de las cuales lo guardado de un personaje deja de servir.
+-- Con listados de 12 horas, un volcado mas viejo que eso ya no describe ninguna
+-- subasta viva: sus ids estan muertos y el vigilante no puede comparar nada.
+local HORAS_PARA_QUEDARSE_VIEJO = 12
+
+-- Recordatorio al entrar con un personaje cuyas subastas guardadas ya no valen.
+--
+-- Hace falta porque recargar NO actualiza nada: el addon solo puede leer tus
+-- subastas con la Casa de Subastas abierta. Entrar, hacer /reload y salir deja
+-- el volcado igual que estaba, y el vigilante se queda comparando contra ids
+-- muertos sin que nada lo cante desde dentro del juego.
+local function avisarSiEstaViejo()
+    local previo = (WowAlertsExportDB.personajes or {})[claveDePersonaje()]
+    if not previo or #(previo.auctions or {}) == 0 then
+        -- Sin subastas guardadas no hay nada que refrescar: avisar aqui seria
+        -- ruido en todos los personajes con los que no vendes.
+        return
+    end
+
+    local edad = time() - (previo.exportedAt or 0)
+    if edad < HORAS_PARA_QUEDARSE_VIEJO * 3600 then
+        return
+    end
+
+    print(
+        ("|cffffd200WoW Alerts:|r lo que tengo de este personaje son |cffff7f7f%d subasta(s) de hace %d h|r."):format(
+            #previo.auctions, math.floor(edad / 3600)
+        )
+    )
+    print("  Abre la |cff00ff00Casa de Subastas|r y haz |cff00ff00/reload|r, o dejo de vigilarlo.")
+end
+
 -- ---------------------------------------------------------------------------
 --  Eventos
 -- ---------------------------------------------------------------------------
@@ -358,6 +412,10 @@ end
 -- WowAlertsExportDB, y WoW escribe esa tabla a disco al salir por su cuenta.
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
+frame:RegisterEvent("PLAYER_ENTERING_WORLD")
+-- WoW escribe SavedVariables justo despues de este evento, asi que es el ultimo
+-- momento util para dejar el volcado al dia.
+frame:RegisterEvent("PLAYER_LOGOUT")
 frame:RegisterEvent("AUCTION_HOUSE_SHOW")
 frame:RegisterEvent("AUCTION_HOUSE_CLOSED")
 frame:RegisterEvent("OWNED_AUCTIONS_UPDATED")
@@ -371,6 +429,10 @@ frame:SetScript("OnEvent", function(_, event, arg1)
         if arg1 == "WowAlertsExport" then
             huellaEnDisco = WowAlertsExportDB.huella
         end
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        avisarSiEstaViejo()
+    elseif event == "PLAYER_LOGOUT" then
+        regenerarPayload()
     elseif event == "AUCTION_HOUSE_SHOW" then
         abiertaDesde = GetTime()
         pedirSubastas()

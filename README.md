@@ -567,6 +567,21 @@ Todo lo que se tapa queda escrito en el log de la pasada:
     la cuento como venta.
 ```
 
+**El addon guarda dos cosas y solo se lee una.** Tiene su tabla de personajes y
+una copia en JSON; el sincronizador solo lee la copia. El 2026-09-01 esa copia
+se quedo con los datos del dia anterior mientras la tabla iba al dia, y treinta
+personajes se pasaron un dia entero sin vigilarse sin que nada lo cantara.
+
+Desde la v1.11 el addon **rehace la copia al salir** (`PLAYER_LOGOUT`), que es el
+ultimo momento antes de que WoW escriba a disco y no necesita la Casa de
+Subastas abierta. Y `sync_subastas.py` compara las dos fechas en cada pasada:
+
+```
+⚠️  El volcado de 403840080#3 se ha quedado atras: su tabla es de 01/09 17:46 y
+    lo exportado de 31/08 16:28. Entra con esa cuenta y sal al selector de
+    personajes para que se ponga al dia.
+```
+
 **Ojo con los personajes que llevas tiempo sin visitar.** El vigilante compara
 contra los ids de subasta que le dio el addon. Si esos ids ya no existen porque
 las reposteaste, no hay nada que comparar y **ese personaje deja de vigilarse en

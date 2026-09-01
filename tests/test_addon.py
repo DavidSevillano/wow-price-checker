@@ -430,3 +430,66 @@ def test_no_se_acumula_un_repaso_por_cada_apertura():
     recoger(lua)
 
     assert lua.globals().REPASOS == 1
+
+
+# -- Aviso al entrar con un personaje cuyos datos ya no valen ----------------
+
+
+def test_avisa_al_entrar_si_sus_subastas_son_viejas():
+    """Recargar sin abrir la Casa de Subastas no actualiza nada.
+
+    Es el fallo que dejo diez personajes sin vigilar un dia entero: entras,
+    haces /reload y el volcado sigue siendo el de ayer.
+    """
+    lua = runtime(subastas=[subasta()])
+    recoger(lua)
+
+    # Al dia siguiente: los datos guardados tienen mas de doce horas.
+    lua.globals().AHORA = lua.globals().AHORA + 13 * 3600
+    lua.execute("mensajes = {}")
+    lua.globals().DISPARAR("PLAYER_ENTERING_WORLD")
+
+    texto = " ".join(lua.globals().mensajes.values())
+    assert "Casa de Subastas" in texto
+
+
+def test_no_avisa_si_los_datos_son_de_hace_un_rato():
+    lua = runtime(subastas=[subasta()])
+    recoger(lua)
+
+    lua.execute("mensajes = {}")
+    lua.globals().DISPARAR("PLAYER_ENTERING_WORLD")
+
+    assert list(lua.globals().mensajes.values()) == []
+
+
+def test_no_avisa_de_un_personaje_que_nunca_ha_vendido():
+    """Sin subastas guardadas no hay nada que refrescar: seria puro ruido."""
+    lua = runtime(subastas=[])
+    lua.execute("mensajes = {}")
+    lua.globals().DISPARAR("PLAYER_ENTERING_WORLD")
+
+    assert list(lua.globals().mensajes.values()) == []
+
+
+def test_al_salir_se_regenera_el_volcado():
+    """El payload es lo unico que lee el sincronizador, y puede quedarse atras.
+
+    Paso el 2026-09-01: la tabla del addon tenia 36 personajes de hoy y el
+    payload 30 de ayer, asi que el vigilante llevaba un dia entero leyendo datos
+    muertos de treinta personajes.
+    """
+    lua = runtime(subastas=[subasta()])
+    recoger(lua)
+
+    # Se ensucia el volcado a mano, como si se hubiera quedado atras.
+    lua.execute('WowAlertsExportDB.payload = "viejo"')
+    lua.globals().DISPARAR("PLAYER_LOGOUT")
+
+    assert lua.globals().WowAlertsExportDB.payload != "viejo"
+    assert "Sanguino-Pepe" in lua.globals().WowAlertsExportDB.payload
+
+
+def test_al_salir_sin_datos_no_pasa_nada():
+    lua = runtime(subastas=[])
+    lua.globals().DISPARAR("PLAYER_LOGOUT")
