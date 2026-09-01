@@ -113,9 +113,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# La tarea programada corre con pythonw.exe, que no tiene consola. En Windows,
+# un proceso de consola lanzado desde ahi se abre una ventana propia: con cuatro
+# llamadas a git por pasada, eso son cuatro parpadeos cada quince minutos
+# mientras juegas. Fuera de Windows la constante no existe y un 0 no cambia nada.
+SIN_VENTANA = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def git(*args: str) -> subprocess.CompletedProcess:
     """Ejecuta git capturando la salida, para que el log sea legible."""
-    return subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+    return subprocess.run(
+        ["git", *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        creationflags=SIN_VENTANA,
+    )
 
 
 def subir(ficheros: list[str], push: bool) -> int:

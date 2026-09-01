@@ -113,3 +113,29 @@ def test_el_nombre_de_maquina_vale_como_nombre_de_fichero():
     nombre = nombre_de_maquina()
     assert nombre
     assert re.fullmatch(r"[a-z0-9_-]+", nombre), nombre
+
+
+# -- Sin ventanas de consola en Windows -------------------------------------
+
+
+def test_git_se_lanza_sin_abrir_ventana(monkeypatch):
+    """La tarea corre con pythonw, que no tiene consola.
+
+    Un proceso de consola lanzado desde ahi se abre la suya, y con cuatro
+    llamadas a git por pasada eso son cuatro parpadeos cada quince minutos.
+    """
+    import subprocess as sp
+
+    from sync_subastas import git
+
+    visto = {}
+
+    def falso(*args, **kwargs):
+        visto.update(kwargs)
+        return sp.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(sp, "run", falso)
+    git("status")
+
+    esperado = getattr(sp, "CREATE_NO_WINDOW", 0)
+    assert visto.get("creationflags") == esperado

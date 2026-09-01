@@ -344,6 +344,12 @@ Crea una tarea de Windows que cada 15 minutos mira si el volcado ha cambiado y,
 si si, lo sube a GitHub. A partir de ahi el vigilante funciona **aunque apagues
 el PC**.
 
+**No te va a saltar ninguna ventana.** La tarea corre con `pythonw.exe`, que no
+tiene consola, y las llamadas a `git` van con `CREATE_NO_WINDOW`. Sin eso se
+abrian cuatro consolas de un parpadeo cada quince minutos, en mitad de la
+partida: un proceso de consola lanzado desde un padre sin consola se abre la
+suya.
+
 Para forzarlo a mano:
 
 ```bash
