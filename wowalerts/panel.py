@@ -48,6 +48,7 @@ def build_panel(
     mis_subastas: Sequence[MyAuction],
     undercuts: Sequence[Undercut],
     actualizado: datetime | None = None,
+    caducados: Sequence[str] = (),
 ) -> dict[str, Any]:
     """El mensaje del panel, listo para enviar o para reescribir el existente."""
     if not mis_subastas:
@@ -103,6 +104,20 @@ def build_panel(
 
     if omitidos:
         descripcion += f"\n\n_y {omitidos} personaje(s) mas sin novedad_"
+
+    if caducados:
+        # Ninguna subasta que el addon conoce de estos personajes sigue viva, o
+        # sea que sus datos son de antes de que las repostearas. Contra ids
+        # muertos no se detecta nada: ni undercuts ni ventas, y en silencio.
+        quienes = ", ".join(sorted(caducados)[:12])
+        if len(caducados) > 12:
+            quienes += f" y {len(caducados) - 12} mas"
+        descripcion += (
+            f"\n\n⚠️ **Datos caducados en {len(caducados)} personaje(s)**: "
+            f"{quienes}.\nNinguna de sus subastas conocidas sigue viva, asi que "
+            "no puedo vigilarlos. Entra con ellos, abre la Casa de Subastas y "
+            "haz `/reload`."
+        )
 
     embed: dict[str, Any] = {
         "title": "📊 Tus subastas",

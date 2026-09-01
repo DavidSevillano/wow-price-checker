@@ -254,7 +254,9 @@ def agrupar_por_reino(mis_subastas, realm_ids_por_reino) -> dict[int, list]:
     return grupos
 
 
-def actualizar_panel(notifier, state_dir: Path, mis_subastas, undercuts, snapshot_at):
+def actualizar_panel(
+    notifier, state_dir: Path, mis_subastas, undercuts, snapshot_at, caducados=()
+):
     """Reescribe el mensaje fijado con el estado de todas tus subastas.
 
     El id del mensaje se guarda entre pasadas: sin el habria que publicar uno
@@ -264,7 +266,7 @@ def actualizar_panel(notifier, state_dir: Path, mis_subastas, undercuts, snapsho
     anterior = memoria.get("message_id")
 
     nuevo = notifier.upsert_panel(
-        build_panel(mis_subastas, undercuts, snapshot_at), anterior
+        build_panel(mis_subastas, undercuts, snapshot_at, caducados), anterior
     )
     if nuevo and nuevo != anterior:
         memoria.set("message_id", nuevo)
@@ -347,6 +349,11 @@ def run_mis_subastas(
     todos: list = []
     ventas: list = []
     snapshot_at = None
+    # Cuantas subastas conoce el addon de cada personaje y cuantas siguen vivas.
+    # Un personaje con todas muertas es uno cuyos datos son de antes de que las
+    # repostearas: contra ids muertos no se detecta nada, y en silencio.
+    conocidas: dict[str, int] = {}
+    vivas_por_pj: dict[str, int] = {}
     for realm_id, mias in grupos.items():
         try:
             snapshot = client.auctions(realm_id)
@@ -359,6 +366,12 @@ def run_mis_subastas(
 
         if snapshot.taken_at and (snapshot_at is None or snapshot.taken_at > snapshot_at):
             snapshot_at = snapshot.taken_at
+
+        vivos = {a.get("id") for a in snapshot.auctions}
+        for mia in mias:
+            conocidas[mia.character] = conocidas.get(mia.character, 0) + 1
+            if mia.auction_id in vivos:
+                vivas_por_pj[mia.character] = vivas_por_pj.get(mia.character, 0) + 1
 
         # Se calculan siempre que se pida cualquiera de las dos vigilancias:
         # las ventas los necesitan para no confundir un reposteo tuyo con una
@@ -396,13 +409,28 @@ def run_mis_subastas(
             edad,
         )
 
+    caducados = [pj for pj, n in conocidas.items() if n and not vivas_por_pj.get(pj)]
+    if caducados:
+        log.warning(
+            "⚠️  %s personaje(s) sin datos frescos (ninguna de sus subastas "
+            "conocidas sigue viva): %s. Entra con ellos, abre la Casa de "
+            "Subastas y haz /reload.",
+            len(caducados),
+            ", ".join(sorted(caducados)[:12]),
+        )
+
     if hacer_undercut:
         # El panel se reescribe siempre, tambien cuando no hay novedades: su
         # gracia es decir como estas, y "todo primero" es una respuesta tan util
         # como una lista de cosas que atender.
         if notifier_undercut and not dry_run:
             actualizar_panel(
-                notifier_undercut, state_dir, mis_subastas, todos, snapshot_at
+                notifier_undercut,
+                state_dir,
+                mis_subastas,
+                todos,
+                snapshot_at,
+                caducados,
             )
 
         frescos = todos if ignore_state else notified.filter_new(todos)

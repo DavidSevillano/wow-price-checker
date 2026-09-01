@@ -122,3 +122,20 @@ def test_lo_que_se_recorta_es_siempre_lo_que_no_tiene_trabajo():
 
 def test_una_sola_subasta_va_en_singular():
     assert "1 vigilada," in texto(build_panel([mia()], []))
+
+
+# -- Personajes con datos caducados -----------------------------------------
+
+
+def test_el_panel_avisa_de_los_personajes_con_datos_muertos():
+    """Si ninguna subasta suya sigue viva, el addon lleva sin visitarlos."""
+    panel = build_panel([mia()], [], caducados=["Dbarfel", "Adanlin"])
+    texto = panel["embeds"][0]["description"]
+    assert "Dbarfel" in texto
+    assert "Adanlin" in texto
+    assert "/reload" in texto
+
+
+def test_sin_caducados_el_panel_no_dice_nada():
+    panel = build_panel([mia()], [], caducados=[])
+    assert "reload" not in panel["embeds"][0]["description"]

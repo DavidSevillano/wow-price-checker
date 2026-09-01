@@ -555,6 +555,20 @@ Todo lo que se tapa queda escrito en el log de la pasada:
     la cuento como venta.
 ```
 
+**Ojo con los personajes que llevas tiempo sin visitar.** El vigilante compara
+contra los ids de subasta que le dio el addon. Si esos ids ya no existen porque
+las reposteaste, no hay nada que comparar y **ese personaje deja de vigilarse en
+silencio**. Por eso el panel avisa:
+
+```
+⚠️ Datos caducados en 10 personaje(s): Adanlin, Adannor, Bbarmar...
+Ninguna de sus subastas conocidas sigue viva, asi que no puedo vigilarlos.
+Entra con ellos, abre la Casa de Subastas y haz /reload.
+```
+
+Pasa sobre todo por cuenta: si juegas una tarde entera en WoW 2, los personajes
+de WoW 3 se quedan con los datos del ultimo dia que entraste.
+
 **Ojo con varias cuentas de WoW.** `/reload` recarga **solo la sesion en la que
 lo haces**. Si tienes WoW 1, WoW 2 y WoW 3, recargar en una deja a las otras
 corriendo el addon viejo, que no apunta nada: sus reposteos siguen saliendo como

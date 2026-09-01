@@ -7,7 +7,7 @@
 
 local FORMAT_VERSION = 1
 -- Version del addon, para saber que codigo se esta ejecutando de verdad.
-local ADDON_VERSION = "1.9"
+local ADDON_VERSION = "1.10"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 
@@ -160,6 +160,15 @@ local function casaAbierta()
     return AuctionHouseFrame ~= nil and AuctionHouseFrame:IsShown()
 end
 
+-- Cuando se abrio la casa de subastas, para saber si ha dado tiempo a que
+-- llegue la respuesta del servidor.
+local abiertaDesde = nil
+
+-- Segundos que hay que esperar antes de creerse un cero. La casa de subastas
+-- entrega tus subastas de forma asincrona: el primer OWNED_AUCTIONS_UPDATED
+-- tras abrirla llega vacio, y guardarlo borraba las subastas del personaje.
+local SEGUNDOS_PARA_FIARSE_DE_UN_CERO = 5
+
 -- Pedirle al servidor tus subastas. Con la casa de subastas cerrada esto no
 -- vale para nada y puede protestar, asi que se envuelve en pcall.
 local function pedirSubastas()
@@ -263,13 +272,17 @@ local function guardar()
     local recogidas = recogerSubastas()
     local previo = datos[clave]
 
-    -- Leer cero con la casa de subastas cerrada no significa que las hayas
-    -- cancelado: significa que ahora mismo no se pueden leer. Con la casa
-    -- abierta, en cambio, un cero es un cero de verdad y hay que guardarlo: si
-    -- no, un personaje al que se le acaban todas las subastas se queda con el
-    -- recuento viejo para siempre.
-    if #recogidas == 0 and not casaAbierta() and previo and #(previo.auctions or {}) > 0 then
-        return nil
+    -- Leer cero no significa que las hayas cancelado: puede significar que
+    -- ahora mismo no se pueden leer. Con la casa cerrada nunca es fiable, y
+    -- recien abierta tampoco, porque la respuesta del servidor tarda un
+    -- momento y el primer evento llega vacio. Pasados unos segundos con la casa
+    -- abierta, un cero si es un cero: hay que guardarlo, o un personaje al que
+    -- se le acaban las subastas se quedaria con el recuento viejo para siempre.
+    if #recogidas == 0 and previo and #(previo.auctions or {}) > 0 then
+        local segundos = abiertaDesde and (GetTime() - abiertaDesde) or 0
+        if not casaAbierta() or segundos < SEGUNDOS_PARA_FIARSE_DE_UN_CERO then
+            return nil
+        end
     end
 
     datos[clave] = {
@@ -359,10 +372,12 @@ frame:SetScript("OnEvent", function(_, event, arg1)
             huellaEnDisco = WowAlertsExportDB.huella
         end
     elseif event == "AUCTION_HOUSE_SHOW" then
+        abiertaDesde = GetTime()
         pedirSubastas()
         empezarRepaso()
         resumirPronto()
     elseif event == "AUCTION_HOUSE_CLOSED" then
+        abiertaDesde = nil
         pararRepaso()
         -- Al cerrar ya esta todo entregado y guardado: se cuenta sin esperar, y
         -- es el momento en que el recordatorio de /reload sirve para algo.
