@@ -37,6 +37,11 @@ end
 
 function print(texto) mensajes[#mensajes + 1] = texto end
 function time() return AHORA end
+-- Reloj monotono del juego, en segundos. Arranca en 0 y los tests lo mueven
+-- con AVANZAR() cuando quieren simular que la casa lleva un rato abierta.
+RELOJ = 0
+function GetTime() return RELOJ end
+function AVANZAR(segundos) RELOJ = RELOJ + segundos end
 function UnitName() return PERSONAJE end
 function GetRealmName() return REINO end
 function GetDetailedItemLevelInfo() return ILVL end
@@ -245,8 +250,8 @@ def test_leer_cero_no_borra_lo_ya_recogido():
     assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
 
 
-def test_con_la_casa_abierta_un_cero_si_se_guarda():
-    """Se le acaban todas las subastas a un personaje. Con la casa abierta el
+def test_con_la_casa_abierta_un_rato_un_cero_si_se_guarda():
+    """Se le acaban todas las subastas a un personaje. Pasados unos segundos el
     cero es de verdad, y si no se guarda el recuento viejo se queda para
     siempre."""
     lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
@@ -254,9 +259,30 @@ def test_con_la_casa_abierta_un_cero_si_se_guarda():
     assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
 
     lua.globals().SUBASTAS = lua.table_from([])
+    lua.globals().AVANZAR(10)
     lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
 
     assert volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"] == []
+
+
+def test_el_cero_de_recien_abierta_no_borra_las_subastas():
+    """La casa entrega tus subastas de forma asincrona.
+
+    El primer OWNED_AUCTIONS_UPDATED tras abrirla llega vacio, y guardarlo
+    dejaba al personaje con cero subastas hasta la visita siguiente. Es lo que
+    dejo a Mbargor sin nada que vigilar.
+    """
+    lua = runtime(subastas=[subasta(), subasta(auction_id=2)])
+    recoger(lua)
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
+
+    # Se cierra y se vuelve a abrir: llega el evento vacio del principio.
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    lua.globals().SUBASTAS = lua.table_from([])
+    lua.globals().DISPARAR("AUCTION_HOUSE_SHOW")
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
 
 
 def test_el_comando_funciona_sin_haber_visto_abrir_la_casa():
