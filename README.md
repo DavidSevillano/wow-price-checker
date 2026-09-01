@@ -567,6 +567,18 @@ Todo lo que se tapa queda escrito en el log de la pasada:
     la cuento como venta.
 ```
 
+**Cuidado al tocar el codificador JSON del addon.** WoW formatea `%d` como
+entero de **32 bits**, cuyo tope son 2.147.483.647. Una subasta de 249.999 de
+oro son 2.499.990.000 de cobre, y con `%d` eso lanzaba `integer overflow`, que
+tumbaba el codificador entero: el volcado se quedaba con los datos del dia
+anterior **para todos los personajes de esa cuenta**, sin decir nada. Costo un
+dia de vigilancia de treinta personajes y una venta de 142.507 g.
+
+Se usa `%.0f`, que imprime el entero completo sin desbordar. Y ojo: **los tests
+no pueden reproducirlo**, porque `lupa` es Lua 5.5 con enteros de 64 bits y ahi
+`%d` traga cualquier cosa. Por eso hay un test que mira el codigo fuente y
+comprueba que no aparece `string.format("%d"`.
+
 **El addon guarda dos cosas y solo se lee una.** Tiene su tabla de personajes y
 una copia en JSON; el sincronizador solo lee la copia. El 2026-09-01 esa copia
 se quedo con los datos del dia anterior mientras la tabla iba al dia, y treinta

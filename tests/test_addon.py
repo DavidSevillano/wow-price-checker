@@ -493,3 +493,30 @@ def test_al_salir_se_regenera_el_volcado():
 def test_al_salir_sin_datos_no_pasa_nada():
     lua = runtime(subastas=[])
     lua.globals().DISPARAR("PLAYER_LOGOUT")
+
+
+# -- Precios grandes ---------------------------------------------------------
+
+
+def test_un_precio_de_mas_de_dos_mil_millones_se_exporta_entero():
+    """WoW usa enteros de 32 bits: 249.999 de oro son 2.499.990.000 de cobre.
+
+    Con "%d" eso reventaba el codificador entero --"integer overflow"-- y el
+    volcado se quedaba con los datos del dia anterior, en silencio y para TODOS
+    los personajes de esa cuenta. Costo un dia de vigilancia y una venta.
+    """
+    lua = runtime(subastas=[subasta(buyout=2_499_990_000)])
+    recoger(lua)
+
+    subastas = volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]
+    assert subastas[0]["buyout"] == 2_499_990_000
+
+
+def test_el_codificador_no_usa_el_formato_de_32_bits():
+    """El arnes no puede reproducir el desbordamiento: lupa es Lua 5.5, con
+    enteros de 64 bits, y ahi "%d" traga cualquier cosa. WoW es Lua 5.1 y no.
+
+    Asi que se comprueba sobre el codigo: los numeros no se formatean con "%d".
+    """
+    fuente = ADDON.read_text(encoding="utf-8")
+    assert 'string.format("%d"' not in fuente

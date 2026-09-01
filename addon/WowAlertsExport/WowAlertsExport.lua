@@ -7,7 +7,7 @@
 
 local FORMAT_VERSION = 1
 -- Version del addon, para saber que codigo se esta ejecutando de verdad.
-local ADDON_VERSION = "1.11"
+local ADDON_VERSION = "1.12"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 
@@ -63,7 +63,15 @@ end
 encode = function(value)
     local kind = type(value)
     if kind == "number" then
-        return string.format("%d", value)
+        -- Con "%d" y no con "%.0f" esto reventaba: WoW formatea %d como entero
+        -- de 32 bits, cuyo tope son 2.147.483.647, y una subasta de 249.999 de
+        -- oro son 2.499.990.000 de cobre. El error tumbaba el codificador
+        -- entero, asi que el volcado se quedaba con los datos del dia anterior
+        -- para TODOS los personajes de esa cuenta, y sin decir nada.
+        --
+        -- Ojo si tocas esto: los tests corren sobre lupa, que es Lua 5.5 con
+        -- enteros de 64 bits, y ahi "%d" traga cualquier cosa sin quejarse.
+        return string.format("%.0f", value)
     elseif kind == "string" then
         return escapeString(value)
     elseif kind == "boolean" then
