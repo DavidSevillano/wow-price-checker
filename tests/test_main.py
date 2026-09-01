@@ -528,3 +528,54 @@ def test_uno_nuevo_vuelve_a_avisar():
 
 def test_que_se_arregle_uno_no_dispara_aviso():
     assert caducados_por_avisar(["Ana"], ["Ana", "Luis"]) == []
+
+
+# -- La pasada de mis subastas, de punta a punta -----------------------------
+
+
+def test_la_pasada_de_mis_subastas_arranca(entorno, tmp_path, monkeypatch):
+    """Ningun test llamaba a run_mis_subastas, y se subio con la firma rota.
+
+    Los 416 tests pasaban mientras produccion moria con un TypeError en la
+    primera linea: la funcion no la cubria nadie. Esto la ejecuta de verdad.
+    """
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions", json={"auctions": []}
+    )
+    (tmp_path / "subastas").mkdir()
+    (tmp_path / "roster").mkdir()
+
+    assert (
+        ejecutar(
+            entorno,
+            "--undercut",
+            "--ventas",
+            "--mis-subastas",
+            str(tmp_path / "subastas"),
+            "--personajes",
+            str(tmp_path / "roster"),
+        )
+        == cli.EXIT_OK
+    )
+
+
+def test_la_firma_de_run_mis_subastas_acepta_la_llamada_de_run():
+    """Guarda contra volver a mover un argumento al otro lado del asterisco."""
+    import inspect
+
+    firma = inspect.signature(cli.run_mis_subastas)
+    posicionales = [
+        n
+        for n, p in firma.parameters.items()
+        if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    ]
+    assert posicionales == [
+        "client",
+        "config",
+        "rules_by_item_id",
+        "notifier_undercut",
+        "notifier_ventas",
+        "state_dir",
+        "mis_subastas_path",
+        "roster_path",
+    ]
