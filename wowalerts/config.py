@@ -96,6 +96,9 @@ class Config:
     items: tuple[ItemRule, ...]
     bonus_ilvl_map: Mapping[int, int]
     settings: Settings
+    # Orden en el que quieres leer los avisos, por nombre de personaje. Los que
+    # no esten aqui salen detras. Vacio = orden por cuenta y reino.
+    orden_personajes: tuple[str, ...] = ()
 
     @property
     def locale(self) -> str:
@@ -124,7 +127,26 @@ def load_config(path: str | Path) -> Config:
         items=_parse_items(raw.get("items")),
         bonus_ilvl_map=_parse_bonus_map(raw.get("bonus_ilvl_map") or {}),
         settings=_parse_settings(raw.get("settings") or {}),
+        orden_personajes=_parse_orden(raw.get("orden_personajes")),
     )
+
+
+def _parse_orden(value: Any) -> tuple[str, ...]:
+    """La lista de nombres de 'orden_personajes'."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ConfigError(
+            "'orden_personajes' debe ser una lista de nombres de personaje."
+        )
+    nombres = [str(v).strip() for v in value if str(v).strip()]
+    repetidos = {n for n in nombres if nombres.count(n) > 1}
+    if repetidos:
+        raise ConfigError(
+            "'orden_personajes' tiene nombres repetidos: "
+            + ", ".join(sorted(repetidos))
+        )
+    return tuple(nombres)
 
 
 def _parse_region(value: Any) -> str:

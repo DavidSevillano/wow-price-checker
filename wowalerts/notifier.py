@@ -196,6 +196,20 @@ def build_messages(
     return messages
 
 
+def _en_orden(grupos: dict, orden: Mapping[tuple[str, str], int] | None) -> list:
+    """Los grupos en el orden en que quieres leerlos.
+
+    Sin esto salen en el orden en que tocara descargar los reinos, que cambia de
+    una pasada a otra: no puedes acostumbrarte a mirar siempre al mismo sitio.
+    """
+    if not orden:
+        return list(grupos.items())
+    return sorted(
+        grupos.items(),
+        key=lambda par: orden.get((par[0][0], par[0][1]), len(orden)),
+    )
+
+
 def _undercut_line(undercut: Undercut) -> str:
     """Una linea del aviso: que objeto y a que precio hay que batir."""
     nombre = undercut.mine.item_name
@@ -238,6 +252,7 @@ def build_undercut_messages(
     undercuts: Sequence[Undercut],
     ya_avisados: Sequence[Undercut] = (),
     panel_url: str | None = None,
+    orden: Mapping[tuple[str, str], int] | None = None,
 ) -> list[dict[str, Any]]:
     """Un mensaje por personaje, con sus subastas adelantadas en una tarjeta.
 
@@ -267,7 +282,7 @@ def build_undercut_messages(
         por_personaje.setdefault(clave, []).append(undercut)
 
     messages: list[dict[str, Any]] = []
-    for (character, _realm, account), suyas in por_personaje.items():
+    for (character, _realm, account), suyas in _en_orden(por_personaje, orden):
         # El reino no hace falta: lo que necesitas para ir a cambiarlo es a que
         # cuenta entrar y con que personaje.
         quien = f"⚔️ {character}"
@@ -302,13 +317,15 @@ def build_undercut_messages(
         # avisaron aparece con una sola y parece que las otras se arreglaron.
         # Van en su propio bloque y agrupadas por personaje: una lista corrida
         # repitiendo el mismo nombre no se lee.
-        messages.append(_resumen_ya_avisadas(ya_avisados, panel_url))
+        messages.append(_resumen_ya_avisadas(ya_avisados, panel_url, orden))
 
     return messages
 
 
 def _resumen_ya_avisadas(
-    ya_avisados: Sequence[Undercut], panel_url: str | None = None
+    ya_avisados: Sequence[Undercut],
+    panel_url: str | None = None,
+    orden: Mapping[tuple[str, str], int] | None = None,
 ) -> dict[str, Any]:
     """Un bloque con las que siguen adelantadas y ya se avisaron.
 
@@ -316,13 +333,13 @@ def _resumen_ya_avisadas(
     buzon de uno. El ilvl va detras del objeto porque el mismo objeto puesto a
     dos ilvl salia dos veces identico y parecia un fallo.
     """
-    por_personaje: dict[tuple[str, object], list[Undercut]] = {}
+    por_personaje: dict[tuple[str, str, object], list[Undercut]] = {}
     for undercut in ya_avisados:
-        clave = (undercut.mine.character, undercut.mine.account)
+        clave = (undercut.mine.character, undercut.mine.realm, undercut.mine.account)
         por_personaje.setdefault(clave, []).append(undercut)
 
     lineas: list[str] = []
-    for (character, account), suyas in por_personaje.items():
+    for (character, _realm, account), suyas in _en_orden(por_personaje, orden):
         quien = character
         if account is not None:
             quien += f" · WoW {account}"
@@ -367,7 +384,9 @@ def _venta_line(venta: Venta) -> str:
     return f"• {nombre} — **{format_gold(venta.neto_gold)} g**"
 
 
-def build_venta_messages(ventas: Sequence[Venta]) -> list[dict[str, Any]]:
+def build_venta_messages(
+    ventas: Sequence[Venta], orden: Mapping[tuple[str, str], int] | None = None
+) -> list[dict[str, Any]]:
     """Un mensaje por personaje, con lo que se le ha vendido esta hora.
 
     Se agrupa por personaje por el mismo motivo que los undercuts: cada mensaje
@@ -389,7 +408,7 @@ def build_venta_messages(ventas: Sequence[Venta]) -> list[dict[str, Any]]:
         por_personaje.setdefault(clave, []).append(venta)
 
     messages: list[dict[str, Any]] = []
-    for (character, _realm, account), suyas in por_personaje.items():
+    for (character, _realm, account), suyas in _en_orden(por_personaje, orden):
         quien = f"💰 {character}"
         if account is not None:
             quien += f" · WoW {account}"
@@ -474,19 +493,24 @@ class DiscordNotifier:
         undercuts: Sequence[Undercut],
         ya_avisados: Sequence[Undercut] = (),
         panel_url: str | None = None,
+        orden: Mapping[tuple[str, str], int] | None = None,
     ) -> list[Undercut]:
         """Envia los undercuts y devuelve los que de verdad han salido.
 
         Como en `send_deals`, lo que no cabe no se marca como avisado y sale en
         la pasada siguiente.
         """
-        for message in build_undercut_messages(undercuts, ya_avisados, panel_url):
+        for message in build_undercut_messages(
+            undercuts, ya_avisados, panel_url, orden
+        ):
             self._post(message)
         return list(undercuts[:MAX_DEALS_PER_RUN])
 
-    def send_ventas(self, ventas: Sequence[Venta]) -> list[Venta]:
+    def send_ventas(
+        self, ventas: Sequence[Venta], orden: Mapping[tuple[str, str], int] | None = None
+    ) -> list[Venta]:
         """Envia las ventas y devuelve las que de verdad han salido."""
-        for message in build_venta_messages(ventas):
+        for message in build_venta_messages(ventas, orden):
             self._post(message)
         return list(ventas[:MAX_DEALS_PER_RUN])
 

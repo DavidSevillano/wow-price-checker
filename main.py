@@ -36,6 +36,7 @@ from wowalerts.notifier import (
 )
 from wowalerts.personajes import (
     leer_rosters,
+    orden_de_personajes,
     por_nombre_de_reino,
     quien_puede_comprar,
 )
@@ -309,6 +310,7 @@ def run_mis_subastas(
     state_dir: Path,
     mis_subastas_path: str,
     *,
+    roster_path: str,
     hacer_undercut: bool,
     hacer_ventas: bool,
     dry_run: bool,
@@ -359,6 +361,9 @@ def run_mis_subastas(
         state_dir / "undercuts.json", config.settings.state_retention_runs
     )
     seguimiento = SeguimientoVentas(state_dir / "ventas.json")
+    # Los avisos salen en el orden en que tienes los personajes, no en el que
+    # toque descargar los reinos: asi siempre miras al mismo sitio.
+    orden = orden_de_personajes(leer_rosters(roster_path), config.orden_personajes)
     # Lo que el addon ha visto que cancelaste: nada de eso es una venta.
     canceladas = leer_canceladas(mis_subastas_path) if hacer_ventas else set()
     if canceladas:
@@ -525,7 +530,7 @@ def run_mis_subastas(
                 log.info("🔕 En silencio: no envio estos avisos todavia.")
             elif not dry_run:
                 enviados = notifier_undercut.send_undercuts(
-                    frescos, ya_avisados, panel_url
+                    frescos, ya_avisados, panel_url, orden
                 )
                 log.info("📨 Enviados a Discord %s aviso(s).", len(enviados))
                 # Solo se marcan los que han salido de verdad, igual que con los
@@ -548,7 +553,7 @@ def run_mis_subastas(
             print_ventas(ventas)
 
             if not dry_run:
-                enviadas = notifier_ventas.send_ventas(ventas)
+                enviadas = notifier_ventas.send_ventas(ventas, orden)
                 log.info("📨 Enviadas a Discord %s venta(s).", len(enviadas))
 
     if dry_run:
@@ -661,6 +666,7 @@ def run(args: argparse.Namespace) -> int:
             notifier_ventas,
             state_dir,
             args.mis_subastas,
+            args.personajes,
             hacer_undercut=args.undercut,
             hacer_ventas=args.ventas,
             dry_run=args.dry_run,

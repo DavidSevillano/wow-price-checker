@@ -415,7 +415,30 @@ subastas de 100 g salian compitiendo contra listados de 10.000 g.
   uno, el otro parece competencia. Abre la CdS con cada personaje que venda y el
   problema desaparece.
 
-### 5.7 El panel: como estas ahora mismo
+### 5.7 En que orden llegan los avisos
+
+Los avisos van agrupados por personaje, y el orden lo pones tu en `config.yaml`:
+
+```yaml
+orden_personajes:
+  # --- WoW 3 · Grupo 1
+  - Adannor
+  - Dbarfel
+  ...
+```
+
+Es el orden en que los tienes en el selector, y **no se puede deducir de ningun
+fichero**: si lo reordenas arrastrando, ese orden vive en el servidor de
+Blizzard, no en tu disco.
+
+Los personajes que no aparezcan en la lista salen detras, por cuenta y reino.
+Para cambiar el orden basta con mover lineas; no hay que tocar codigo.
+
+Sin esta lista los grupos salian en el orden en que tocara descargar los reinos,
+que cambia de una pasada a otra: nunca podias acostumbrarte a mirar al mismo
+sitio.
+
+### 5.8 El panel: como estas ahora mismo
 
 Los avisos cuentan **lo que ha cambiado**; el panel cuenta **como estas**. Es un
 unico mensaje en el canal de undercuts que se reescribe cada hora con todas tus
@@ -436,7 +459,7 @@ del canal, tambien desde el movil.
 Si lo borras sin querer, no pasa nada: la pasada siguiente publica uno nuevo,
 pero tendras que volver a fijarlo.
 
-### 5.8 Con que personaje ir a por un chollo
+### 5.9 Con que personaje ir a por un chollo
 
 Los avisos de chollo llevan un campo **Ir con** que dice con que personaje
 tuyo, y de que cuenta, puedes comprarlo:

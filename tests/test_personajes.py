@@ -159,3 +159,34 @@ def test_un_personaje_en_las_dos_maquinas_se_cuenta_una_vez(tmp_path):
     escribir_personajes(tmp_path / "deck.json", [kazza])
 
     assert leer_rosters(tmp_path) == [kazza]
+
+
+# -- Orden de los avisos ----------------------------------------------------
+
+from wowalerts.personajes import orden_de_personajes
+
+
+def test_el_orden_sale_del_roster():
+    roster = [
+        Personaje(name="Ana", realm="Elune", realm_slug="elune", account=2),
+        Personaje(name="Luis", realm="Onyxia", realm_slug="onyxia", account=2),
+        Personaje(name="Eva", realm="Azshara", realm_slug="azshara", account=3),
+    ]
+    orden = orden_de_personajes(roster)
+    assert orden[("Ana", "Elune")] < orden[("Luis", "Onyxia")]
+    assert orden[("Luis", "Onyxia")] < orden[("Eva", "Azshara")]
+
+
+def test_las_cuentas_van_primero_aunque_el_fichero_las_mezcle():
+    """WoW 1 antes que WoW 2, sea cual sea el orden en que se leyeron."""
+    roster = [
+        Personaje(name="Eva", realm="Azshara", realm_slug="azshara", account=3),
+        Personaje(name="Ana", realm="Elune", realm_slug="elune", account=1),
+    ]
+    orden = orden_de_personajes(roster)
+    assert orden[("Ana", "Elune")] < orden[("Eva", "Azshara")]
+
+
+def test_un_personaje_que_no_esta_en_el_roster_va_al_final():
+    orden = orden_de_personajes([Personaje(name="Ana", realm="Elune", realm_slug="elune", account=1)])
+    assert orden.get(("Desconocido", "X")) is None

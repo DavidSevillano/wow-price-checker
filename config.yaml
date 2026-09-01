@@ -49,6 +49,44 @@ items:
     max_price_by_ilvl: { 295: 9000, 298: 12000, 305: 40000, 308: 60000, 311: 90000 }
 
 # ----------------------------------------------------------------------------
+#  ORDEN DE LOS AVISOS
+# ----------------------------------------------------------------------------
+#  En que orden quieres leer los avisos, por nombre de personaje. Es el orden
+#  en que los tienes en el selector, que no se puede deducir de ningun fichero:
+#  si lo reordenas arrastrando, ese orden vive en el servidor de Blizzard.
+#
+#  Los personajes que no aparezcan aqui salen detras, por cuenta y reino. Para
+#  cambiar el orden basta con mover lineas.
+# ----------------------------------------------------------------------------
+orden_personajes:
+  # --- WoW 3 · Grupo 1
+  - Adannor
+  - Dbarfel
+  - Adanlin
+  - Bbarral
+  # --- WoW 3 · Grupo 2
+  - Sbarkor
+  - Mbargor
+  - Bbarmar
+  - Bbarnor
+  # --- WoW 3 · Grupo 3
+  - Gbarbar
+  - Hbardan
+  - Obarfel
+  # --- WoW 2 · Grupo 1
+  - Mbarval
+  - Obarbar
+  - Dbardan
+  - Kbargor
+  # --- WoW 2 · Grupo 2
+  - Nbarbar
+  - Mbarlin
+  - Ebardan
+  - Adangor
+  # --- WoW 2 · Grupo 3
+  - Ebarmar
+
+# ----------------------------------------------------------------------------
 #  MAPA DE BONUS ID -> ILVL
 # ----------------------------------------------------------------------------
 #  Blizzard no dice el ilvl de una subasta directamente: lo codifica en una

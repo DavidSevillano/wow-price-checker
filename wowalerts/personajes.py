@@ -14,7 +14,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, Sequence
 
 from .misubastas import cuenta_de_ruta, slugify_realm
 
@@ -93,6 +93,34 @@ def escribir_personajes(path: str | Path, personajes: Sequence[Personaje]) -> bo
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(contenido, encoding="utf-8")
     return True
+
+
+def orden_de_personajes(
+    roster: Iterable[Personaje], preferido: Sequence[str] = ()
+) -> dict[tuple[str, str], int]:
+    """En que orden leer los avisos: (nombre, reino) -> posicion.
+
+    Manda `preferido`, que es la lista de config.yaml y refleja el orden en que
+    tienes los personajes en el selector. Eso no se puede deducir de ningun
+    fichero: si lo reordenas arrastrando, ese orden vive en el servidor.
+
+    Los que no esten en la lista van detras, por cuenta y luego como vengan del
+    roster (que va por reino). Sin esto los avisos salian en el orden en que
+    tocara descargar los reinos, que cambia de una pasada a otra.
+    """
+    posicion = {nombre: i for i, nombre in enumerate(preferido)}
+    resto = sorted(
+        (p for p in roster if p.name not in posicion),
+        key=lambda p: (p.account if p.account is not None else 99,),
+    )
+
+    orden: dict[tuple[str, str], int] = {}
+    for p in roster:
+        if p.name in posicion:
+            orden[(p.name, p.realm)] = posicion[p.name]
+    for i, p in enumerate(resto):
+        orden[(p.name, p.realm)] = len(posicion) + i
+    return orden
 
 
 def leer_rosters(origen: str | Path) -> list[Personaje]:
