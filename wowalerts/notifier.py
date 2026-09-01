@@ -32,6 +32,7 @@ COLOR_STEAL = 0x2ECC71       # verde: chollo serio
 COLOR_WARNING = 0xE74C3C     # rojo: aviso de salud del bot
 COLOR_UNDERCUT = 0xC0392B    # rojo oscuro: te han adelantado
 COLOR_VENTA = 0xD4AF37       # oro viejo: dinero que entra
+COLOR_REPETIDO = 0x7F8C8D    # gris: siguen adelantadas, ya avisadas
 # Limite duro de Discord para la descripcion de un embed.
 MAX_EMBED_DESCRIPTION = 4096
 # Tope propio de lineas por mensaje: mas de esto ya no se lee de un vistazo.
@@ -297,26 +298,52 @@ def build_undercut_messages(
     if ya_avisados and messages:
         # Sin esto, un personaje con tres adelantadas de las que dos ya se
         # avisaron aparece con una sola y parece que las otras se arreglaron.
-        # Y no basta con el recuento: sin decir cuales son no se puede actuar.
-        nombradas = ya_avisados[:MAX_YA_AVISADAS_NOMBRADAS]
-        lista = " · ".join(
-            f"{u.mine.character} — {u.mine.item_name}" for u in nombradas
-        )
-        faltan = len(ya_avisados) - len(nombradas)
-
-        cuantas = len(ya_avisados)
-        verbo = "sigue" if cuantas == 1 else "siguen"
-        cabecera = f"🔁 Y {cuantas} que ya te avise y {verbo} adelantada"
-        if cuantas != 1:
-            cabecera += "s"
-
-        messages[0]["content"] = f"{cabecera}: {lista}"
-        if faltan:
-            messages[0]["content"] += (
-                f" · y {faltan} mas. El panel fijado tiene la foto completa."
-            )
+        # Van en su propio bloque y agrupadas por personaje: una lista corrida
+        # repitiendo el mismo nombre no se lee.
+        messages.append(_resumen_ya_avisadas(ya_avisados))
 
     return messages
+
+
+def _resumen_ya_avisadas(ya_avisados: Sequence[Undercut]) -> dict[str, Any]:
+    """Un bloque con las que siguen adelantadas y ya se avisaron.
+
+    Agrupado por personaje, que es como se actua: cada linea es un viaje al
+    buzon de uno. El ilvl va detras del objeto porque el mismo objeto puesto a
+    dos ilvl salia dos veces identico y parecia un fallo.
+    """
+    por_personaje: dict[tuple[str, object], list[Undercut]] = {}
+    for undercut in ya_avisados:
+        clave = (undercut.mine.character, undercut.mine.account)
+        por_personaje.setdefault(clave, []).append(undercut)
+
+    lineas: list[str] = []
+    for (character, account), suyas in por_personaje.items():
+        quien = character
+        if account is not None:
+            quien += f" · WoW {account}"
+        objetos = ", ".join(
+            f"{u.mine.item_name} ({u.mine.ilvl})" if u.mine.ilvl else u.mine.item_name
+            for u in suyas
+        )
+        lineas.append(f"**{quien}** — {objetos}")
+
+    grupos = _repartir(lineas, MAX_EMBED_DESCRIPTION)
+    dentro = grupos[0] if grupos else []
+    fuera = len(lineas) - len(dentro)
+    if fuera:
+        dentro = dentro + [f"_y {fuera} personaje(s) mas: mira el panel fijado._"]
+
+    plural = "siguen" if len(ya_avisados) != 1 else "sigue"
+    return {
+        "embeds": [
+            {
+                "title": f"🔁 {len(ya_avisados)} que ya te avise y {plural} adelantadas",
+                "description": "\n".join(dentro),
+                "color": COLOR_REPETIDO,
+            }
+        ]
+    }
 
 
 def _venta_line(venta: Venta) -> str:

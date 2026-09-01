@@ -391,13 +391,17 @@ subastas de 100 g salian compitiendo contra listados de 10.000 g.
   **nombra** en la cabecera:
 
   ```
-  🔁 Y 1 que ya te avise y sigue adelantada: Ebardan — Zapatillas del culto siseante
+  🔁 7 que ya te avise y siguen adelantadas
+  Adangor · WoW 2 — Yelmo místico de explorador de templos (295)
+  Dbardan · WoW 2 — Grebas (305), Zapatillas (292), Zapatillas (295)
+  Mbarlin · WoW 2 — Grebas de las profundidades nocivas (295)
   ```
 
-  Se nombran hasta seis; a partir de ahi se dice cuantas faltan y se remite al
-  panel. Un recuento a secas no servia de nada: sin saber cual es, no puedes ir
-  a arreglarla. **La foto completa esta siempre en el panel fijado**, que se
-  reescribe cada hora con todas.
+  Van **agrupadas por personaje**, que es como se actua: cada linea es un viaje
+  al buzon de uno. Y con el **ilvl** detras del objeto, porque el mismo objeto
+  puesto a dos ilvl salia dos veces identico y parecia un fallo.
+
+  **La foto completa esta siempre en el panel fijado** (ver 5.8).
 - **Nada de avisos fantasma.** Si una subasta tuya ya no aparece en la casa de
   subastas (vendida, caducada o cancelada), se descarta sola.
 - **Tus otros personajes cuentan como rivales hasta que los visites.** Si
@@ -405,7 +409,22 @@ subastas de 100 g salian compitiendo contra listados de 10.000 g.
   uno, el otro parece competencia. Abre la CdS con cada personaje que venda y el
   problema desaparece.
 
-### 5.7 Con que personaje ir a por un chollo
+### 5.7 El panel: como estas ahora mismo
+
+Los avisos cuentan **lo que ha cambiado**; el panel cuenta **como estas**. Es un
+unico mensaje en el canal de undercuts que se reescribe cada hora con todas tus
+subastas vigiladas y todas las adelantadas, sin filtro de repetidas.
+
+**No lo vas a ver llegar.** Se crea una sola vez y a partir de ahi se edita en su
+sitio, asi que nunca sube al final del canal. Para encontrarlo: sube hasta el
+primer mensaje del canal de undercuts, busca el que se titula **📊 Tus
+subastas**, y **fijalo** (`Click derecho > Fijar mensaje`). Desde el movil, el
+icono del pin arriba del canal te lleva a el.
+
+Si lo borras sin querer, no pasa nada: la pasada siguiente publica uno nuevo,
+pero tendras que volver a fijarlo.
+
+### 5.8 Con que personaje ir a por un chollo
 
 Los avisos de chollo llevan un campo **Ir con** que dice con que personaje
 tuyo, y de que cuenta, puedes comprarlo:

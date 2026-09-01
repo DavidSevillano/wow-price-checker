@@ -217,12 +217,13 @@ def un_undercut(
     reino="Sanguino",
     cuenta=2,
     auction_id=1,
+    ilvl=311,
 ):
     mine = MyAuction(
         auction_id=auction_id,
         item_id=200000,
         item_name=objeto,
-        ilvl=311,
+        ilvl=ilvl,
         buyout_copper=oro_mio * 10_000,
         quantity=1,
         character=personaje,
@@ -336,35 +337,51 @@ def test_el_recuento_dice_que_son_solo_las_nuevas():
     assert "nueva" in contenido
 
 
-def test_se_avisa_de_las_que_ya_estaban_avisadas():
-    """Si no, ves "1 nueva" y crees que ese personaje solo tiene una."""
-    ya = [un_undercut(personaje="Ana", objeto="Grebas", auction_id=7)]
-    mensajes = build_undercut_messages([un_undercut()], ya_avisados=ya)
-    assert "1" in mensajes[0]["content"]
+def resumen(mensajes):
+    """El embed de las que siguen adelantadas, que va el ultimo."""
+    return mensajes[-1]["embeds"][0]
 
 
-def test_las_ya_avisadas_se_nombran():
-    """Un recuento a secas no sirve para nada: hay que decir cuales son."""
+def test_las_ya_avisadas_van_en_su_propio_bloque():
+    """Un recuento a secas no sirve: hay que decir cuales, y agrupadas."""
     ya = [un_undercut(personaje="Ana", objeto="Zapatillas", auction_id=7)]
-    contenido = build_undercut_messages([un_undercut()], ya_avisados=ya)[0]["content"]
-    assert "Ana" in contenido
-    assert "Zapatillas" in contenido
+    mensajes = build_undercut_messages([un_undercut()], ya_avisados=ya)
+    e = resumen(mensajes)
+    assert "1" in e["title"]
+    assert "Ana" in e["description"]
+    assert "Zapatillas" in e["description"]
 
 
-def test_una_lista_larga_de_ya_avisadas_se_recorta():
+def test_las_ya_avisadas_se_agrupan_por_personaje():
+    """Tres lineas repitiendo el mismo nombre no se leen."""
     ya = [
-        un_undercut(personaje=f"Pj{i}", objeto="Grebas", auction_id=100 + i)
-        for i in range(12)
+        un_undercut(personaje="Ana", objeto="Grebas", auction_id=7),
+        un_undercut(personaje="Ana", objeto="Zapatillas", auction_id=8),
+        un_undercut(personaje="Luis", objeto="Grebas", auction_id=9),
     ]
-    contenido = build_undercut_messages([un_undercut()], ya_avisados=ya)[0]["content"]
-    assert "panel" in contenido.lower()
-    assert "Pj0" in contenido
-    # No caben las doce: se nombran unas cuantas y se dice cuantas faltan.
-    assert "Pj11" not in contenido
+    desc = resumen(build_undercut_messages([un_undercut()], ya_avisados=ya))[
+        "description"
+    ]
+    assert desc.count("Ana") == 1
+    assert desc.count("Luis") == 1
+    assert "3" in resumen(build_undercut_messages([un_undercut()], ya_avisados=ya))["title"]
+
+
+def test_el_ilvl_distingue_dos_del_mismo_objeto():
+    """El mismo objeto a dos ilvl salia dos veces igual y parecia un error."""
+    ya = [
+        un_undercut(personaje="Ana", objeto="Zapatillas", auction_id=7, ilvl=292),
+        un_undercut(personaje="Ana", objeto="Zapatillas", auction_id=8, ilvl=295),
+    ]
+    desc = resumen(build_undercut_messages([un_undercut()], ya_avisados=ya))[
+        "description"
+    ]
+    assert "292" in desc and "295" in desc
 
 
 def test_sin_repetidos_no_se_anade_nada():
     mensajes = build_undercut_messages([un_undercut()], ya_avisados=[])
+    assert len(mensajes) == 1
     assert "content" not in mensajes[0]
 
 
