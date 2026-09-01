@@ -589,3 +589,14 @@ def test_el_enlace_del_panel_va_en_el_bloque_de_repetidas():
         [un_undercut()], ya_avisados=ya, panel_url="https://discord.com/channels/1/2/3"
     )
     assert "https://discord.com/channels/1/2/3" in mensajes[-1]["embeds"][0]["description"]
+
+
+def test_la_venta_lleva_tambien_el_precio_al_que_estaba():
+    """El neto no aparece en ninguna pantalla del juego.
+
+    Sin el precio de venta no se puede cotejar la linea contra tu lista de
+    subastas, que es como se distingue "se vendio" de "sigue ahi".
+    """
+    contenido = texto(build_venta_messages([una_venta(oro=34898)])[0])
+    assert "33.153" in contenido   # lo que llega al buzon
+    assert "34.898" in contenido   # lo que ves en la casa de subastas

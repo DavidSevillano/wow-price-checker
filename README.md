@@ -686,6 +686,15 @@ Van **en neto**: el precio al que estaba puesta menos la comision que se queda
 la casa de subastas, que es lo que de verdad te llega al buzon. El porcentaje se
 ajusta en `config.yaml` con `ah_cut_pct`.
 
-El aviso lleva el **ilvl** entre parentesis. Con el mismo objeto puesto a 292,
-295, 298 y 305 a la vez, sin eso no se sabe cual se ha ido, y al mirar la casa
-de subastas ves otro del mismo nombre y crees que no se ha vendido nada.
+El aviso lleva el **ilvl** entre parentesis y, detras, **el precio al que
+estaba puesta**:
+
+```
+• Zapatillas del culto siseante (295) — 33.153 g (estaba a 34.898)
+```
+
+Las dos cosas estan por lo mismo: con el mismo objeto puesto a 292, 295, 298 y
+305 a la vez, un aviso que solo diga el nombre y el neto no se puede cotejar
+contra nada. El neto no aparece en ninguna pantalla del juego, asi que sin el
+precio de venta miras tu lista, ves otro objeto del mismo nombre a otro precio
+y das por hecho que no se ha vendido nada.
