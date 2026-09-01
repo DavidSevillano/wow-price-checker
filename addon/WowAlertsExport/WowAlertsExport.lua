@@ -408,8 +408,10 @@ end
 --  Eventos
 -- ---------------------------------------------------------------------------
 
--- No hace falta engancharse a PLAYER_LOGOUT: lo recogido ya vive en
--- WowAlertsExportDB, y WoW escribe esa tabla a disco al salir por su cuenta.
+-- Durante mucho tiempo no hizo falta engancharse a PLAYER_LOGOUT: lo recogido
+-- ya vive en WowAlertsExportDB y WoW escribe esa tabla a disco por su cuenta.
+-- Ahora si, pero por otro motivo: no para guardar la tabla, sino para rehacer
+-- la copia en JSON que se lee desde fuera, que puede quedarse atras.
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
