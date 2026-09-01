@@ -13,6 +13,8 @@ from typing import Any, Mapping
 
 import yaml
 
+from .silencio import HoraInvalida, zona
+
 VALID_REGIONS = ("eu", "us", "kr", "tw")
 COPPER_PER_GOLD = 10_000
 
@@ -61,6 +63,21 @@ class Settings:
     # desactiva y la pasada se conforma con lo que haya.
     stale_retries: int = 2
     stale_retry_wait_seconds: int = 120
+    # ------------------------------------------------------------------------
+    #  Horas en las que no quieres que suene nada
+    # ------------------------------------------------------------------------
+    # Ventana en hora local (ver zona_horaria). La de inicio entra y la de fin
+    # no: con 1 y 9, a las 09:00 ya suena. Iguales = sin silencio.
+    #
+    # Solo se calla el envio: las pasadas siguen corriendo y el estado sigue
+    # actualizandose, porque el seguimiento de ventas necesita ver la subasta
+    # hora tras hora.
+    silencio_desde: int = 0
+    silencio_hasta: int = 0
+    # Zona en la que se interpretan esas horas. Las pasadas corren en Actions,
+    # cuyo reloj va en UTC, asi que sin esto la ventana se desplazaria sola con
+    # el cambio de hora.
+    zona_horaria: str = "Europe/Madrid"
     # ------------------------------------------------------------------------
     #  Ventas de tus propias subastas
     # ------------------------------------------------------------------------
@@ -252,6 +269,13 @@ def _parse_settings(value: Any) -> Settings:
                     "stale_retry_wait_seconds", defaults.stale_retry_wait_seconds
                 )
             ),
+            silencio_desde=int(
+                value.get("silencio_desde", defaults.silencio_desde)
+            ),
+            silencio_hasta=int(
+                value.get("silencio_hasta", defaults.silencio_hasta)
+            ),
+            zona_horaria=str(value.get("zona_horaria", defaults.zona_horaria)),
             ah_cut_pct=int(value.get("ah_cut_pct", defaults.ah_cut_pct)),
             listing_hours=int(value.get("listing_hours", defaults.listing_hours)),
         )
@@ -270,6 +294,19 @@ def _parse_settings(value: Any) -> Settings:
         raise ConfigError("'dump_minute' es un minuto del reloj: entre 0 y 59.")
     if settings.stale_retries < 0:
         raise ConfigError("'stale_retries' no puede ser negativo (0 lo desactiva).")
+    for campo in ("silencio_desde", "silencio_hasta"):
+        hora = getattr(settings, campo)
+        if not 0 <= hora <= 23:
+            raise ConfigError(
+                f"'{campo}' es una hora del reloj: entre 0 y 23 (vale {hora})."
+            )
+    try:
+        # Se comprueba al cargar y no al enviar: un nombre mal escrito debe
+        # fallar aqui, no a las tres de la manana y en silencio.
+        zona(settings.zona_horaria)
+    except HoraInvalida as exc:
+        raise ConfigError(f"'zona_horaria': {exc}") from exc
+
     if not 0 <= settings.ah_cut_pct < 100:
         raise ConfigError(
             "'ah_cut_pct' es el porcentaje que se queda la casa de subastas: "

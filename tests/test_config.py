@@ -192,3 +192,41 @@ def test_listing_hours_fuera_de_rango(tmp_path):
     )
     with pytest.raises(ConfigError, match="listing_hours"):
         load_config(write(tmp_path, text))
+
+
+# -- Ventana de silencio ----------------------------------------------------
+
+
+def test_sin_ventana_de_silencio_por_defecto(tmp_path):
+    settings = load_config(write(tmp_path, VALID)).settings
+    assert settings.silencio_desde == 0
+    assert settings.silencio_hasta == 0
+    assert settings.zona_horaria == "Europe/Madrid"
+
+
+def test_la_ventana_de_silencio_se_lee(tmp_path):
+    text = (
+        'region: eu\nitems:\n  - name: "X"\n    max_price_by_ilvl: { 311: 1 }\n'
+        "settings:\n  silencio_desde: 1\n  silencio_hasta: 9\n"
+    )
+    settings = load_config(write(tmp_path, text)).settings
+    assert (settings.silencio_desde, settings.silencio_hasta) == (1, 9)
+
+
+def test_una_hora_que_no_es_del_reloj_da_error(tmp_path):
+    text = (
+        'region: eu\nitems:\n  - name: "X"\n    max_price_by_ilvl: { 311: 1 }\n'
+        "settings:\n  silencio_desde: 24\n"
+    )
+    with pytest.raises(ConfigError, match="silencio_desde"):
+        load_config(write(tmp_path, text))
+
+
+def test_una_zona_horaria_inventada_se_detecta_al_arrancar(tmp_path):
+    """Mejor fallar al cargar el config que a las 3 de la manana."""
+    text = (
+        'region: eu\nitems:\n  - name: "X"\n    max_price_by_ilvl: { 311: 1 }\n'
+        'settings:\n  zona_horaria: "Europa/Madriz"\n'
+    )
+    with pytest.raises(ConfigError, match="zona_horaria"):
+        load_config(write(tmp_path, text))

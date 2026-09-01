@@ -41,6 +41,7 @@ from wowalerts.personajes import (
 )
 from wowalerts.realms import RealmResolutionError, resolve_connected_realms
 from wowalerts.scanner import scan_realms
+from wowalerts.silencio import en_silencio
 from wowalerts.snapshot import dump_is_stale, expected_dump_at
 from wowalerts.state import (
     JsonMapCache,
@@ -303,6 +304,7 @@ def run_mis_subastas(
     hacer_ventas: bool,
     dry_run: bool,
     ignore_state: bool,
+    callado: bool = False,
 ) -> int:
     """Una pasada de vigilancia sobre tus propias subastas.
 
@@ -411,6 +413,7 @@ def run_mis_subastas(
                 config.settings.ah_cut_pct,
                 {u.mine.auction_id for u in del_reino_undercuts},
                 canceladas,
+                not callado,
             )
             ventas.extend(del_reino)
             seguimiento.actualizar_reino(realm_id, seguidas, ultimo)
@@ -483,7 +486,11 @@ def run_mis_subastas(
                     cuenta,
                 )
 
-            if not dry_run:
+            if callado:
+                # Sin marcarlos como avisados: al acabar el silencio se envia
+                # lo que siga adelantado, que es lo unico accionable.
+                log.info("🔕 En silencio: no envio estos avisos todavia.")
+            elif not dry_run:
                 enviados = notifier_undercut.send_undercuts(
                     frescos, ya_avisados, panel_url
                 )
@@ -581,6 +588,25 @@ def run(args: argparse.Namespace) -> int:
         timeout=config.settings.request_timeout,
     )
 
+    # El silencio se calcula una vez por pasada: se calla el ENVIO, no la
+    # deteccion. Las pasadas siguen corriendo y el estado sigue actualizandose,
+    # que es lo que necesita el seguimiento de ventas para no perder el hilo.
+    ajustes = config.settings
+    callado = en_silencio(
+        datetime.now(timezone.utc),
+        ajustes.silencio_desde,
+        ajustes.silencio_hasta,
+        ajustes.zona_horaria,
+    )
+    if callado:
+        log.info(
+            "🔕 Silencio de %02d:00 a %02d:00 (%s): sigo vigilando, pero no "
+            "envio nada hasta que acabe.",
+            ajustes.silencio_desde,
+            ajustes.silencio_hasta,
+            ajustes.zona_horaria,
+        )
+
     state_dir = Path(args.state_dir)
     item_cache = ItemIdCache(state_dir / "item_ids.json")
     icon_cache = ItemIconCache(state_dir / "item_icons.json")
@@ -606,6 +632,7 @@ def run(args: argparse.Namespace) -> int:
             hacer_ventas=args.ventas,
             dry_run=args.dry_run,
             ignore_state=args.ignore_state,
+            callado=callado,
         )
 
     if args.realms:
@@ -630,6 +657,7 @@ def run(args: argparse.Namespace) -> int:
             args.personajes,
             dry_run=args.dry_run,
             ignore_state=args.ignore_state,
+            callado=callado,
         )
 
         ahora = datetime.now(timezone.utc)
@@ -685,6 +713,7 @@ def scan_once(
     *,
     dry_run: bool,
     ignore_state: bool,
+    callado: bool = False,
 ):
     """Una lectura completa de la region, con sus avisos ya enviados.
 
@@ -734,7 +763,11 @@ def scan_once(
         log.info("🎉 %s chollo(s) nuevos:", len(fresh))
         print_deals(fresh, realm_names, compradores)
 
-        if dry_run:
+        if callado:
+            # No se marcan como avisados, asi que al acabar el silencio se
+            # envian los que sigan por debajo de tu precio.
+            log.info("🔕 En silencio: no envio estos chollos todavia.")
+        elif dry_run:
             log.info("🧪 --dry-run: no envio nada a Discord ni guardo el estado.")
         else:
             icon_urls = resolve_icons(client, icon_cache, fresh)

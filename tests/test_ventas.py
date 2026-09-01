@@ -591,3 +591,36 @@ def test_el_ilvl_sobrevive_al_disco(tmp_path):
     memoria.actualizar_reino(1, {1: vigilada(ilvl=298)}, UltimoVolcado(T0, 900))
     memoria.save()
     assert SeguimientoVentas(path).del_reino(1)[1].ilvl == 298
+
+
+def test_en_silencio_no_se_decide_nada_todavia():
+    """La subasta queda pendiente hasta que acabe la ventana.
+
+    Asi la venta se anuncia al despertar, y con la hora en la que desaparecio
+    de verdad, no con la de la pasada que la decide.
+    """
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+    _, pendientes, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
+    )
+    ventas, siguen, _ = revisar_reino(
+        pendientes, [], [], 1, DOS_HORAS, None, 12, 5, decidir=False
+    )
+    assert ventas == []
+    # Sigue pendiente, con su hora original intacta.
+    assert siguen[1].desaparecida_at == UNA_HORA_DESPUES
+
+
+def test_al_acabar_el_silencio_se_decide_con_la_hora_buena():
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+    _, pendientes, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
+    )
+    _, siguen, _ = revisar_reino(
+        pendientes, [], [], 1, DOS_HORAS, None, 12, 5, decidir=False
+    )
+    ventas, _, _ = revisar_reino(
+        siguen, [], [], 1, T0 + timedelta(hours=8), None, 12, 5
+    )
+    assert len(ventas) == 1
+    assert ventas[0].detectada_at == UNA_HORA_DESPUES

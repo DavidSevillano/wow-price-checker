@@ -166,6 +166,31 @@ settings:
   stale_retry_wait_seconds: 120
 
   # --------------------------------------------------------------------------
+  #  Horas en las que no quieres que suene nada
+  # --------------------------------------------------------------------------
+  #  Ventana en TU hora local (la zona de abajo). La de inicio entra y la de fin
+  #  no: con 1 y 9, a las 09:00 ya suena. Poniendolas iguales no se silencia
+  #  nada.
+  #
+  #  Solo se calla el ENVIO. Las pasadas siguen corriendo cada hora y el estado
+  #  sigue actualizandose, porque el seguimiento de ventas necesita ver tus
+  #  subastas hora tras hora: saltarse ocho pasadas seguidas degradaria las
+  #  fechas de caducidad y se tragaria ventas de verdad.
+  #
+  #  Lo que se calla no se pierde:
+  #    - Chollos y undercuts no se marcan como avisados, asi que al terminar la
+  #      ventana se envia lo que siga vivo, que es lo unico accionable.
+  #    - Las ventas se quedan pendientes y se deciden al despertar, con la hora
+  #      en la que la subasta desaparecio de verdad, no con la de esa pasada.
+  silencio_desde: 1
+  silencio_hasta: 9
+
+  # Zona en la que se leen esas horas. Las pasadas corren en GitHub Actions, con
+  # el reloj en UTC, asi que sin esto la ventana se desplazaria sola en cada
+  # cambio de hora.
+  zona_horaria: "Europe/Madrid"
+
+  # --------------------------------------------------------------------------
   #  Ventas de tus propias subastas
   # --------------------------------------------------------------------------
   # Comision que se queda la casa de subastas al vender algo. Es lo que separa

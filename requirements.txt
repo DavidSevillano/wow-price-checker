@@ -1,3 +1,6 @@
 requests>=2.31
 PyYAML>=6.0
 python-dotenv>=1.0
+# La base de zonas horarias no viene con Python en Windows, y sin ella la
+# ventana de silencio se calcularia en UTC alli y en local en Actions.
+tzdata>=2024.1

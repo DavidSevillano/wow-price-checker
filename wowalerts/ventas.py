@@ -148,6 +148,7 @@ def revisar_reino(
     ah_cut_pct: int = 5,
     adelantadas: AbstractSet[int] = frozenset(),
     canceladas: AbstractSet[int] = frozenset(),
+    decidir: bool = True,
 ) -> tuple[list[Venta], dict[int, SubastaVigilada], UltimoVolcado]:
     """Las ventas de este reino, el seguimiento actualizado y su foto nueva.
 
@@ -159,6 +160,10 @@ def revisar_reino(
     `adelantadas` son las subastas tuyas que alguien esta adelantando ahora
     mismo, y `canceladas` las que el addon ha visto que retiraste tu: ni unas ni
     otras son ventas.
+
+    Con `decidir` a False (la ventana de silencio) se sigue el rastro igual,
+    pero no se cierra ningun caso: lo que falte se queda pendiente y se resuelve
+    al despertar, con la hora en la que desaparecio de verdad.
     """
     mias_por_id = {m.auction_id: m for m in mis_subastas}
 
@@ -233,6 +238,16 @@ def revisar_reino(
                 "La doy por reposteada, no por vendida.",
                 vigilada.character,
                 vigilada.item_name,
+            )
+            continue
+
+        if not decidir:
+            # En silencio no se cierra nada: se anota la desaparicion si es la
+            # primera vez y se deja para cuando toque avisar.
+            nuevas[auction_id] = (
+                vigilada
+                if vigilada.desaparecida_at is not None
+                else replace(vigilada, desaparecida_at=dump_at)
             )
             continue
 

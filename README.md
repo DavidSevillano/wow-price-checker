@@ -638,7 +638,42 @@ Actions:
 .venv\Scripts\python.exe main.py --undercut --ventas
 ```
 
-### 6.6 Las cifras
+### 6.6 Horas en las que no suena nada
+
+En `config.yaml`:
+
+```yaml
+settings:
+  silencio_desde: 1
+  silencio_hasta: 9
+  zona_horaria: "Europe/Madrid"
+```
+
+De 01:00 a 09:00 en tu hora local no llega nada a Discord. La hora de inicio
+entra y la de fin no: a las 09:00 ya suena. Poniendolas iguales no se silencia
+nada.
+
+**La zona horaria importa.** Las pasadas corren en GitHub Actions, con el reloj
+en UTC. Sin ella la ventana se desplazaria sola en cada cambio de hora, y en
+invierno te callaria de 00:00 a 08:00.
+
+**Se calla el envio, no la deteccion.** Las pasadas siguen corriendo cada hora y
+el estado sigue actualizandose. Eso no es un detalle: el seguimiento de ventas
+se apoya en ver tus subastas hora tras hora, y saltarse ocho pasadas seguidas
+degradaria las fechas de caducidad y se tragaria ventas de verdad.
+
+**Y lo que se calla no se pierde:**
+
+- Los **chollos** y los **undercuts** no se marcan como avisados mientras dura
+  el silencio, asi que a las 09:00 se envia lo que siga vivo. No te llega la
+  lista entera de la noche --lo que se compro o se arreglo mientras dormias no
+  te sirve de nada--, solo lo que sigue estando.
+- Las **ventas** se quedan pendientes y se deciden al despertar, pero **con la
+  hora en que la subasta desaparecio de verdad**, no con la de esa pasada. Si
+  no, ocho horas de espera las empujarian mas alla de su fecha de caducidad y se
+  perderian.
+
+### 6.7 Las cifras
 
 Van **en neto**: el precio al que estaba puesta menos la comision que se queda
 la casa de subastas, que es lo que de verdad te llega al buzon. El porcentaje se
