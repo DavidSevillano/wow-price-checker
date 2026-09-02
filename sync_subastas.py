@@ -341,6 +341,32 @@ def vigilar(args: argparse.Namespace) -> int:
         return EXIT_OK
 
 
+def registrar_en_fichero(destino: Path, guardar_bytes: int = 512_000) -> None:
+    """Ademas de por pantalla, deja el log en un fichero.
+
+    El vigilante corre con pythonw.exe, que no tiene consola: sin esto, todo lo
+    que escriba se pierde y una averia no se nota hasta que echas de menos las
+    alertas. En la Steam Deck de esto se encarga journalctl; en Windows no hay
+    nadie recogiendolo.
+
+    Se recorta por lo bruto al pasar del tamano maximo. Un proceso que vive
+    semanas acabaria con un log de cientos de MB, y no merece la pena montar una
+    rotacion de verdad para esto.
+    """
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if destino.is_file() and destino.stat().st_size > guardar_bytes:
+            cola = destino.read_text(encoding="utf-8", errors="replace")[-guardar_bytes // 2 :]
+            destino.write_text(cola, encoding="utf-8")
+    except OSError:
+        # Un log que no se puede recortar no es motivo para no sincronizar.
+        pass
+
+    fichero = logging.FileHandler(destino, encoding="utf-8")
+    fichero.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    logging.getLogger().addHandler(fichero)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(
@@ -348,6 +374,8 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(message)s",
         stream=sys.stdout,
     )
+    if args.vigilar:
+        registrar_en_fichero(Path(__file__).resolve().parent / ".state" / "sync.log")
     try:
         return vigilar(args) if args.vigilar else run(args)
     except MisSubastasError as exc:

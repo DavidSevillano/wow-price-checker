@@ -67,7 +67,10 @@ $accionVigilante = New-ScheduledTaskAction `
     -Argument "`"$script`" --maquina pc --vigilar" `
     -WorkingDirectory $proyecto
 
-$disparadorVigilante = New-ScheduledTaskTrigger -AtLogOn
+# Con -User y no con un -AtLogOn a secas: sin usuario, el disparador vale para
+# el inicio de sesion de CUALQUIERA, y eso exige permisos de administrador.
+# Falla con "Acceso denegado" en Register-ScheduledTask, no aqui.
+$disparadorVigilante = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 
 # Sin limite de tiempo: el vigilante esta pensado para no terminar nunca. Con el
 # limite por defecto, Windows lo mataria a los tres dias sin decir nada.
