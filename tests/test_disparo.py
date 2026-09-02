@@ -93,6 +93,26 @@ def test_sin_historial_suficiente_no_se_mueve_nada():
     assert conviene_mover([23], disparo_actual=33) is None
 
 
+def test_si_blizzard_vuelve_a_publicar_mas_tarde_se_recoloca():
+    """El escenario feo: el disparo se queda justo por delante de la publicacion.
+
+    Con el cron a y 25 y Blizzard publicando otra vez a y 31, cada pasada se
+    encuentra el volcado de la hora anterior. No se pierde ninguno --la pasada
+    de las 10:25 lee el de las 09:31, la de las 11:25 el de las 10:31-- pero se
+    leen con casi una hora de retraso. Tiene que recolocarse solo.
+
+    Que salga como 54 minutos de descuelgue y no como 6 de adelanto es lo que
+    hace que se detecte: por eso la cuenta va en circulo.
+    """
+    assert distancia(31, 25) == 54
+    assert conviene_mover([31, 31, 31], disparo_actual=25) == 33
+
+
+def test_un_vaiven_entre_dos_minutos_no_provoca_baile():
+    """Si Blizzard no se decide, mejor quedarse quieto que perseguirlo."""
+    assert conviene_mover([23, 40, 23, 40], disparo_actual=33) is None
+
+
 def test_solo_se_miran_las_ultimas_pasadas():
     """Lo de hace horas no cuenta: importa donde publican ahora."""
     assert conviene_mover([31, 31, 31, 23, 23, 23], disparo_actual=33) == 25
