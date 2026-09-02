@@ -223,6 +223,30 @@ class HistorialDeVolcados:
         )
         esperas = guardado.get("esperas")
         self._esperas: int = esperas if isinstance(esperas, int) and esperas >= 0 else 0
+        pendiente = guardado.get("aviso_pendiente")
+        self._pendiente: tuple[str, str] | None = (
+            (str(pendiente[0]), str(pendiente[1]))
+            if isinstance(pendiente, list) and len(pendiente) == 2
+            else None
+        )
+
+    @property
+    def aviso_pendiente(self) -> tuple[str, str] | None:
+        """Un aviso medido de madrugada, esperando a que acabe el silencio.
+
+        Mover el disparo del cron no molesta a nadie y se hace a cualquier hora,
+        pero contarlo por Discord a las cuatro de la manana si. Se guarda y se
+        manda en la primera pasada despierta.
+        """
+        return self._pendiente
+
+    def deja_aviso(self, titulo: str, texto: str) -> None:
+        self._pendiente = (titulo, texto)
+
+    def recoge_aviso(self) -> tuple[str, str] | None:
+        pendiente = self._pendiente
+        self._pendiente = None
+        return pendiente
 
     @property
     def esperas_seguidas(self) -> int:
@@ -266,6 +290,7 @@ class HistorialDeVolcados:
                 "version": STATE_VERSION,
                 "minutos": self._minutos,
                 "esperas": self._esperas,
+                "aviso_pendiente": list(self._pendiente) if self._pendiente else None,
             },
         )
 

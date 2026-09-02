@@ -241,6 +241,17 @@ Entra en cron-job.org y pon el disparo en el minuto 25: tendras los avisos antes
 Ese aviso no se repite cada hora: tras mandarlo se olvida lo medido y vuelve a
 contar, asi que si no le haces caso reincide cada tres pasadas, no cada una.
 
+### De madrugada tambien
+
+Durante la ventana de silencio se mide y se mueve igual, porque cambiar el
+minuto del cron no despierta a nadie. Lo unico que se aplaza es contarlo: el
+aviso se guarda y sale en la primera pasada despierta.
+
+Importa mas de lo que parece. Si Blizzard cambia la hora a las 02:00 y no se
+midiera hasta las 09:25, con las tres pasadas que hacen falta no quedaria
+arreglado hasta las 11:25: toda la manana con los avisos llegando tarde, justo
+cuando empiezas a usarlos.
+
 ### Si Blizzard llega tarde
 
 Si al escanear resulta que el volcado de esta hora todavia no ha salido, la

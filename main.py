@@ -649,6 +649,7 @@ def mantener_disparo_alineado(
     notifier,
     *,
     dry_run: bool,
+    callado: bool = False,
 ) -> None:
     """Vigila que el cron siga disparando justo despues del volcado.
 
@@ -660,6 +661,11 @@ def mantener_disparo_alineado(
     Con las credenciales de cron-job.org puestas, la pasada lo mueve sola. Sin
     ellas avisa por Discord, porque enterrarlo en el log de Actions es lo mismo
     que no decirlo.
+
+    En silencio se mide y se mueve igual: cambiar el minuto del cron no despierta
+    a nadie, y esperar al final de la ventana costaria toda la manana con los
+    avisos desalineados. Lo unico que se aplaza es contarlo, que se recoge en la
+    primera pasada despierta.
     """
     # Un volcado de hace mas de una hora no habla del cron, sino de que Blizzard
     # iba tarde, y eso ya tiene su propio aviso. Ojo: al reves si cuenta, porque
@@ -685,11 +691,13 @@ def mantener_disparo_alineado(
     if dry_run or not all(credenciales):
         log.warning("💡 %s Conviene moverlo al minuto %02d.", razon, objetivo)
         if not dry_run:
-            avisar_por_discord(
+            contar(
                 notifier,
+                historial,
                 "El disparo se ha desalineado",
                 f"{razon}\n\nEntra en cron-job.org y pon el disparo en el minuto "
                 f"{objetivo:02d}: tendras los avisos antes.",
+                callado=callado,
             )
         # Se olvida lo medido tambien al avisar, para no repetir el aviso cada
         # hora hasta que lo cambies: vuelve a medir y reincide en tres pasadas.
@@ -706,12 +714,30 @@ def mantener_disparo_alineado(
 
     log.warning("🔧 %s Lo he movido al minuto %02d.", razon, objetivo)
     historial.olvida()
-    avisar_por_discord(
+    contar(
         notifier,
+        historial,
         "He movido el disparo",
         f"{razon}\n\nLo he cambiado al minuto {objetivo:02d} en cron-job.org "
         f"para que los avisos vuelvan a llegarte nada mas publicarse el volcado.",
+        callado=callado,
     )
+
+
+def contar(
+    notifier,
+    historial: HistorialDeVolcados,
+    titulo: str,
+    texto: str,
+    *,
+    callado: bool,
+) -> None:
+    """Manda el aviso, o lo guarda para cuando se acabe el silencio."""
+    if callado:
+        log.info("🔕 En silencio: dejo el aviso para cuando acabe la ventana.")
+        historial.deja_aviso(titulo, texto)
+        return
+    avisar_por_discord(notifier, titulo, texto)
 
 
 def avisar_por_discord(notifier, titulo: str, texto: str) -> None:
@@ -1003,10 +1029,22 @@ def run(args: argparse.Namespace) -> int:
     # En silencio ni se mide: esto acaba mandando un aviso a Discord, y aqui no
     # hay nada que se pierda por esperar. Quedan 16 pasadas al dia despiertas,
     # de sobra para cazar un cambio de horario que pasa cada varias semanas.
-    if result.snapshot_at and es_pasada_programada() and not callado:
+    if result.snapshot_at and es_pasada_programada():
+        # Se mide y se mueve tambien en silencio: cambiar el minuto del cron no
+        # despierta a nadie, y esperar a las nueve costaria toda la manana con
+        # los avisos desalineados. Lo que se aplaza es contarlo.
         mantener_disparo_alineado(
-            arranque, result.snapshot_at, historial, notifier, dry_run=args.dry_run
+            arranque,
+            result.snapshot_at,
+            historial,
+            notifier,
+            dry_run=args.dry_run,
+            callado=callado,
         )
+        if not callado and not args.dry_run:
+            pendiente = historial.recoge_aviso()
+            if pendiente:
+                avisar_por_discord(notifier, *pendiente)
 
     # Fuera del if: la cuenta de esperas se lleva en el bucle de arriba y hay que
     # guardarla aunque no toque medir el disparo, que es de lo que depende el

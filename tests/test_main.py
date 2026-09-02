@@ -482,7 +482,15 @@ class NotificadorFalso:
         self.avisos.append((titulo, texto))
 
 
-def alinear(tmp_path, arranque_min, publicado_min, *, hora_publicacion=12, veces=1):
+def alinear(
+    tmp_path,
+    arranque_min,
+    publicado_min,
+    *,
+    hora_publicacion=12,
+    veces=1,
+    callado=False,
+):
     """Corre el mantenimiento del disparo `veces` pasadas seguidas."""
     historial = cli.HistorialDeVolcados(tmp_path / "volcados.json")
     notificador = NotificadorFalso()
@@ -495,6 +503,7 @@ def alinear(tmp_path, arranque_min, publicado_min, *, hora_publicacion=12, veces
             historial,
             notificador,
             dry_run=False,
+            callado=callado,
         )
     return notificador, historial
 
@@ -1000,3 +1009,56 @@ def test_sin_apagarlo_ese_mismo_objeto_si_avisaria(entorno, tmp_path, caplog):
         )
 
     assert "cordon arcanotejido" in caplog.text
+
+
+# -- De madrugada se arregla igual, pero sin despertarte ---------------------
+#
+#  Antes en silencio ni se medía, y si Blizzard cambiaba la hora a las 02:00 no
+#  se enteraba hasta las 09:25: con las tres pasadas que hacen falta, hasta las
+#  11:25 no quedaba arreglado. Toda la manana con los avisos desalineados.
+
+
+def test_en_silencio_mueve_el_disparo_igual(tmp_path, monkeypatch, requests_mock):
+    """Cambiar el minuto del cron no despierta a nadie."""
+    monkeypatch.setenv("CRONJOB_API_KEY", "clave")
+    monkeypatch.setenv("CRONJOB_JOB_ID", "7788")
+    requests_mock.patch("https://api.cron-job.org/jobs/7788", json={})
+
+    notificador, historial = alinear(
+        tmp_path, arranque_min=33, publicado_min=23, veces=3, callado=True
+    )
+
+    assert requests_mock.request_history[-1].json() == {
+        "job": {"schedule": {"minutes": [25]}}
+    }
+    # Lo unico que se aplaza es contarlo.
+    assert notificador.avisos == []
+    assert historial.aviso_pendiente is not None
+
+
+def test_el_aviso_de_madrugada_se_recoge_al_despertar(tmp_path, monkeypatch):
+    monkeypatch.delenv("CRONJOB_API_KEY", raising=False)
+    ruta = tmp_path / "volcados.json"
+
+    notificador, historial = alinear(
+        tmp_path, arranque_min=33, publicado_min=23, veces=3, callado=True
+    )
+    assert notificador.avisos == []
+    historial.save()
+
+    guardado = cli.HistorialDeVolcados(ruta)
+    titulo, texto = guardado.recoge_aviso()
+
+    assert "desalineado" in titulo
+    assert "minuto 25" in texto
+
+
+def test_el_aviso_aplazado_no_se_manda_dos_veces(tmp_path, monkeypatch):
+    monkeypatch.delenv("CRONJOB_API_KEY", raising=False)
+
+    _, historial = alinear(
+        tmp_path, arranque_min=33, publicado_min=23, veces=3, callado=True
+    )
+
+    assert historial.recoge_aviso() is not None
+    assert historial.recoge_aviso() is None
