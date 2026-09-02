@@ -43,7 +43,7 @@ from wowalerts.personajes import (
 from wowalerts.realms import RealmResolutionError, resolve_connected_realms
 from wowalerts.scanner import scan_realms
 from wowalerts.silencio import en_silencio
-from wowalerts.snapshot import dump_is_stale, expected_dump_at
+from wowalerts.snapshot import dump_age, dump_is_stale
 from wowalerts.state import (
     JsonMapCache,
     ItemIconCache,
@@ -570,8 +570,127 @@ def run_mis_subastas(
     return EXIT_OK
 
 
+# Cuantos minutos de retraso se toleran entre que Blizzard publica y arranca la
+# pasada. Por debajo de esto no merece la pena tocar nada: el disparo del cron
+# no es puntual al segundo y perseguir un minuto seria pelearse con el ruido.
+DESFASE_QUE_MERECE_AVISO = 6
+
+# Margen entre la publicacion y el disparo. Un minuto no basta: el volcado no
+# sale siempre al mismo segundo y quedarse corto cuesta una hora entera de
+# espera, mientras que pasarse cuesta un minuto de avisos.
+COLCHON_TRAS_EL_VOLCADO = 2
+
+
+def es_pasada_programada() -> bool:
+    """Si nos ha lanzado el cron y no un humano.
+
+    Importa para el aviso del desfase: lanzada a mano, la hora de arranque la
+    eliges tu y no dice nada de como esta puesto el cron.
+    """
+    return os.getenv("GITHUB_ACTIONS", "").lower() == "true"
+
+
+def avisar_de_cron_desalineado(arranque: datetime, publicado: datetime) -> None:
+    """Dice a que minuto conviene disparar el cron, si el actual va tarde.
+
+    Blizzard mueve la hora de publicacion cada pocas semanas sin avisar: el
+    2026-08-31 el volcado salia a las :31:22 y el 2026-09-02 ya salia a las
+    :23:30. Cuando eso pasa, todo sigue funcionando y lo unico que se nota es
+    que los avisos llegan mas tarde, que es justo la clase de deterioro del que
+    no te enteras nunca. Asi que la pasada lo mide sola y lo canta.
+
+    No se corrige solo porque el disparo vive en un cron externo, fuera de este
+    repositorio: aqui solo se puede medir y decirlo.
+    """
+    desfase = (arranque - publicado).total_seconds() / 60
+    minuto = (publicado.minute + COLCHON_TRAS_EL_VOLCADO) % 60
+
+    # Arrancamos antes de que publicaran y hubo que esperar. Duele mas que
+    # llegar tarde: la espera esta acotada, asi que si se pasan de la ventana la
+    # pasada se va de vacio y pierdes la hora entera.
+    if desfase < 0:
+        log.warning(
+            "💡 Has arrancado a y %02d y Blizzard no publico hasta y %02d: vas "
+            "%.0f min por delante y has tenido que esperar. Retrasa el disparo "
+            "del cron externo al minuto %02d, que si algun dia tardan un poco "
+            "mas te quedas sin la pasada.",
+            arranque.minute,
+            publicado.minute,
+            -desfase,
+            minuto,
+        )
+        return
+
+    # Por encima de la hora el volcado no es el de esta pasada, sino uno viejo
+    # porque Blizzard iba tarde. Eso no dice nada del cron y ya tiene su aviso.
+    if not DESFASE_QUE_MERECE_AVISO <= desfase < 60:
+        return
+
+    log.warning(
+        "💡 Blizzard publico a y %02d y la pasada arranco a y %02d: llegas %.0f "
+        "min tarde. Adelanta el disparo del cron externo al minuto %02d y "
+        "tendras los avisos %.0f min antes.",
+        publicado.minute,
+        arranque.minute,
+        desfase,
+        minuto,
+        desfase - COLCHON_TRAS_EL_VOLCADO,
+    )
+
+
+def esperar_volcado_nuevo(
+    client: BlizzardClient,
+    realm_ids: list[int],
+    conocido: datetime,
+    settings,
+) -> bool:
+    """Vigila un reino hasta que Blizzard publique un volcado posterior.
+
+    Antes esto era un `sleep` a ciegas seguido de un reescaneo completo de los
+    92 reinos: casi medio giga de descarga para averiguar una fecha, y encima a
+    destiempo, porque si el volcado salia recien empezada la siesta no nos
+    enterabamos hasta dos minutos despues.
+
+    Blizzard regenera toda la region a la vez, asi que basta preguntarle la hora
+    a un reino cualquiera, y preguntarla sale por 0,4 s porque no hay que bajar
+    el cuerpo de la respuesta. Eso permite mirar cada pocos segundos y volver en
+    cuanto aparece, dentro del mismo presupuesto de espera de antes.
+
+    Devuelve True si salio el volcado nuevo, y False si se agoto la espera.
+    """
+    if not realm_ids:
+        return False
+
+    reloj = realm_ids[0]
+    # Se cuenta en vueltas y no contra el reloj para que la espera sea la misma
+    # mirando el log que corriendo los tests, donde el reloj va fingido.
+    espera = settings.dump_poll_seconds
+    vueltas = max(1, -(-settings.stale_retry_wait_seconds // espera))
+    for _ in range(vueltas):
+        time.sleep(espera)
+        try:
+            publicado = client.auction_dump_time(reloj)
+        except BlizzardError as exc:
+            # Un fallo suelto sondeando no es motivo para rendirse: se reintenta
+            # en la vuelta siguiente, que cuesta cuatro decimas.
+            log.debug("El sondeo del volcado ha fallado: %s", exc)
+            continue
+        if publicado and publicado > conocido:
+            log.info(
+                "✅ Ya esta: Blizzard ha publicado el volcado de las %s UTC. "
+                "Reescaneo.",
+                publicado.strftime("%H:%M"),
+            )
+            return True
+    return False
+
+
 def run(args: argparse.Namespace) -> int:
     load_dotenv()
+
+    # Cuando arranco, para poder medir despues cuanto tarde en enterarme de un
+    # volcado desde que Blizzard lo publico.
+    arranque = datetime.now(timezone.utc)
 
     config = load_config(args.config)
 
@@ -700,28 +819,42 @@ def run(args: argparse.Namespace) -> int:
         )
 
         ahora = datetime.now(timezone.utc)
-        if not dump_is_stale(result.snapshot_at, ahora, settings.dump_minute):
+        if not dump_is_stale(result.snapshot_at, ahora, settings.max_dump_age_minutes):
             break
 
-        toca = expected_dump_at(ahora, settings.dump_minute).strftime("%H:%M")
+        # Aqui snapshot_at no puede ser None: sin marca de tiempo dump_is_stale
+        # da False y ya habriamos salido del bucle.
+        ultimo = result.snapshot_at.strftime("%H:%M")
+        edad = int(dump_age(result.snapshot_at, ahora).total_seconds() // 60)
         if intentos < 1:
             log.warning(
-                "⚠️  El volcado de las %s UTC sigue sin aparecer y ya no quedan "
-                "reintentos. Lo recogera la pasada de la hora siguiente.",
-                toca,
+                "⚠️  El volcado mas nuevo sigue siendo el de las %s UTC (%s min) "
+                "y ya no quedan reintentos. Lo recogera la pasada de la hora "
+                "siguiente.",
+                ultimo,
+                edad,
             )
             break
 
         log.warning(
-            "⏳ Blizzard aun no ha publicado el volcado de las %s UTC: lo leido "
-            "es de la hora anterior. Espero %s s y vuelvo a mirar (quedan %s "
-            "intento(s)).",
-            toca,
+            "⏳ Blizzard va tarde: el volcado mas nuevo es el de las %s UTC y ya "
+            "tiene %s min, asi que el de esta hora no ha salido. Vigilo hasta "
+            "%s s a ver si aparece (quedan %s intento(s)).",
+            ultimo,
+            edad,
             settings.stale_retry_wait_seconds,
             intentos,
         )
         intentos -= 1
-        time.sleep(settings.stale_retry_wait_seconds)
+        if not esperar_volcado_nuevo(client, realm_ids, result.snapshot_at, settings):
+            log.warning(
+                "⚠️  Sigue sin aparecer. Reescaneo de todos modos por si acaso."
+            )
+
+    # Una vez por pasada y no dentro del bucle: si hemos estado esperando a un
+    # volcado retrasado, ese retraso es de Blizzard y no dice nada del cron.
+    if result.snapshot_at and es_pasada_programada():
+        avisar_de_cron_desalineado(arranque, result.snapshot_at)
 
     if result.failure_ratio > settings.failure_ratio_threshold:
         message = (
@@ -777,9 +910,7 @@ def scan_once(
             datetime.now(timezone.utc) - result.snapshot_at
         ).total_seconds() / 60
         log.info(
-            "🕒 Datos del volcado de las %s UTC (hace %.0f min). Blizzard lo "
-            "regenera cada hora: si esa cifra se acerca a 60, el cron se ha "
-            "desalineado y conviene retrasarlo.",
+            "🕒 Datos del volcado de las %s UTC (hace %.0f min).",
             result.snapshot_at.strftime("%H:%M"),
             edad,
         )

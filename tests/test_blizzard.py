@@ -83,6 +83,46 @@ def test_lee_la_hora_del_volcado_de_la_cabecera(requests_mock, client):
     assert taken_at.strftime("%Y-%m-%d %H:%M:%S") == "2026-08-30 11:31:16"
 
 
+def test_el_sondeo_da_la_hora_del_volcado(requests_mock, client):
+    """El reloj barato para saber si ya ha salido el volcado de esta hora."""
+    give_token(requests_mock)
+    requests_mock.get(
+        AUCTIONS_URL,
+        json={"auctions": [{"id": 1}]},
+        headers={"Last-Modified": "Wed, 2 Sep 2026 02:23:30 GMT"},
+    )
+
+    publicado = client.auction_dump_time(1305)
+
+    assert publicado is not None
+    assert publicado.strftime("%Y-%m-%d %H:%M:%S") == "2026-09-02 02:23:30"
+
+
+def test_el_sondeo_no_se_baja_el_cuerpo(requests_mock, client):
+    """Lo que justifica sondear a menudo: la region entera son casi 500 MB.
+
+    Se pide en modo flujo y se cierra tras leer la cabecera, asi que el cuerpo
+    no llega a transferirse. Aqui se comprueba lo unico observable desde fuera:
+    que la peticion sale con stream activado.
+    """
+    give_token(requests_mock)
+    requests_mock.get(AUCTIONS_URL, json={"auctions": []})
+
+    client.auction_dump_time(1305)
+
+    peticion = requests_mock.request_history[-1]
+    assert peticion.path.endswith("/auctions")
+    assert peticion.stream is True
+
+
+def test_un_sondeo_fallido_no_inventa_una_hora(requests_mock, client):
+    """None significa "no me consta que haya nada nuevo", que es lo prudente."""
+    give_token(requests_mock)
+    requests_mock.get(AUCTIONS_URL, status_code=503)
+
+    assert client.auction_dump_time(1305) is None
+
+
 @pytest.mark.parametrize("cabecera", [None, "", "esto no es una fecha"])
 def test_una_cabecera_de_fecha_ausente_o_rara_no_rompe(requests_mock, client, cabecera):
     give_token(requests_mock)

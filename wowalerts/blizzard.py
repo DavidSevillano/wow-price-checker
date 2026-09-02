@@ -280,6 +280,35 @@ class BlizzardClient:
             )
         return AuctionSnapshot(auctions, _parse_http_date(response.headers.get("Last-Modified")))
 
+    def auction_dump_time(self, realm_id: int) -> datetime | None:
+        """Cuando publico Blizzard el volcado vigente, SIN bajarselo.
+
+        Es el reloj para saber si ya ha salido el de esta hora. Preguntarlo
+        bajando los datos saldria carisimo: un reino grande son 14 MB y la
+        region entera casi medio giga. Aqui se abre la respuesta, se lee la
+        cabecera y se corta antes de tocar el cuerpo, asi que cuesta unos 0,4 s
+        y unos pocos KB.
+
+        Las dos formas ortodoxas de preguntar esto no sirven, comprobado contra
+        la API el 2026-09-02: a HEAD responde 404, y `If-Modified-Since` lo
+        ignora y manda los 14 MB con un 200 igualmente.
+
+        Devuelve None si no se puede saber, que es lo mismo que decir "no me
+        consta que haya salido nada nuevo": quien llama se lo toma como que
+        todavia no toca, nunca como que hay datos frescos.
+        """
+        response = self._api_get(
+            f"/data/wow/connected-realm/{realm_id}/auctions",
+            namespace=f"dynamic-{self.region}",
+            stream=True,
+        )
+        try:
+            if response.status_code != 200:
+                return None
+            return _parse_http_date(response.headers.get("Last-Modified"))
+        finally:
+            response.close()
+
     # -- Fontaneria HTTP ----------------------------------------------------
 
     def _api_get(
@@ -289,6 +318,7 @@ class BlizzardClient:
         namespace: str,
         params: dict | None = None,
         localized: bool = True,
+        stream: bool = False,
     ) -> requests.Response:
         """Peticion a la API de datos.
 
@@ -301,7 +331,7 @@ class BlizzardClient:
         if localized:
             query["locale"] = self.locale
         query.update(params or {})
-        return self._request("GET", url, params=query)
+        return self._request("GET", url, params=query, stream=stream)
 
     def _request(
         self, method: str, url: str, *, authenticated: bool = True, **kwargs: Any

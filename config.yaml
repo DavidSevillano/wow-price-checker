@@ -183,25 +183,40 @@ settings:
   # --------------------------------------------------------------------------
   #  Cuando Blizzard publica el volcado tarde
   # --------------------------------------------------------------------------
-  #  La casa de subastas se regenera una vez por hora, hacia el minuto 31, y el
-  #  cron dispara a y 33. Si algun dia Blizzard se retrasa, la pasada se
-  #  encontraria los datos de la hora anterior --ya vistos, sin nada nuevo-- y
-  #  no habria otra oportunidad hasta la hora siguiente. En ese caso se espera
-  #  y se vuelve a mirar.
+  #  La casa de subastas se regenera una vez por hora y para toda la region a la
+  #  vez. Si algun dia Blizzard se retrasa, la pasada se encontraria los datos de
+  #  la hora anterior --ya vistos, sin nada nuevo-- y no habria otra oportunidad
+  #  hasta la hora siguiente. En ese caso se espera y se vuelve a mirar.
   #
   #  Cada intento avisa por su cuenta, asi que un chollo que solo aparezca en
   #  el primero se envia igual.
 
-  # Minuto en el que Blizzard publica el volcado. Si el log de las pasadas
-  # empieza a cantar antiguedades raras, es que lo han movido: cambialo aqui.
-  dump_minute: 31
+  # A partir de que antiguedad se da por hecho que el volcado de esta hora
+  # todavia no ha salido. Como se regenera cada hora, cualquier cosa por encima
+  # de 60 delata un retraso.
+  #
+  # Esto NO depende del minuto al que publique Blizzard, y es a proposito: antes
+  # habia aqui un "dump_minute: 31" y el 2026-09-02 resulto que habian pasado a
+  # publicar a y 23, asi que cada pasada se creia tarde, dormia y reescaneaba los
+  # 92 reinos dos veces de balde. Por antiguedad da igual el minuto que elijan.
+  #
+  # No lo subas buscando margen: cuanto mas cerca de la publicacion dispare el
+  # cron, menos envejece el volcado viejo antes de que lo miremos, y un margen
+  # de mas se lo traga por bueno y te deja sin alertas esa hora.
+  max_dump_age_minutes: 61
 
   # Cuantas veces reintentar si el volcado de esta hora aun no ha salido.
   # 0 lo desactiva y la pasada se conforma con lo que haya.
   stale_retries: 2
 
-  # Cuanto esperar entre intentos.
+  # Cuanto se vigila, como mucho, en cada intento.
   stale_retry_wait_seconds: 120
+
+  # Cada cuanto se pregunta durante esa vigilancia. Preguntar la hora de
+  # publicacion cuesta 0,4 s y unos pocos KB, porque se lee la cabecera de la
+  # respuesta y se corta antes del cuerpo, asi que se puede mirar a menudo y
+  # volver a escanear en cuanto aparece el volcado nuevo.
+  dump_poll_seconds: 15
 
   # --------------------------------------------------------------------------
   #  Horas en las que no quieres que suene nada

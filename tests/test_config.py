@@ -133,9 +133,10 @@ def test_el_config_del_repositorio_es_valido():
 def test_valores_por_defecto_del_reintento_por_volcado_viejo(tmp_path):
     settings = load_config(write(tmp_path, VALID)).settings
 
-    assert settings.dump_minute == 31
+    assert settings.max_dump_age_minutes == 61
     assert settings.stale_retries == 2
     assert settings.stale_retry_wait_seconds == 120
+    assert settings.dump_poll_seconds == 15
 
 
 def test_se_puede_desactivar_el_reintento(tmp_path):
@@ -144,9 +145,21 @@ def test_se_puede_desactivar_el_reintento(tmp_path):
     assert load_config(write(tmp_path, text)).settings.stale_retries == 0
 
 
-def test_dump_minute_fuera_de_rango(tmp_path):
-    with pytest.raises(ConfigError, match="entre 0 y 59"):
-        load_config(write(tmp_path, VALID + "  dump_minute: 60\n"))
+def test_un_margen_de_menos_de_una_hora_no_vale(tmp_path):
+    """Por debajo de 60 se daria por retrasado el volcado bueno."""
+    with pytest.raises(ConfigError, match="pasar de 60"):
+        load_config(write(tmp_path, VALID + "  max_dump_age_minutes: 45\n"))
+
+
+def test_el_ajuste_viejo_explica_como_migrar(tmp_path):
+    """Quien tenga el 'dump_minute' de antes merece algo mejor que "no lo reconozco"."""
+    with pytest.raises(ConfigError, match="max_dump_age_minutes"):
+        load_config(write(tmp_path, VALID + "  dump_minute: 31\n"))
+
+
+def test_dump_poll_seconds_debe_ser_positivo(tmp_path):
+    with pytest.raises(ConfigError, match="al menos 1 segundo"):
+        load_config(write(tmp_path, VALID + "  dump_poll_seconds: 0\n"))
 
 
 def test_stale_retries_negativo(tmp_path):

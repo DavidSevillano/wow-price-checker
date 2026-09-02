@@ -176,30 +176,53 @@ La respuesta correcta es **HTTP 204 sin cuerpo**. Un 404 suele significar que
 el token no tiene acceso al repositorio; un 422, que la rama `main` o el nombre
 del workflow no coinciden.
 
-El minuto 33 sale de que Blizzard regenera los datos a y 31 y el disparo es
-inmediato: dos minutos de margen bastan.
+El minuto sale de cuando Blizzard regenera los datos, mas un par de minutos de
+margen. **Ese momento se mueve**: el 2026-08-31 el volcado salia a las
+`:31:22` y el 2026-09-02 ya salia a las `:23:30`.
+
+No hace falta que lo vigiles: cada pasada mide el desfase y lo canta con el
+minuto exacto al que conviene mover el disparo, en los dos sentidos.
+
+```
+💡 Blizzard publico a y 23 y la pasada arranco a y 33: llegas 10 min tarde.
+   Adelanta el disparo del cron externo al minuto 25 y tendras los avisos 8 min
+   antes.
+```
+
+Cuando salga eso, entra en cron-job.org y cambia el minuto. Es lo unico que hay
+que hacer a mano, porque el disparo vive fuera de este repositorio.
 
 ### Si Blizzard llega tarde
 
-Dos minutos son suficientes casi siempre, pero no son garantia. Si al escanear
-resulta que el volcado de esta hora todavia no ha salido, la pasada **espera
-dos minutos y vuelve a mirar**, hasta dos veces, en vez de perder la hora
-entera. Lo veras en el log:
+Si al escanear resulta que el volcado de esta hora todavia no ha salido, la
+pasada **se queda vigilando** en vez de perder la hora entera: le pregunta la
+hora de publicacion a un reino cada 15 segundos y reescanea en cuanto aparece.
+
+Preguntarla es barato porque no baja el cuerpo de la respuesta, solo la
+cabecera: unas decimas de segundo y unos KB, frente a los casi 500 MB que pesa
+un escaneo de la region entera. (Las dos formas ortodoxas de preguntarlo no
+sirven, comprobado el 2026-09-02: a `HEAD` responde 404 y `If-Modified-Since`
+lo ignora y manda el cuerpo igual.)
 
 ```
-⏳ Blizzard aun no ha publicado el volcado de las 13:31 UTC: lo leido es de la
-   hora anterior. Espero 120 s y vuelvo a mirar (quedan 2 intento(s)).
+⏳ Blizzard va tarde: el volcado mas nuevo es el de las 13:23 UTC y ya tiene 70
+   min, asi que el de esta hora no ha salido. Vigilo hasta 120 s a ver si
+   aparece (quedan 2 intento(s)).
+✅ Ya esta: Blizzard ha publicado el volcado de las 14:23 UTC. Reescaneo.
 ```
 
 Cada intento envia sus propios avisos, asi que un chollo que solo aparezca en
 el primero se manda igual: reintentar nunca se traga una alerta.
 
-La comparacion se hace contra el horario de Blizzard, no contra una antiguedad
-fija. Por eso una pasada lanzada a mano a y 58 no reintenta: su volcado de y 31
-tiene 27 minutos, pero es el ultimo que existe.
+Se decide por **antiguedad**, no contra un minuto configurado. Como el volcado
+se regenera cada hora, uno de mas de 61 minutos delata que el de esta hora no ha
+salido, publiquen a la hora que publiquen. Por eso una pasada lanzada a mano a y
+58 no reintenta: su volcado de y 23 tiene 35 minutos, pero es el ultimo que
+existe.
 
-Se ajusta en `config.yaml` con `dump_minute`, `stale_retries` y
-`stale_retry_wait_seconds`. Con `stale_retries: 0` se desactiva.
+Se ajusta en `config.yaml` con `max_dump_age_minutes`, `stale_retries`,
+`stale_retry_wait_seconds` y `dump_poll_seconds`. Con `stale_retries: 0` se
+desactiva.
 
 ## 3.2 Saber si esta corriendo de verdad
 

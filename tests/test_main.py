@@ -294,13 +294,24 @@ def test_el_estado_guardado_es_legible(entorno, tmp_path):
 #  Reintento cuando Blizzard publica el volcado tarde
 # ---------------------------------------------------------------------------
 #
-#  El cron dispara a y 33 porque el volcado sale a y 31. Si Blizzard se
-#  retrasa, la pasada se encuentra los datos de la hora anterior y, sin
-#  reintento, no habria otra oportunidad hasta la hora siguiente.
+#  El cron dispara a y 33 y el volcado sale hacia y 23. Si Blizzard se retrasa,
+#  la pasada se encuentra los datos de la hora anterior y, sin reintento, no
+#  habria otra oportunidad hasta la hora siguiente.
+#
+#  Mientras espera no duerme a ciegas: le pregunta la hora de publicacion a un
+#  reino cada pocos segundos, que cuesta unas decimas porque no baja el cuerpo
+#  de la respuesta, y reescanea en cuanto sale el volcado nuevo. Esas preguntas
+#  van al mismo endpoint que el escaneo, asi que aqui cuentan como peticiones.
 
 AHORA = datetime(2026, 8, 30, 12, 33, tzinfo=timezone.utc)
-VOLCADO_VIEJO = {"Last-Modified": "Sun, 30 Aug 2026 11:31:16 GMT"}
-VOLCADO_NUEVO = {"Last-Modified": "Sun, 30 Aug 2026 12:31:16 GMT"}
+# Hora y diez a las 12:33, o sea por encima del margen: Blizzard va tarde.
+VOLCADO_VIEJO = {"Last-Modified": "Sun, 30 Aug 2026 11:23:30 GMT"}
+# Diez minutos: es el de esta hora.
+VOLCADO_NUEVO = {"Last-Modified": "Sun, 30 Aug 2026 12:23:30 GMT"}
+
+# Los que trae config.yaml por defecto: 120 s de vigilancia preguntando cada 15.
+SONDEOS_POR_INTENTO = 8
+CADA = 15
 
 
 @pytest.fixture
@@ -324,6 +335,12 @@ def esperas(monkeypatch):
 
 
 def escaneos(requests_mock):
+    """Peticiones a las subastas: los escaneos y tambien los sondeos de espera.
+
+    No se distinguen desde aqui porque van al mismo endpoint; la diferencia es
+    que el sondeo corta la respuesta antes del cuerpo, y eso no deja rastro en
+    el historial del mock.
+    """
     return [r for r in requests_mock.request_history if r.path.endswith("/auctions")]
 
 
@@ -341,7 +358,11 @@ def test_si_el_volcado_va_tarde_se_espera_y_se_vuelve_a_mirar(
     entorno["mock"].get(
         f"{BASE}/connected-realm/1305/auctions",
         [
+            # El escaneo, que se encuentra los datos de la hora anterior.
             {"json": {"auctions": []}, "headers": VOLCADO_VIEJO},
+            # El primer sondeo, que ya ve el volcado nuevo.
+            {"json": {"auctions": []}, "headers": VOLCADO_NUEVO},
+            # El reescaneo, que trae el chollo.
             {
                 "json": {"auctions": [subasta(1, 45_000 * 10_000)]},
                 "headers": VOLCADO_NUEVO,
@@ -351,8 +372,9 @@ def test_si_el_volcado_va_tarde_se_espera_y_se_vuelve_a_mirar(
 
     assert ejecutar(entorno) == 0
 
-    assert len(escaneos(entorno["mock"])) == 2
-    assert esperas == [120]
+    assert len(escaneos(entorno["mock"])) == 3
+    # Se vuelve en cuanto aparece, no al agotar los 120 s de vigilancia.
+    assert esperas == [CADA]
     embed = mensajes_discord(entorno["mock"])[0]["embeds"][0]
     assert embed["title"] == "Greaves of the Noxious Depths"
 
@@ -369,13 +391,14 @@ def test_un_chollo_visto_solo_en_el_primer_intento_se_envia_igual(
                 "headers": VOLCADO_VIEJO,
             },
             {"json": {"auctions": []}, "headers": VOLCADO_NUEVO},
+            {"json": {"auctions": []}, "headers": VOLCADO_NUEVO},
         ],
     )
 
     ejecutar(entorno)
 
     # Hubo segundo intento y ya no traia el chollo: el aviso salio del primero.
-    assert len(escaneos(entorno["mock"])) == 2
+    assert len(escaneos(entorno["mock"])) == 3
     embeds = [e for m in mensajes_discord(entorno["mock"]) for e in m["embeds"]]
     assert len(embeds) == 1
     assert embeds[0]["title"] == "Greaves of the Noxious Depths"
@@ -391,6 +414,7 @@ def test_no_se_avisa_dos_veces_del_mismo_chollo_entre_intentos(
                 "json": {"auctions": [subasta(1, 45_000 * 10_000)]},
                 "headers": VOLCADO_VIEJO,
             },
+            {"json": {"auctions": []}, "headers": VOLCADO_NUEVO},
             {
                 "json": {"auctions": [subasta(1, 45_000 * 10_000)]},
                 "headers": VOLCADO_NUEVO,
@@ -416,9 +440,10 @@ def test_se_deja_de_reintentar_al_agotar_los_intentos(
 
     assert ejecutar(entorno) == 0
 
-    # El primer escaneo mas los dos reintentos que trae por defecto.
-    assert len(escaneos(entorno["mock"])) == 3
-    assert esperas == [120, 120]
+    # El primer escaneo, mas los dos reintentos que trae por defecto, mas los
+    # sondeos de cada espera, que nunca ven nada nuevo y la agotan entera.
+    assert len(escaneos(entorno["mock"])) == 3 + 2 * SONDEOS_POR_INTENTO
+    assert esperas == [CADA] * (2 * SONDEOS_POR_INTENTO)
     assert "ya no quedan" in caplog.text
 
 
@@ -436,6 +461,65 @@ def test_los_reintentos_se_pueden_desactivar(
 
     assert len(escaneos(entorno["mock"])) == 1
     assert esperas == []
+
+
+# ---------------------------------------------------------------------------
+#  Aviso de cron desalineado
+# ---------------------------------------------------------------------------
+#
+#  Blizzard mueve la hora de publicacion cada pocas semanas sin avisar: el
+#  2026-08-31 el volcado salia a y 31 y el 2026-09-02 ya salia a y 23. Cuando
+#  eso pasa todo sigue funcionando y lo unico que se nota es que los avisos
+#  llegan tarde, que es la clase de deterioro del que no te enteras nunca.
+
+
+def cron(arranque_min, publicado_min, caplog, hora_publicacion=12):
+    caplog.set_level(logging.WARNING)
+    cli.avisar_de_cron_desalineado(
+        datetime(2026, 9, 2, 12, arranque_min, tzinfo=timezone.utc),
+        datetime(2026, 9, 2, hora_publicacion, publicado_min, 30, tzinfo=timezone.utc),
+    )
+    return caplog.text
+
+
+def test_si_disparas_tarde_te_dice_a_que_minuto_adelantarlo(caplog):
+    texto = cron(arranque_min=33, publicado_min=23, caplog=caplog)
+
+    assert "Adelanta" in texto
+    assert "minuto 25" in texto
+
+
+def test_si_disparas_pronto_te_dice_que_lo_retrases(caplog):
+    """Duele mas: la espera esta acotada, asi que pasarse pierde la hora entera."""
+    texto = cron(arranque_min=20, publicado_min=23, caplog=caplog)
+
+    assert "Retrasa" in texto
+    assert "minuto 25" in texto
+
+
+def test_un_desfase_de_un_par_de_minutos_no_dice_nada(caplog):
+    """Perseguir un minuto seria pelearse con el ruido del disparo."""
+    assert cron(arranque_min=25, publicado_min=23, caplog=caplog) == ""
+
+
+def test_un_volcado_de_hace_horas_no_habla_del_cron(caplog):
+    """Ahi el retrasado es Blizzard, y eso ya tiene su propio aviso."""
+    texto = cron(arranque_min=33, publicado_min=23, caplog=caplog, hora_publicacion=10)
+
+    assert texto == ""
+
+
+def test_a_mano_no_se_mide_el_desfase(monkeypatch):
+    """La hora de arranque la eliges tu, asi que no dice nada del cron."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+    assert not cli.es_pasada_programada()
+
+
+def test_en_actions_si(monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+    assert cli.es_pasada_programada()
 
 
 def test_un_volcado_al_dia_no_provoca_ninguna_espera(entorno, reloj_parado, esperas):

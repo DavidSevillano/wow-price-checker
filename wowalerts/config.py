@@ -55,14 +55,18 @@ class Settings:
     request_timeout: int = 45
     state_retention_runs: int = 72
     failure_ratio_threshold: float = 0.30
-    # Minuto en el que Blizzard publica el volcado de subastas. Si alguna vez
-    # lo mueve, el log de cada pasada canta la antiguedad y basta cambiarlo aqui.
-    dump_minute: int = 31
+    # A partir de que antiguedad se da por hecho que Blizzard no ha publicado
+    # todavia el volcado de esta hora. Como se regenera cada hora, cualquier
+    # cosa por encima de 60 delata un retraso.
+    max_dump_age_minutes: int = 61
     # Si al escanear resulta que el volcado de esta hora todavia no ha salido,
     # se espera y se vuelve a mirar, en vez de perder la hora entera. A 0 se
     # desactiva y la pasada se conforma con lo que haya.
     stale_retries: int = 2
     stale_retry_wait_seconds: int = 120
+    # Cada cuanto se le pregunta a Blizzard si ya ha publicado, mientras se
+    # espera. Preguntar cuesta 0,4 s y unos KB, asi que se puede mirar a menudo.
+    dump_poll_seconds: int = 15
     # ------------------------------------------------------------------------
     #  Horas en las que no quieres que suene nada
     # ------------------------------------------------------------------------
@@ -262,6 +266,17 @@ def _parse_settings(value: Any) -> Settings:
         raise ConfigError("'settings' debe ser un mapa de opciones.")
 
     defaults = Settings()
+    # Aviso a medida para el unico ajuste que ha cambiado de nombre, porque el
+    # error generico de abajo diria que no lo reconozco sin decir por que.
+    if "dump_minute" in value:
+        raise ConfigError(
+            "'dump_minute' ya no existe: la deteccion de volcados retrasados ya "
+            "no depende del minuto al que publique Blizzard, sino de la "
+            "antiguedad del volcado. Quita esa linea y, si quieres tocar el "
+            "margen, usa 'max_dump_age_minutes' (por defecto "
+            f"{defaults.max_dump_age_minutes})."
+        )
+
     unknown = set(value) - set(defaults.__dataclass_fields__)
     if unknown:
         raise ConfigError(
@@ -284,8 +299,13 @@ def _parse_settings(value: Any) -> Settings:
             failure_ratio_threshold=float(
                 value.get("failure_ratio_threshold", defaults.failure_ratio_threshold)
             ),
-            dump_minute=int(value.get("dump_minute", defaults.dump_minute)),
+            max_dump_age_minutes=int(
+                value.get("max_dump_age_minutes", defaults.max_dump_age_minutes)
+            ),
             stale_retries=int(value.get("stale_retries", defaults.stale_retries)),
+            dump_poll_seconds=int(
+                value.get("dump_poll_seconds", defaults.dump_poll_seconds)
+            ),
             stale_retry_wait_seconds=int(
                 value.get(
                     "stale_retry_wait_seconds", defaults.stale_retry_wait_seconds
@@ -312,10 +332,19 @@ def _parse_settings(value: Any) -> Settings:
         raise ConfigError("'state_retention_runs' debe ser al menos 1.")
     if not 0.0 < settings.failure_ratio_threshold <= 1.0:
         raise ConfigError("'failure_ratio_threshold' debe estar entre 0 (excluido) y 1.")
-    if not 0 <= settings.dump_minute <= 59:
-        raise ConfigError("'dump_minute' es un minuto del reloj: entre 0 y 59.")
+    # Por debajo de 60 se marcaria como retrasado el volcado bueno: a media hora
+    # de la siguiente publicacion, el vigente ya tiene mas de 30 minutos y sigue
+    # siendo el ultimo que existe.
+    if settings.max_dump_age_minutes <= 60:
+        raise ConfigError(
+            "'max_dump_age_minutes' tiene que pasar de 60: el volcado se "
+            "regenera cada hora, asi que por debajo de eso darias por retrasado "
+            "el volcado bueno y cada pasada reescanearia de balde."
+        )
     if settings.stale_retries < 0:
         raise ConfigError("'stale_retries' no puede ser negativo (0 lo desactiva).")
+    if settings.dump_poll_seconds < 1:
+        raise ConfigError("'dump_poll_seconds' debe ser al menos 1 segundo.")
     for campo in ("silencio_desde", "silencio_hasta"):
         hora = getattr(settings, campo)
         if not 0 <= hora <= 23:
