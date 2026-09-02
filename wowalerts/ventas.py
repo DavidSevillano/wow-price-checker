@@ -267,10 +267,14 @@ def revisar_reino(
             # hacer /reload, asi que cantar la venta ya seria adelantarse a la
             # unica fuente capaz de desmentirla.
             nuevas[auction_id] = replace(vigilada, desaparecida_at=dump_at)
-            log.debug(
-                "Tu subasta %s de %s ha desaparecido. Espero una pasada por si "
-                "resulta que la cancelaste.",
-                auction_id,
+            # En INFO y no en DEBUG: con esto callado, una venta tarda una hora
+            # en anunciarse y desde fuera no hay forma de distinguir "viene en la
+            # proxima pasada" de "se ha perdido". Las cancelaciones ya se cantan
+            # aqui mismo, asi que ademas era incoherente.
+            log.info(
+                "⏳ %s de %s ha desaparecido. Espero una pasada por si resulta "
+                "que la cancelaste; si no, la anuncio en la siguiente.",
+                vigilada.character,
                 vigilada.item_name,
             )
             continue
