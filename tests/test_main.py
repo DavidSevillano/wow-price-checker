@@ -595,10 +595,25 @@ def test_a_mano_no_se_mide_el_desfase(monkeypatch):
     assert not cli.es_pasada_programada()
 
 
-def test_en_actions_si(monkeypatch):
+def test_el_cron_externo_si(monkeypatch):
+    """El disparo puntual: arranca en segundos, asi que su hora dice la verdad."""
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
 
     assert cli.es_pasada_programada()
+
+
+def test_el_schedule_de_github_no_cuenta(monkeypatch):
+    """Sus eventos entran en cola y se retrasan entre 20 y 40 minutos.
+
+    El 2026-09-02 una pasada de 'schedule' programada a y 25 arranco a y 49, se
+    midio un descuelgue de 26 minutos y se aviso de que el disparo estaba mal
+    cuando estaba perfectamente puesto.
+    """
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "schedule")
+
+    assert not cli.es_pasada_programada()
 
 
 # ---------------------------------------------------------------------------
@@ -1062,3 +1077,25 @@ def test_el_aviso_aplazado_no_se_manda_dos_veces(tmp_path, monkeypatch):
 
     assert historial.recoge_aviso() is not None
     assert historial.recoge_aviso() is None
+
+
+def test_el_schedule_de_github_si_espera_al_volcado(monkeypatch):
+    """Son dos preguntas distintas y conviene no volver a mezclarlas.
+
+    Si la hora de arranque dice algo del cron -> solo el disparo puntual.
+    Si merece la pena esperar al volcado -> cualquier pasada desatendida, y una
+    de 'schedule' lo es: no hay nadie delante a quien hacer esperar.
+    """
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "schedule")
+
+    assert cli.es_pasada_desatendida()
+    assert not cli.es_pasada_programada()
+
+
+def test_a_mano_no_espera_ni_mide(monkeypatch):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+
+    assert not cli.es_pasada_desatendida()
+    assert not cli.es_pasada_programada()

@@ -633,13 +633,35 @@ def run_mis_subastas(
 ESPERAS_SEGUIDAS_MAXIMAS = 4
 
 
-def es_pasada_programada() -> bool:
-    """Si nos ha lanzado el cron y no un humano.
+def es_pasada_desatendida() -> bool:
+    """Si corre sola, sin nadie mirando.
 
-    Importa para medir el desfase del disparo: lanzada a mano, la hora de
-    arranque la eliges tu y no dice nada de como esta puesto el cron.
+    Decide si merece la pena esperar unos minutos a que salga el volcado nuevo.
+    Lanzada a mano no: esperar diez minutos mientras pruebas algo no lo quiere
+    nadie. Cualquier pasada en Actions si, la dispare quien la dispare.
     """
     return os.getenv("GITHUB_ACTIONS", "").lower() == "true"
+
+
+def es_pasada_programada() -> bool:
+    """Si nos ha lanzado el cron externo, el unico disparo puntual que hay.
+
+    Solo en esas pasadas significa algo la hora de arranque, que es de donde
+    sale el desfase del disparo. En una lanzada a mano la eliges tu, y en las
+    que dispara el 'schedule' de GitHub la elige su cola: esos eventos se
+    retrasan entre 20 y 40 minutos, asi que la hora de arranque no dice nada del
+    cron.
+
+    Lo aprendimos por las malas el 2026-09-02: una pasada de 'schedule'
+    programada a y 25 arranco a y 49, se midio un descuelgue de 26 minutos y se
+    aviso de que el disparo estaba mal cuando estaba perfectamente puesto. El
+    minuto al que se movia salia bien de casualidad, porque se calcula desde la
+    hora de publicacion y no desde la de arranque.
+    """
+    return (
+        os.getenv("GITHUB_ACTIONS", "").lower() == "true"
+        and os.getenv("GITHUB_EVENT_NAME", "") == "workflow_dispatch"
+    )
 
 
 def mantener_disparo_alineado(
@@ -948,9 +970,9 @@ def run(args: argparse.Namespace) -> int:
             not tarde
             and falta is not None
             and 0 < falta <= settings.espera_maxima_minutos
-            # Solo en las programadas: a mano la hora la eliges tu, y esperar
-            # diez minutos cuando estas probando algo no lo quiere nadie.
-            and es_pasada_programada()
+            # Solo sin nadie mirando: esperar diez minutos mientras pruebas
+            # algo a mano no lo quiere nadie.
+            and es_pasada_desatendida()
         )
 
         # El contador solo se reinicia cuando el volcado llega sano, no cuando
