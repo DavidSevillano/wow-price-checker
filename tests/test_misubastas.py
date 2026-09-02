@@ -116,6 +116,9 @@ def test_convierte_a_myauction_con_su_personaje_y_reino():
             character="Ana",
             realm="Dun Modr",
             realm_slug="dun-modr",
+            # La hora a la que el addon exporto viaja con la subasta: es lo que
+            # permite luego no fiarse de un volcado que se ha quedado atras.
+            exported_at=100,
         )
     ]
 
@@ -259,3 +262,88 @@ def test_un_volcado_al_dia_no_se_marca(tmp_path):
         encoding="utf-8",
     )
     assert volcado_atrasado(fichero) is None
+
+
+# ---------------------------------------------------------------------------
+#  No fiarse de un volcado que se ha quedado atras
+# ---------------------------------------------------------------------------
+#
+#  El volcado del addon dice que subastas son tuyas, pero no cuando dejan de
+#  serlo: una maquina que deja de exportar sigue afirmando lo mismo dia tras
+#  dia. El 2026-09-02 la Steam Deck paso 16 horas sin exportar, sus subastas se
+#  relistaron con ids nuevos, y al no encontrar los viejos en los datos de
+#  Blizzard se cantaron dos ventas que no habian ocurrido.
+
+from datetime import datetime, timedelta, timezone
+
+from wowalerts.misubastas import separar_por_frescura
+
+AHORA = datetime(2026, 9, 2, 13, 0, tzinfo=timezone.utc)
+
+
+def mia(auction_id=1, horas_desde_la_exportacion=0.0):
+    exportada = AHORA - timedelta(hours=horas_desde_la_exportacion)
+    return MyAuction(
+        auction_id=auction_id,
+        item_id=200000,
+        item_name="Greaves of the Noxious Depths",
+        ilvl=311,
+        buyout_copper=900000000,
+        quantity=1,
+        character="Dbardan",
+        realm="Sanguino",
+        realm_slug="sanguino",
+        exported_at=int(exportada.timestamp()),
+    )
+
+
+def test_un_volcado_reciente_es_de_fiar():
+    frescas, viejas = separar_por_frescura([mia(horas_desde_la_exportacion=3)], AHORA, 12)
+
+    assert len(frescas) == 1
+    assert viejas == []
+
+
+def test_un_volcado_mas_viejo_que_el_listado_no_puede_describir_nada_vivo():
+    """El caso de la Steam Deck: 16 horas sin exportar, listados de 12."""
+    frescas, viejas = separar_por_frescura([mia(horas_desde_la_exportacion=16)], AHORA, 12)
+
+    assert frescas == []
+    assert len(viejas) == 1
+
+
+def test_justo_en_el_limite_todavia_vale():
+    frescas, _ = separar_por_frescura([mia(horas_desde_la_exportacion=12)], AHORA, 12)
+
+    assert len(frescas) == 1
+
+
+def test_sin_fecha_de_exportacion_se_da_por_bueno():
+    """Los volcados escritos antes de que esto existiera no llevan la fecha.
+
+    Estrenar la comprobacion tirando de golpe todo lo que hay seria peor que el
+    problema que arregla.
+    """
+    sin_fecha = MyAuction(
+        auction_id=9,
+        item_id=200000,
+        item_name="Greaves of the Noxious Depths",
+        ilvl=311,
+        buyout_copper=900000000,
+        quantity=1,
+        character="Pepe",
+        realm="Sanguino",
+        realm_slug="sanguino",
+    )
+
+    frescas, viejas = separar_por_frescura([sin_fecha], AHORA, 12)
+
+    assert len(frescas) == 1
+    assert viejas == []
+
+
+def test_a_cero_horas_se_desactiva_la_comprobacion():
+    frescas, viejas = separar_por_frescura([mia(horas_desde_la_exportacion=99)], AHORA, 0)
+
+    assert len(frescas) == 1
+    assert viejas == []

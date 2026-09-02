@@ -12,6 +12,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -53,6 +54,12 @@ class MyAuction:
     # afijos). Dos subastas del mismo objeto con los mismos bonus ids son el
     # mismo producto; con distintos, no compiten entre si.
     bonus_ids: tuple[int, ...] = ()
+    # Cuando el addon exporto estos datos, en segundos unix. Sirve para no
+    # fiarse de un volcado que se ha quedado atras: sin esto, una maquina que
+    # deja de sincronizar sigue diciendo que unas subastas son tuyas mucho
+    # despues de que dejaran de existir, y al desaparecer de los datos de
+    # Blizzard se cantan como vendidas. Paso el 2026-09-02.
+    exported_at: int = 0
 
 
 def slugify_realm(name: str) -> str:
@@ -169,7 +176,9 @@ def subastas_de_payloads(personajes: Mapping[str, Mapping]) -> list[MyAuction]:
         realm = str(entrada.get("realm") or "")
         cuenta = entrada.get("account")
         for cruda in entrada.get("auctions") or []:
-            subasta = _to_auction(cruda, character, realm, cuenta)
+            subasta = _to_auction(
+                cruda, character, realm, cuenta, _exported_at(entrada)
+            )
             if subasta is not None:
                 subastas.append(subasta)
     subastas.sort(key=lambda s: (s.realm, s.character, s.auction_id))
@@ -391,6 +400,36 @@ def leer_snapshots(origen: str | Path) -> list[MyAuction]:
     )
 
 
+def separar_por_frescura(
+    subastas: Sequence[MyAuction], ahora: datetime, max_horas: int
+) -> tuple[list[MyAuction], list[MyAuction]]:
+    """Parte tus subastas en (las de fiar, las de un volcado que se quedo atras).
+
+    El volcado del addon dice que subastas son tuyas, pero no cuando dejan de
+    serlo: si una maquina deja de exportar, sigue afirmando lo mismo dia tras
+    dia. Y esa afirmacion caduca. El 2026-09-02 la Steam Deck se quedo 16 horas
+    sin exportar, sus subastas de ayer se relistaron con ids nuevos, y al no
+    encontrar los ids viejos en los datos de Blizzard se cantaron como vendidas.
+
+    Sin `exportedAt` no se puede juzgar, y eso pasa con los volcados escritos
+    antes de que esto existiera. Se dan por buenos: estrenar la comprobacion
+    tirando de golpe todo lo que hay seria peor que el problema que arregla.
+    """
+    if max_horas <= 0:
+        return list(subastas), []
+
+    limite = ahora - timedelta(hours=max_horas)
+    frescas: list[MyAuction] = []
+    viejas: list[MyAuction] = []
+    for subasta in subastas:
+        if not subasta.exported_at:
+            frescas.append(subasta)
+            continue
+        exportada = datetime.fromtimestamp(subasta.exported_at, tz=timezone.utc)
+        (frescas if exportada >= limite else viejas).append(subasta)
+    return frescas, viejas
+
+
 def leer_snapshot(path: str | Path) -> list[MyAuction]:
     """Lee mis_subastas.json. Un fichero que no existe son cero subastas."""
     path = Path(path)
@@ -423,7 +462,11 @@ def _exported_at(entrada: Mapping) -> int:
 
 
 def _to_auction(
-    cruda: Any, character: str, realm: str, cuenta: Any = None
+    cruda: Any,
+    character: str,
+    realm: str,
+    cuenta: Any = None,
+    exportado: int = 0,
 ) -> MyAuction | None:
     """Convierte una entrada cruda, o None si le falta algo imprescindible."""
     if not isinstance(cruda, Mapping):
@@ -455,6 +498,7 @@ def _to_auction(
         realm=str(cruda.get("realm") or realm),
         realm_slug=slugify_realm(str(cruda.get("realm") or realm)),
         account=_cuenta_valida(cruda.get("account", cuenta)),
+        exported_at=_exported_at(cruda) or exportado,
     )
 
 
@@ -474,4 +518,5 @@ def _to_json(subasta: MyAuction) -> dict:
         "character": subasta.character,
         "realm": subasta.realm,
         "account": subasta.account,
+        "exportedAt": subasta.exported_at,
     }

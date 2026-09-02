@@ -712,6 +712,26 @@ Entra con ellos, abre la Casa de Subastas y haz /reload.
 Pasa sobre todo por cuenta: si juegas una tarde entera en WoW 2, los personajes
 de WoW 3 se quedan con los datos del ultimo dia que entraste.
 
+**Un volcado viejo se ignora entero.** Cada subasta viaja con la hora a la que
+el addon la exporto, y si esa hora tiene mas de `listing_hours`, se suelta del
+seguimiento **sin veredicto**. La cota no es arbitraria: si tus listados duran
+12 horas, un volcado de hace 13 no puede estar describiendo nada vivo.
+
+```
+⚠️ Ignoro 4 subasta(s) de 2 personaje(s) cuyo volcado lleva mas de 12 h sin
+   actualizarse (Dbardan, Mbarval). Entra con ellos y sal al selector.
+```
+
+Callarse ahi pierde como mucho el aviso de una venta real; no callarse **se
+inventa ventas que no han ocurrido**, que es peor. Costo dos ventas falsas el
+2026-09-02: la Steam Deck llevaba 16 horas sin exportar --el addon v1.9 se
+quedaba colgado al formatear una subasta grande-- y seguia afirmando los ids del
+dia anterior, que se habian relistado con ids nuevos.
+
+Los volcados escritos antes de que esto existiera no llevan esa hora y se dan
+por buenos: estrenar la comprobacion tirando de golpe todo lo que hay seria peor
+que el problema que arregla.
+
 Ademas del panel y del log, **se avisa por Discord la primera vez que un
 personaje entra en esa lista**, en el canal de undercuts. Solo la primera:
 repetirlo cada hora seria una alarma de las que se aprenden a ignorar. Costo una

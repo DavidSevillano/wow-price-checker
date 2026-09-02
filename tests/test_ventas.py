@@ -624,3 +624,34 @@ def test_al_acabar_el_silencio_se_decide_con_la_hora_buena():
     )
     assert len(ventas) == 1
     assert ventas[0].detectada_at == UNA_HORA_DESPUES
+
+
+# ---------------------------------------------------------------------------
+#  Subastas de una maquina que dejo de exportar
+# ---------------------------------------------------------------------------
+#
+#  El 2026-09-02 la Steam Deck paso 16 horas sin exportar. Sus subastas se
+#  habian relistado con ids nuevos, y al no encontrar los viejos en los datos de
+#  Blizzard se cantaron como vendidas dos que seguian puestas. El volcado dice
+#  que subastas son tuyas, pero esa afirmacion caduca.
+
+
+def test_una_subasta_de_volcado_viejo_se_suelta_sin_veredicto():
+    """Lo importante: se deja de seguir, pero NO se canta como venta."""
+    previa = vigilada(caduca=T0 + timedelta(hours=2))
+
+    ventas, seguidas, _ = desaparece({1: previa}, olvidar={1})
+
+    assert ventas == []
+    assert seguidas == {}
+
+
+def test_olvidar_solo_afecta_a_las_senaladas():
+    """La maquina que si esta al dia tiene que seguir detectando sus ventas."""
+    dos = vigilada(auction_id=2, caduca=T0 + timedelta(hours=2))
+
+    ventas, _, _ = desaparece(
+        {1: vigilada(caduca=T0 + timedelta(hours=2)), 2: dos}, olvidar={1}
+    )
+
+    assert [v.subasta.auction_id for v in ventas] == [2]

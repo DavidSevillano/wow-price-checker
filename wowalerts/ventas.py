@@ -150,6 +150,7 @@ def revisar_reino(
     adelantadas: AbstractSet[int] = frozenset(),
     canceladas: AbstractSet[int] = frozenset(),
     decidir: bool = True,
+    olvidar: AbstractSet[int] = frozenset(),
 ) -> tuple[list[Venta], dict[int, SubastaVigilada], UltimoVolcado]:
     """Las ventas de este reino, el seguimiento actualizado y su foto nueva.
 
@@ -165,7 +166,15 @@ def revisar_reino(
     Con `decidir` a False (la ventana de silencio) se sigue el rastro igual,
     pero no se cierra ningun caso: lo que falte se queda pendiente y se resuelve
     al despertar, con la hora en la que desaparecio de verdad.
+
+    `olvidar` son subastas que se dejan de seguir SIN veredicto, porque la
+    maquina que decia que eran tuyas lleva tanto sin exportar que ya no se puede
+    afirmar nada de ellas. Callarse pierde como mucho el aviso de una venta de
+    verdad; no callarse se inventa ventas que no han pasado, que es peor.
     """
+    if olvidar:
+        seguidas = {k: v for k, v in seguidas.items() if k not in olvidar}
+
     mias_por_id = {m.auction_id: m for m in mis_subastas}
 
     # Una sola pasada por el volcado: de las 30.000 subastas del reino solo

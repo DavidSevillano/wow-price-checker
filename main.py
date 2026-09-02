@@ -32,7 +32,12 @@ from wowalerts.disparo import (
     conviene_mover,
 )
 from wowalerts.items import ItemResolutionError, resolve_item_ids
-from wowalerts.misubastas import MisSubastasError, leer_canceladas, leer_snapshots
+from wowalerts.misubastas import (
+    MisSubastasError,
+    leer_canceladas,
+    leer_snapshots,
+    separar_por_frescura,
+)
 from wowalerts.panel import build_panel
 from wowalerts.notifier import (
     DiscordError,
@@ -335,9 +340,34 @@ def run_mis_subastas(
     su canal.
     """
     todas = leer_snapshots(mis_subastas_path)
+
+    # Un volcado mas viejo que tu duracion de listado no puede estar describiendo
+    # nada vivo: todo lo que contaba ha caducado ya. Seguir creyendolo es lo que
+    # el 2026-09-02 canto como vendidas dos subastas que solo se habian
+    # relistado, porque la Steam Deck llevaba 16 horas sin exportar y seguia
+    # afirmando los ids del dia anterior.
+    todas, de_volcado_viejo = separar_por_frescura(
+        todas, datetime.now(timezone.utc), config.settings.listing_hours
+    )
+    if de_volcado_viejo:
+        maquinas = sorted({s.character for s in de_volcado_viejo})
+        log.warning(
+            "⚠️  Ignoro %s subasta(s) de %s personaje(s) cuyo volcado lleva mas "
+            "de %s h sin actualizarse (%s%s). Entra con ellos y sal al selector "
+            "para refrescarlo.",
+            len(de_volcado_viejo),
+            len(maquinas),
+            config.settings.listing_hours,
+            ", ".join(maquinas[:8]),
+            "..." if len(maquinas) > 8 else "",
+        )
+
     # Solo interesan los objetos que vigila config.yaml: el resto de lo que
     # tengas puesto (monturas, mochilas, decoracion) no es el negocio.
     mis_subastas = [s for s in todas if s.item_id in rules_by_item_id]
+    # Las de volcado viejo se sueltan del seguimiento sin veredicto: no se puede
+    # afirmar si se vendieron, caducaron o las relistaste.
+    olvidar = {s.auction_id for s in de_volcado_viejo}
 
     if not mis_subastas:
         log.info(
@@ -439,6 +469,7 @@ def run_mis_subastas(
                 {u.mine.auction_id for u in del_reino_undercuts},
                 canceladas,
                 not callado,
+                olvidar=olvidar,
             )
             ventas.extend(del_reino)
             seguimiento.actualizar_reino(realm_id, seguidas, ultimo)

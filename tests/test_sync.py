@@ -44,12 +44,21 @@ def test_un_precio_distinto_si_cuenta_como_cambio(tmp_path):
     assert escribir_snapshot(path, [replace(una(), buyout_copper=80_000_000)]) is True
 
 
-def test_el_snapshot_no_lleva_marcas_de_tiempo(tmp_path):
+def test_el_snapshot_no_cambia_si_no_has_jugado(tmp_path):
     """Sin esto, la tarea programada generaria un commit cada cuarto de hora
-    aunque no hubieras tocado nada."""
+    aunque no hubieras tocado nada.
+
+    El volcado si lleva la hora a la que exporto el addon, que es lo que permite
+    despues desconfiar de una maquina que se ha quedado atras. Pero esa hora la
+    estampa el addon al recoger los datos de un personaje, no el sincronizador
+    al escribir el fichero: si no juegas no cambia, y los bytes salen iguales.
+    """
     path = tmp_path / "mis.json"
-    escribir_snapshot(path, [una()])
-    assert "exportedAt" not in path.read_text(encoding="utf-8")
+    assert escribir_snapshot(path, [una()]) is True
+    primero = path.read_text(encoding="utf-8")
+
+    assert escribir_snapshot(path, [una()]) is False
+    assert path.read_text(encoding="utf-8") == primero
 
 
 def test_lo_escrito_se_puede_volver_a_leer(tmp_path):
