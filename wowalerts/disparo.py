@@ -11,6 +11,10 @@ seguidas coinciden en que el disparo se ha quedado descolgado, lo mueve.
 El disparo vive en cron-job.org, fuera de este repositorio, asi que moverlo es
 una llamada a su API. Sin credenciales configuradas no se mueve nada y se avisa
 por Discord para que lo cambies tu.
+
+Durante las horas de silencio no se mide nada, porque esto acaba mandando un
+aviso. No se pierde: un cambio de horario dura semanas y quedan 16 pasadas
+despiertas al dia para cazarlo.
 """
 
 from __future__ import annotations

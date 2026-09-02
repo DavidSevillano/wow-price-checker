@@ -883,7 +883,11 @@ def run(args: argparse.Namespace) -> int:
 
     # Una vez por pasada y no dentro del bucle: si hemos estado esperando a un
     # volcado retrasado, ese retraso es de Blizzard y no dice nada del cron.
-    if result.snapshot_at and es_pasada_programada():
+    #
+    # En silencio ni se mide: esto acaba mandando un aviso a Discord, y aqui no
+    # hay nada que se pierda por esperar. Quedan 16 pasadas al dia despiertas,
+    # de sobra para cazar un cambio de horario que pasa cada varias semanas.
+    if result.snapshot_at and es_pasada_programada() and not callado:
         historial = HistorialDeVolcados(state_dir / "volcados.json")
         mantener_disparo_alineado(
             arranque, result.snapshot_at, historial, notifier, dry_run=args.dry_run
