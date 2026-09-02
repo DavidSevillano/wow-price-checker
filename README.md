@@ -247,9 +247,29 @@ salido, publiquen a la hora que publiquen. Por eso una pasada lanzada a mano a y
 58 no reintenta: su volcado de y 23 tiene 35 minutos, pero es el ultimo que
 existe.
 
+### Si el disparo se queda por delante de la publicacion
+
+Es el caso feo, y pasa solo en cuanto Blizzard mueve la publicacion mas tarde:
+disparando a y 25 con publicacion a y 31, cada pasada se encontraria el volcado
+de la hora anterior. No se pierde ninguno --la pasada de las 10:25 leeria el de
+las 09:31, la de las 11:25 el de las 10:31-- pero se leerian con **54 minutos de
+retraso**, y un chollo de hace 54 minutos ya se lo ha llevado alguien.
+
+Para eso no se espera al arreglo del disparo, que tarda tres pasadas: si al
+escanear resulta que el siguiente volcado sale dentro de poco, la pasada espera
+a ese en vez de avisar de uno casi caduco.
+
+```
+⏳ El volcado de las 09:31 UTC ya tiene 54 min y el siguiente sale en unos 6
+   min: no merece la pena avisar de chollos tan viejos. Espero al nuevo.
+```
+
+En marcha normal no espera nunca, porque el volcado recien salido tiene 2
+minutos y el siguiente esta a 58.
+
 Se ajusta en `config.yaml` con `max_dump_age_minutes`, `stale_retries`,
-`stale_retry_wait_seconds` y `dump_poll_seconds`. Con `stale_retries: 0` se
-desactiva.
+`stale_retry_wait_seconds`, `dump_poll_seconds` y `espera_maxima_minutos`. Con
+`stale_retries: 0` se desactiva.
 
 ## 3.2 Saber si esta corriendo de verdad
 

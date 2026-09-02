@@ -218,6 +218,19 @@ settings:
   # volver a escanear en cuanto aparece el volcado nuevo.
   dump_poll_seconds: 15
 
+  # Cuanto se espera a un volcado que esta a punto de salir, en vez de procesar
+  # el de la hora anterior.
+  #
+  # Esto tapa el agujero de disparar justo ANTES de la publicacion, que es lo
+  # que pasa en cuanto Blizzard la mueve mas tarde: sin esto, cada pasada
+  # avisaria de chollos de hace 54 minutos --que ya se ha llevado alguien-- y
+  # asi hasta que el disparo se recolocase tres pasadas despues.
+  #
+  # Solo se aplica a las pasadas programadas, y solo cuando el siguiente volcado
+  # cae dentro de estos minutos, asi que en marcha normal no espera nunca: el
+  # volcado recien salido tiene 2 minutos y el siguiente esta a 58.
+  espera_maxima_minutos: 12
+
   # --------------------------------------------------------------------------
   #  Horas en las que no quieres que suene nada
   # --------------------------------------------------------------------------

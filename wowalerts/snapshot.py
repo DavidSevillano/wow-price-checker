@@ -38,6 +38,22 @@ def dump_age(snapshot_at: datetime, now: datetime) -> timedelta:
     return now - snapshot_at
 
 
+def falta_para_el_siguiente(snapshot_at: datetime, now: datetime) -> float:
+    """Minutos que quedan para que Blizzard publique el volcado siguiente.
+
+    Sale de que se regenera cada hora: si el que tenemos delante salio hace 54
+    minutos, el proximo asoma en 6. Negativo significa que ya deberia haber
+    salido, o sea que van tarde.
+
+    Sirve para no tragarse un volcado casi caduco. Con el cron disparando justo
+    antes de la publicacion --que es lo que pasa cuando Blizzard la mueve mas
+    tarde-- cada pasada leeria el de la hora anterior, y un chollo de hace 54
+    minutos ya se lo ha llevado alguien. Esperar unos minutos lo arregla en el
+    acto, en vez de aguantar asi hasta que el disparo se recoloque.
+    """
+    return 60 - dump_age(snapshot_at, now).total_seconds() / 60
+
+
 def dump_is_stale(
     snapshot_at: datetime | None,
     now: datetime,

@@ -2,7 +2,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from wowalerts.snapshot import MAX_DUMP_AGE_MINUTES, dump_age, dump_is_stale
+from wowalerts.snapshot import (
+    MAX_DUMP_AGE_MINUTES,
+    dump_age,
+    dump_is_stale,
+    falta_para_el_siguiente,
+)
 
 # El margen con el que se juzga si Blizzard va tarde. Los tests lo fijan aparte
 # para no romperse si cambia el valor por defecto.
@@ -57,6 +62,22 @@ def test_el_margen_por_defecto_pasa_de_una_hora():
 def test_sin_marca_de_tiempo_no_se_reintenta():
     """Si ningun reino dio Last-Modified, el problema es otro y esperar no ayuda."""
     assert not dump_is_stale(None, utc(30, 13, 33), max_age_minutes=MAX)
+
+
+@pytest.mark.parametrize(
+    "publicado,ahora,faltan",
+    [
+        # Recien salido: queda casi la hora entera.
+        ((13, 23), (13, 25), 58),
+        # El caso feo: el disparo se ha quedado justo por delante y tenemos
+        # delante un volcado casi caduco.
+        ((12, 31), (13, 25), 6),
+        # Ya deberia haber salido: van tarde.
+        ((12, 23), (13, 33), -10),
+    ],
+)
+def test_cuanto_falta_para_el_siguiente(publicado, ahora, faltan):
+    assert falta_para_el_siguiente(utc(30, *publicado), utc(30, *ahora)) == faltan
 
 
 def test_la_antiguedad_es_la_diferencia():

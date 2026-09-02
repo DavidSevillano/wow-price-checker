@@ -49,7 +49,11 @@ from wowalerts.personajes import (
 from wowalerts.realms import RealmResolutionError, resolve_connected_realms
 from wowalerts.scanner import scan_realms
 from wowalerts.silencio import en_silencio
-from wowalerts.snapshot import dump_age, dump_is_stale
+from wowalerts.snapshot import (
+    dump_age,
+    dump_is_stale,
+    falta_para_el_siguiente,
+)
 from wowalerts.state import (
     HistorialDeVolcados,
     JsonMapCache,
@@ -673,6 +677,7 @@ def esperar_volcado_nuevo(
     realm_ids: list[int],
     conocido: datetime,
     settings,
+    segundos: int,
 ) -> bool:
     """Vigila un reino hasta que Blizzard publique un volcado posterior.
 
@@ -695,7 +700,7 @@ def esperar_volcado_nuevo(
     # Se cuenta en vueltas y no contra el reloj para que la espera sea la misma
     # mirando el log que corriendo los tests, donde el reloj va fingido.
     espera = settings.dump_poll_seconds
-    vueltas = max(1, -(-settings.stale_retry_wait_seconds // espera))
+    vueltas = max(1, -(-segundos // espera))
     for _ in range(vueltas):
         time.sleep(espera)
         try:
@@ -849,11 +854,31 @@ def run(args: argparse.Namespace) -> int:
         )
 
         ahora = datetime.now(timezone.utc)
-        if not dump_is_stale(result.snapshot_at, ahora, settings.max_dump_age_minutes):
+        tarde = dump_is_stale(result.snapshot_at, ahora, settings.max_dump_age_minutes)
+
+        # El otro motivo para esperar: el volcado que tenemos delante esta a
+        # punto de caducar. Pasa cuando el disparo se queda justo por delante de
+        # la publicacion, y entonces cada pasada procesaria el de la hora
+        # anterior. Un chollo de hace 54 minutos ya no es un chollo.
+        falta = (
+            falta_para_el_siguiente(result.snapshot_at, ahora)
+            if result.snapshot_at
+            else None
+        )
+        inminente = (
+            not tarde
+            and falta is not None
+            and 0 < falta <= settings.espera_maxima_minutos
+            # Solo en las programadas: a mano la hora la eliges tu, y esperar
+            # diez minutos cuando estas probando algo no lo quiere nadie.
+            and es_pasada_programada()
+        )
+
+        if not tarde and not inminente:
             break
 
-        # Aqui snapshot_at no puede ser None: sin marca de tiempo dump_is_stale
-        # da False y ya habriamos salido del bucle.
+        # Aqui snapshot_at no puede ser None: sin marca de tiempo ni `tarde` ni
+        # `inminente` pueden ser ciertos y ya habriamos salido del bucle.
         ultimo = result.snapshot_at.strftime("%H:%M")
         edad = int(dump_age(result.snapshot_at, ahora).total_seconds() // 60)
         if intentos < 1:
@@ -866,17 +891,34 @@ def run(args: argparse.Namespace) -> int:
             )
             break
 
-        log.warning(
-            "⏳ Blizzard va tarde: el volcado mas nuevo es el de las %s UTC y ya "
-            "tiene %s min, asi que el de esta hora no ha salido. Vigilo hasta "
-            "%s s a ver si aparece (quedan %s intento(s)).",
-            ultimo,
-            edad,
-            settings.stale_retry_wait_seconds,
-            intentos,
-        )
+        if tarde:
+            margen = settings.stale_retry_wait_seconds
+            log.warning(
+                "⏳ Blizzard va tarde: el volcado mas nuevo es el de las %s UTC y "
+                "ya tiene %s min, asi que el de esta hora no ha salido. Vigilo "
+                "hasta %s s a ver si aparece (quedan %s intento(s)).",
+                ultimo,
+                edad,
+                margen,
+                intentos,
+            )
+        else:
+            # Lo que falte mas un colchon, porque no publican al segundo exacto.
+            margen = int(falta * 60) + settings.stale_retry_wait_seconds
+            log.warning(
+                "⏳ El volcado de las %s UTC ya tiene %s min y el siguiente sale "
+                "en unos %.0f min: no merece la pena avisar de chollos tan "
+                "viejos. Espero al nuevo (hasta %s s).",
+                ultimo,
+                edad,
+                falta,
+                margen,
+            )
+
         intentos -= 1
-        if not esperar_volcado_nuevo(client, realm_ids, result.snapshot_at, settings):
+        if not esperar_volcado_nuevo(
+            client, realm_ids, result.snapshot_at, settings, margen
+        ):
             log.warning(
                 "⚠️  Sigue sin aparecer. Reescaneo de todos modos por si acaso."
             )

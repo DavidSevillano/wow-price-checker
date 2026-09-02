@@ -591,6 +591,77 @@ def test_en_actions_si(monkeypatch):
     assert cli.es_pasada_programada()
 
 
+# ---------------------------------------------------------------------------
+#  No procesar un volcado que esta a punto de caducar
+# ---------------------------------------------------------------------------
+#
+#  Cuando el disparo se queda justo POR DELANTE de la publicacion --lo que pasa
+#  en cuanto Blizzard la mueve mas tarde-- cada pasada se encontraria el volcado
+#  de la hora anterior, y avisaria de chollos de hace casi una hora que ya se ha
+#  llevado alguien. Mejor esperar los pocos minutos que faltan.
+
+# A las 12:33, un volcado de las 11:39 tiene 54 min: el siguiente sale en 6.
+VOLCADO_CASI_CADUCO = {"Last-Modified": "Sun, 30 Aug 2026 11:39:00 GMT"}
+
+
+def test_espera_al_volcado_nuevo_si_esta_a_punto_de_salir(
+    entorno, reloj_parado, esperas, monkeypatch
+):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        [
+            {"json": {"auctions": []}, "headers": VOLCADO_CASI_CADUCO},
+            {"json": {"auctions": []}, "headers": VOLCADO_NUEVO},
+            {
+                "json": {"auctions": [subasta(1, 45_000 * 10_000)]},
+                "headers": VOLCADO_NUEVO,
+            },
+        ],
+    )
+
+    assert ejecutar(entorno) == 0
+
+    # El chollo sale del volcado nuevo, no del que estaba a punto de caducar.
+    embed = mensajes_discord(entorno["mock"])[0]["embeds"][0]
+    assert embed["title"] == "Greaves of the Noxious Depths"
+    assert esperas == [CADA]
+
+
+def test_a_mano_no_se_espera_aunque_el_volcado_este_viejo(
+    entorno, reloj_parado, esperas, monkeypatch
+):
+    """Esperar diez minutos mientras pruebas algo no lo quiere nadie."""
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": []},
+        headers=VOLCADO_CASI_CADUCO,
+    )
+
+    assert ejecutar(entorno) == 0
+
+    assert len(escaneos(entorno["mock"])) == 1
+    assert esperas == []
+
+
+def test_un_volcado_recien_salido_no_hace_esperar(
+    entorno, reloj_parado, esperas, monkeypatch
+):
+    """El caso normal: el siguiente esta a 50 min, no hay nada que esperar."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": []},
+        headers=VOLCADO_NUEVO,
+    )
+
+    assert ejecutar(entorno) == 0
+
+    assert len(escaneos(entorno["mock"])) == 1
+    assert esperas == []
+
+
 def test_un_volcado_al_dia_no_provoca_ninguna_espera(entorno, reloj_parado, esperas):
     entorno["mock"].get(
         f"{BASE}/connected-realm/1305/auctions",

@@ -67,6 +67,9 @@ class Settings:
     # Cada cuanto se le pregunta a Blizzard si ya ha publicado, mientras se
     # espera. Preguntar cuesta 0,4 s y unos KB, asi que se puede mirar a menudo.
     dump_poll_seconds: int = 15
+    # Cuantos minutos se esta dispuesto a esperar a un volcado que esta a punto
+    # de salir, en vez de procesar el de la hora anterior. A 0 se desactiva.
+    espera_maxima_minutos: int = 12
     # ------------------------------------------------------------------------
     #  Horas en las que no quieres que suene nada
     # ------------------------------------------------------------------------
@@ -306,6 +309,9 @@ def _parse_settings(value: Any) -> Settings:
             dump_poll_seconds=int(
                 value.get("dump_poll_seconds", defaults.dump_poll_seconds)
             ),
+            espera_maxima_minutos=int(
+                value.get("espera_maxima_minutos", defaults.espera_maxima_minutos)
+            ),
             stale_retry_wait_seconds=int(
                 value.get(
                     "stale_retry_wait_seconds", defaults.stale_retry_wait_seconds
@@ -345,6 +351,12 @@ def _parse_settings(value: Any) -> Settings:
         raise ConfigError("'stale_retries' no puede ser negativo (0 lo desactiva).")
     if settings.dump_poll_seconds < 1:
         raise ConfigError("'dump_poll_seconds' debe ser al menos 1 segundo.")
+    # Media hora ya no es esperar al siguiente volcado, es hacer la pasada de la
+    # hora siguiente antes de tiempo, y en Actions el tiempo de trabajo se paga.
+    if not 0 <= settings.espera_maxima_minutos <= 30:
+        raise ConfigError(
+            "'espera_maxima_minutos' va entre 0 (desactivado) y 30."
+        )
     for campo in ("silencio_desde", "silencio_hasta"):
         hora = getattr(settings, campo)
         if not 0 <= hora <= 23:
