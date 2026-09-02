@@ -68,6 +68,28 @@ def test_reintenta_ante_un_error_temporal(requests_mock, client):
     assert client.auctions(1305).auctions == [{"id": 1}]
 
 
+def test_un_403_pasajero_se_reintenta(requests_mock, client):
+    """El 2026-09-02 toda la API dio 403 un minuto y la pasada murio en 21 s.
+
+    Un 403 normalmente significa "no tienes permiso" y no se reintenta, pero con
+    Blizzard es pasajero: las credenciales malas de verdad salen como 401 al
+    pedir el token, y de eso se encarga BlizzardAuthError.
+    """
+    give_token(requests_mock)
+    requests_mock.get(
+        INDEX_URL,
+        [
+            {"status_code": 403},
+            {
+                "status_code": 200,
+                "json": {"connected_realms": [{"href": f"{REALM_URL}"}]},
+            },
+        ],
+    )
+
+    assert client.connected_realm_ids() == [1305]
+
+
 def test_lee_la_hora_del_volcado_de_la_cabecera(requests_mock, client):
     """Last-Modified trae la hora del volcado, no la de la respuesta."""
     give_token(requests_mock)

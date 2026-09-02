@@ -21,7 +21,14 @@ log = logging.getLogger(__name__)
 TOKEN_URL = "https://oauth.battle.net/token"
 
 # Codigos que merecen reintento: limite de peticiones y caidas temporales.
-RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+# El 403 esta aqui a proposito, aunque en general signifique "no tienes permiso"
+# y reintentar no arregle nada. Con Blizzard es pasajero: un problema de verdad
+# con las credenciales sale como 401 al pedir el token, y eso se trata aparte
+# como BlizzardAuthError. El 2026-09-02 a las 07:25 UTC toda la API respondio
+# 403 durante un minuto --busquedas, indice de reinos, todo-- y la pasada murio
+# en 21 segundos sin reintentar ni una vez, cuando a las 06:25 y a las 07:52 iba
+# perfecta. Una hora sin vigilancia por un mal rato de su CDN.
+RETRYABLE_STATUS = frozenset({403, 429, 500, 502, 503, 504})
 
 
 class BlizzardError(Exception):
