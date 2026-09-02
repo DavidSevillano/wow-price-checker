@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import platform
 import re
 import subprocess
 import time
+from contextlib import contextmanager
 from datetime import datetime
 import sys
 from pathlib import Path
@@ -199,7 +201,56 @@ def subir(ficheros: list[str], push: bool) -> int:
     return EXIT_OK
 
 
+# Cuanto se da por muerto un cerrojo que nadie ha soltado. Una sincronizacion
+# tarda segundos; si lleva mas de esto, quien lo cogio ya no existe (lo mataron,
+# se apago el equipo a media pasada) y seguir respetandolo dejaria la
+# sincronizacion parada para siempre.
+CERROJO_CADUCA_EN = 600
+
+
+@contextmanager
+def en_exclusiva(carpeta: Path):
+    """Deja pasar una sola sincronizacion a la vez.
+
+    Hay dos disparadores --el vigilante y la tarea programada-- y ambos hacen
+    git en la misma carpeta. Si coinciden, el rebase de uno se encuentra el del
+    otro a medias y falla con errores que no dicen nada ("Cannot rebase onto
+    multiple branches"). No se pierde nada, porque la pasada siguiente lo
+    recoge, pero ensucia el log justo donde uno mira cuando algo va mal.
+    """
+    cerrojo = carpeta / "sync.lock"
+    cerrojo.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        edad = time.time() - cerrojo.stat().st_mtime
+        if edad > CERROJO_CADUCA_EN:
+            log.warning("Habia un cerrojo de hace %.0f s; lo doy por muerto.", edad)
+            cerrojo.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+    try:
+        descriptor = os.open(cerrojo, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        yield False
+        return
+
+    try:
+        os.write(descriptor, str(os.getpid()).encode())
+        os.close(descriptor)
+        yield True
+    finally:
+        cerrojo.unlink(missing_ok=True)
+
+
 def run(args: argparse.Namespace) -> int:
+    with en_exclusiva(Path(__file__).resolve().parent / ".state") as mio:
+        if not mio:
+            log.info("Ya hay otra sincronizacion en marcha; me la salto.")
+            return EXIT_OK
+        return _sincronizar(args)
+
+
+def _sincronizar(args: argparse.Namespace) -> int:
     wow_root = Path(args.wow_root) if args.wow_root else detectar_wow_root()
     if wow_root is None:
         log.error(

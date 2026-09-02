@@ -196,3 +196,51 @@ def test_la_firma_cubre_todas_las_cuentas(tmp_path):
 
 def test_una_carpeta_sin_volcados_da_firma_vacia(tmp_path):
     assert sync.firma_de_los_volcados(tmp_path) == ()
+
+
+# -- Un solo sincronizador a la vez -----------------------------------------
+#
+#  Hay dos disparadores (el vigilante y la tarea programada) y ambos hacen git
+#  en la misma carpeta. El 2026-09-02 coincidieron y el rebase de uno se
+#  encontro el del otro a medias: "fatal: Cannot rebase onto multiple branches".
+
+
+def test_el_segundo_no_entra_mientras_el_primero_trabaja(tmp_path):
+    with sync.en_exclusiva(tmp_path) as primero:
+        assert primero is True
+        with sync.en_exclusiva(tmp_path) as segundo:
+            assert segundo is False
+
+
+def test_el_cerrojo_se_suelta_al_terminar(tmp_path):
+    with sync.en_exclusiva(tmp_path):
+        pass
+
+    with sync.en_exclusiva(tmp_path) as despues:
+        assert despues is True
+
+
+def test_el_cerrojo_se_suelta_aunque_falle(tmp_path):
+    """Si no, un fallo dejaria la sincronizacion parada para siempre."""
+    try:
+        with sync.en_exclusiva(tmp_path):
+            raise RuntimeError("algo ha petado")
+    except RuntimeError:
+        pass
+
+    with sync.en_exclusiva(tmp_path) as despues:
+        assert despues is True
+
+
+def test_un_cerrojo_viejo_se_da_por_muerto(tmp_path):
+    """Si apagas el equipo a media pasada, nadie lo suelta."""
+    import os
+    import time as _t
+
+    cerrojo = tmp_path / "sync.lock"
+    cerrojo.write_text("999999")
+    viejo = _t.time() - sync.CERROJO_CADUCA_EN - 60
+    os.utime(cerrojo, (viejo, viejo))
+
+    with sync.en_exclusiva(tmp_path) as mio:
+        assert mio is True
