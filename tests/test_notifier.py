@@ -590,3 +590,27 @@ def test_el_enlace_del_panel_va_en_el_bloque_de_repetidas():
     )
     assert "https://discord.com/channels/1/2/3" in mensajes[-1]["embeds"][0]["description"]
 
+
+
+def make_deal_sin_ilvl(price_gold=45_000, threshold_gold=60_000):
+    return Deal(
+        auction_id=7,
+        item_id=5001,
+        item_name="Pattern: Arcanoweave Cord",
+        ilvl=None,
+        ilvl_confirmed=False,
+        price_copper=price_gold * COPPER_PER_GOLD,
+        threshold_copper=threshold_gold * COPPER_PER_GOLD,
+        realm_id=1305,
+        time_left="LONG",
+        sin_ilvl=True,
+    )
+
+
+def test_un_objeto_sin_ilvl_no_se_avisa_como_ilvl_sin_confirmar():
+    embed = build_embed(make_deal_sin_ilvl(), REALMS[1305])
+
+    assert "ilvl" not in embed["description"]
+    assert "sin confirmar" not in embed["description"]
+    # Y no sale en gris: el precio es tan fiable como el de cualquier otro.
+    assert embed["color"] != COLOR_UNCONFIRMED

@@ -7,7 +7,7 @@ la API de Blizzard.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -25,14 +25,36 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class ItemRule:
-    """Un objeto vigilado y sus precios maximos por ilvl."""
+    """Un objeto vigilado y su precio maximo.
+
+    Hay dos clases de objeto y cada una lleva su forma de precio:
+
+    - El equipo escala, y la misma pieza vale una fortuna o nada segun el ilvl,
+      asi que lleva la tabla `max_price_by_ilvl` y solo interesan los ilvl que
+      aparezcan en ella.
+    - Lo que no escala --patrones, recetas, monturas-- es siempre el mismo
+      objeto, asi que lleva un solo `max_price` y se compara contra el sin
+      mirar el ilvl.
+    """
 
     name: str
-    max_price_by_ilvl: Mapping[int, int]  # ilvl -> precio maximo en oro
+    max_price_by_ilvl: Mapping[int, int] = field(default_factory=dict)  # ilvl -> oro
     item_id: int | None = None
+    # Precio maximo unico, en oro, para los objetos que no dependen del ilvl.
+    max_price: int | None = None
+    # Los undercuts se apagan por objeto: de algunas cosas quieres que te avisen
+    # de chollos y de ventas, pero te da igual que alguien se ponga por debajo.
+    avisar_undercut: bool = True
+
+    @property
+    def sin_ilvl(self) -> bool:
+        """Si el objeto lleva precio unico en vez de tabla por ilvl."""
+        return self.max_price is not None
 
     def threshold_gold(self, ilvl: int) -> int | None:
         """Precio maximo para ese ilvl, o None si ese ilvl no interesa."""
+        if self.max_price is not None:
+            return self.max_price
         return self.max_price_by_ilvl.get(ilvl)
 
     @property
@@ -43,6 +65,8 @@ class ItemRule:
         precio esta por debajo incluso del ilvl mas barato, para no inundar de
         falsas alarmas.
         """
+        if self.max_price is not None:
+            return self.max_price
         return min(self.max_price_by_ilvl.values())
 
 
@@ -176,7 +200,8 @@ def _parse_items(value: Any) -> tuple[ItemRule, ...]:
         where = f"items[{index}]"
         if not isinstance(entry, dict):
             raise ConfigError(
-                f"{where} deberia ser un mapa con 'name' y 'max_price_by_ilvl'."
+                f"{where} deberia ser un mapa con 'name' y un precio maximo "
+                "('max_price' o 'max_price_by_ilvl')."
             )
 
         name = entry.get("name")
@@ -188,17 +213,62 @@ def _parse_items(value: Any) -> tuple[ItemRule, ...]:
             raise ConfigError(f"{where}: el objeto {name!r} esta repetido en la lista.")
         seen.add(name)
 
+        tabla = entry.get("max_price_by_ilvl")
+        unico = entry.get("max_price")
+        if (tabla is None) == (unico is None):
+            raise ConfigError(
+                f"{name!r}: pon 'max_price' o 'max_price_by_ilvl', una de las dos "
+                "y solo una. 'max_price' es un precio unico para lo que no "
+                "escala (patrones, recetas); 'max_price_by_ilvl' es la tabla "
+                "ilvl: precio del equipo."
+            )
+
         rules.append(
             ItemRule(
                 name=name,
-                max_price_by_ilvl=_parse_price_table(
-                    entry.get("max_price_by_ilvl"), name
+                max_price_by_ilvl=(
+                    {} if tabla is None else _parse_price_table(tabla, name)
                 ),
+                max_price=None if unico is None else _parse_max_price(unico, name),
                 item_id=_parse_optional_item_id(entry.get("item_id"), name),
+                avisar_undercut=_parse_bool(
+                    entry.get("avisar_undercut"), name, "avisar_undercut", True
+                ),
             )
         )
 
     return tuple(rules)
+
+
+def _parse_max_price(value: Any, item_name: str) -> int:
+    if isinstance(value, bool):
+        raise ConfigError(
+            f"{item_name!r}: 'max_price' es un precio en oro, no un si/no."
+        )
+    try:
+        precio = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(
+            f"{item_name!r}: 'max_price' debe ser un numero entero de oro "
+            f"(he encontrado {value!r})."
+        ) from exc
+    if precio <= 0:
+        raise ConfigError(
+            f"{item_name!r}: 'max_price' es {precio}; debe ser mayor que 0 "
+            "(se expresa en oro, no en cobre)."
+        )
+    return precio
+
+
+def _parse_bool(value: Any, item_name: str, campo: str, por_defecto: bool) -> bool:
+    if value is None:
+        return por_defecto
+    if not isinstance(value, bool):
+        raise ConfigError(
+            f"{item_name!r}: {campo!r} solo admite true o false "
+            f"(he encontrado {value!r})."
+        )
+    return value
 
 
 def _parse_price_table(value: Any, item_name: str) -> Mapping[int, int]:

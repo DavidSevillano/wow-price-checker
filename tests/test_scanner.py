@@ -105,3 +105,46 @@ def test_precio_en_oro_se_trunca_hacia_abajo():
     deals = scan([auction(buyout=19_999)])
     assert deals[0].price_gold == 1
     assert deals[0].price_copper == 19_999
+
+
+PATRON = ItemRule(name="Pattern: Arcanoweave Cord", max_price=60_000)
+
+
+def test_un_objeto_de_precio_unico_avisa_sin_mirar_el_ilvl():
+    deals = find_deals(
+        [auction(buyout=60_000 * COPPER_PER_GOLD, bonus=())],
+        REALM,
+        {5000: PATRON},
+        BONUS_MAP,
+    )
+
+    assert len(deals) == 1
+    deal = deals[0]
+    assert deal.sin_ilvl
+    assert deal.ilvl is None
+    assert deal.threshold_gold == 60_000
+
+
+def test_un_objeto_de_precio_unico_no_se_pierde_por_traer_ilvl():
+    # Aunque la subasta traiga bonus ids que se traducen a un ilvl, el limite
+    # sigue siendo el unico que tiene el objeto.
+    deals = find_deals(
+        [auction(buyout=59_000 * COPPER_PER_GOLD, bonus=(12843,))],
+        REALM,
+        {5000: PATRON},
+        BONUS_MAP,
+    )
+
+    assert len(deals) == 1
+    assert deals[0].sin_ilvl
+
+
+def test_un_objeto_de_precio_unico_por_encima_del_limite_se_ignora():
+    deals = find_deals(
+        [auction(buyout=60_001 * COPPER_PER_GOLD, bonus=())],
+        REALM,
+        {5000: PATRON},
+        BONUS_MAP,
+    )
+
+    assert deals == []

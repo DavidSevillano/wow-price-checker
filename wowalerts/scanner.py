@@ -33,6 +33,9 @@ class Deal:
     realm_id: int
     quantity: int = 1
     time_left: str = ""
+    # El objeto no depende del ilvl (un patron es un patron), asi que no hay
+    # ilvl que confirmar ni que ensenar.
+    sin_ilvl: bool = False
 
     @property
     def price_gold(self) -> int:
@@ -102,7 +105,11 @@ def find_deals(
 
         ilvl = resolve_ilvl(item_obj, bonus_ilvl_map)
 
-        if ilvl.value is not None:
+        if rule.sin_ilvl:
+            # Precio unico: el ilvl que traiga la subasta no cambia lo que vale,
+            # asi que ni se mira ni se ensena.
+            threshold_gold = rule.max_price
+        elif ilvl.value is not None:
             threshold_gold = rule.threshold_gold(ilvl.value)
             if threshold_gold is None:
                 # Ese ilvl no esta en la tabla del objeto: no interesa.
@@ -134,13 +141,14 @@ def find_deals(
                 auction_id=int(auction.get("id", 0)),
                 item_id=item_id,
                 item_name=rule.name,
-                ilvl=ilvl.value,
-                ilvl_confirmed=ilvl.confirmed,
+                ilvl=None if rule.sin_ilvl else ilvl.value,
+                ilvl_confirmed=ilvl.confirmed and not rule.sin_ilvl,
                 price_copper=price_copper,
                 threshold_copper=threshold_copper,
                 realm_id=realm_id,
                 quantity=int(auction.get("quantity", 1) or 1),
                 time_left=str(auction.get("time_left", "")),
+                sin_ilvl=rule.sin_ilvl,
             )
         )
 

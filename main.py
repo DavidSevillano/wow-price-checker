@@ -188,7 +188,10 @@ def parse_realm_ids(raw: str) -> list[int]:
 def print_deals(deals, realm_names, compradores=None) -> None:
     """Vuelca los chollos por consola (lo que se enviaria a Discord)."""
     for deal in deals:
-        ilvl = f"ilvl {deal.ilvl}" if deal.ilvl_confirmed else "ilvl SIN CONFIRMAR"
+        if deal.sin_ilvl:
+            ilvl = "sin ilvl"
+        else:
+            ilvl = f"ilvl {deal.ilvl}" if deal.ilvl_confirmed else "ilvl SIN CONFIRMAR"
         realm = realm_names.get(deal.realm_id, f"Reino {deal.realm_id}")
         quien = (compradores or {}).get(deal.realm_id)
         log.info(
@@ -401,6 +404,15 @@ def run_mis_subastas(
     notified = NotifiedUndercuts(
         state_dir / "undercuts.json", config.settings.state_retention_runs
     )
+    # Objetos de los que no quieres avisos de undercut. Se calculan igual que el
+    # resto: las ventas necesitan saber si a una subasta la habian adelantado
+    # para no confundir un reposteo tuyo con una venta. Lo unico que cambia es
+    # que no se envian.
+    sin_undercut = {
+        item_id
+        for item_id, rule in rules_by_item_id.items()
+        if not rule.avisar_undercut
+    }
     seguimiento = SeguimientoVentas(state_dir / "ventas.json")
     # Los avisos salen en el orden en que tienes los personajes, no en el que
     # toque descargar los reinos: asi siempre miras al mismo sitio.
@@ -451,7 +463,9 @@ def run_mis_subastas(
             snapshot.auctions, mias, config.bonus_ilvl_map, realm_id
         )
         if hacer_undercut:
-            todos.extend(del_reino_undercuts)
+            todos.extend(
+                u for u in del_reino_undercuts if u.mine.item_id not in sin_undercut
+            )
 
         if hacer_ventas:
             # Sin Last-Modified se usa el reloj, que con el cron a y 33 queda a

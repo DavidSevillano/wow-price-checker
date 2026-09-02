@@ -243,3 +243,60 @@ def test_una_zona_horaria_inventada_se_detecta_al_arrancar(tmp_path):
     )
     with pytest.raises(ConfigError, match="zona_horaria"):
         load_config(write(tmp_path, text))
+
+
+SIN_ILVL = """
+region: eu
+items:
+  - name: "Pattern: Arcanoweave Cord"
+    max_price: 60000
+    avisar_undercut: false
+"""
+
+
+def test_objeto_con_precio_unico_sin_tabla_de_ilvl(tmp_path):
+    config = load_config(write(tmp_path, SIN_ILVL))
+    regla = config.items[0]
+
+    assert regla.sin_ilvl
+    assert regla.max_price == 60000
+    # Sea cual sea el ilvl que traiga la subasta, el limite es el mismo.
+    assert regla.threshold_gold(311) == 60000
+    assert regla.threshold_gold(1) == 60000
+    assert regla.cheapest_threshold_gold == 60000
+    assert regla.avisar_undercut is False
+
+
+def test_los_objetos_normales_avisan_de_undercut_por_defecto(tmp_path):
+    config = load_config(write(tmp_path, VALID))
+    assert config.items[0].avisar_undercut is True
+    assert config.items[0].sin_ilvl is False
+
+
+def test_no_se_puede_poner_las_dos_formas_de_precio(tmp_path):
+    text = (
+        'region: eu\nitems:\n  - name: "X"\n    max_price: 100\n'
+        "    max_price_by_ilvl: { 311: 1 }\n"
+    )
+    with pytest.raises(ConfigError, match="'max_price' o 'max_price_by_ilvl'"):
+        load_config(write(tmp_path, text))
+
+
+def test_un_objeto_sin_ningun_precio(tmp_path):
+    with pytest.raises(ConfigError, match="'max_price' o 'max_price_by_ilvl'"):
+        load_config(write(tmp_path, 'region: eu\nitems:\n  - name: "X"\n'))
+
+
+def test_max_price_tiene_que_ser_un_entero_positivo(tmp_path):
+    with pytest.raises(ConfigError, match="max_price"):
+        load_config(write(tmp_path, 'region: eu\nitems:\n  - name: "X"\n    max_price: 0\n'))
+    with pytest.raises(ConfigError, match="max_price"):
+        load_config(
+            write(tmp_path, 'region: eu\nitems:\n  - name: "X"\n    max_price: barato\n')
+        )
+
+
+def test_avisar_undercut_tiene_que_ser_si_o_no(tmp_path):
+    text = 'region: eu\nitems:\n  - name: "X"\n    max_price: 10\n    avisar_undercut: quizas\n'
+    with pytest.raises(ConfigError, match="avisar_undercut"):
+        load_config(write(tmp_path, text))

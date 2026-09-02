@@ -853,3 +853,150 @@ def test_la_firma_de_run_mis_subastas_acepta_la_llamada_de_run():
         "mis_subastas_path",
         "roster_path",
     ]
+
+
+# -- Objetos de los que no quieres avisos de undercut -------------------------
+
+CONFIG_SIN_UNDERCUT = """
+region: eu
+items:
+  - name: "Greaves of the Noxious Depths"
+    item_id: 5000
+    max_price_by_ilvl: { 311: 90000 }
+  - name: "Pattern: Arcanoweave Cord"
+    item_id: 5001
+    max_price: 60000
+    avisar_undercut: false
+bonus_ilvl_map:
+  12843: 311
+"""
+
+
+def _mia(auction_id, item_id, nombre, oro, bonus, ilvl):
+    return {
+        "auctionID": auction_id,
+        "itemID": item_id,
+        "itemName": nombre,
+        "ilvl": ilvl,
+        "buyout": oro * 10_000,
+        "quantity": 1,
+        "character": "Ana",
+        "realm": "Dun Modr",
+        "bonusIDs": list(bonus),
+        "exportedAt": int(datetime.now(timezone.utc).timestamp()),
+    }
+
+
+def _ajena(auction_id, item_id, oro, bonus):
+    return {
+        "id": auction_id,
+        "item": {"id": item_id, "bonus_lists": list(bonus)},
+        "buyout": oro * 10_000,
+        "quantity": 1,
+        "time_left": "LONG",
+    }
+
+
+def test_un_objeto_con_avisar_undercut_false_no_genera_avisos(
+    entorno, tmp_path, monkeypatch, caplog
+):
+    """Del patron quiero chollos y ventas, pero no que me adelanten."""
+    Path(entorno["config"]).write_text(CONFIG_SIN_UNDERCUT, encoding="utf-8")
+
+    subastas_dir = tmp_path / "subastas"
+    subastas_dir.mkdir()
+    (subastas_dir / "pc.json").write_text(
+        json.dumps(
+            {
+                "auctions": [
+                    _mia(900, 5000, "Grebas de las profundidades", 80_000, (12843,), 311),
+                    _mia(901, 5001, "Patron: cordon arcanotejido", 60_000, (), 1),
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "roster").mkdir()
+
+    entorno["mock"].get(
+        f"{BASE}/realm/dun-modr",
+        json={"connected_realm": {"href": f"{BASE}/connected-realm/1305"}},
+    )
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={
+            "auctions": [
+                _ajena(900, 5000, 80_000, (12843,)),  # la mia
+                _ajena(910, 5000, 70_000, (12843,)),  # me adelanta
+                _ajena(901, 5001, 60_000, ()),  # la mia
+                _ajena(911, 5001, 50_000, ()),  # me adelanta, pero da igual
+            ]
+        },
+    )
+
+    with caplog.at_level(logging.INFO):
+        assert (
+            ejecutar(
+                entorno,
+                "--undercut",
+                "--dry-run",
+                "--mis-subastas",
+                str(subastas_dir),
+                "--personajes",
+                str(tmp_path / "roster"),
+            )
+            == cli.EXIT_OK
+        )
+
+    assert "Grebas de las profundidades" in caplog.text
+    assert "cordon arcanotejido" not in caplog.text
+    assert "Te han adelantado en 1 subasta(s)" in caplog.text
+
+
+def test_sin_apagarlo_ese_mismo_objeto_si_avisaria(entorno, tmp_path, caplog):
+    """La otra mitad del test anterior: sin la linea, el aviso sale."""
+    Path(entorno["config"]).write_text(
+        CONFIG_SIN_UNDERCUT.replace("    avisar_undercut: false\n", ""),
+        encoding="utf-8",
+    )
+
+    subastas_dir = tmp_path / "subastas"
+    subastas_dir.mkdir()
+    (subastas_dir / "pc.json").write_text(
+        json.dumps(
+            {
+                "auctions": [
+                    _mia(901, 5001, "Patron: cordon arcanotejido", 60_000, (), 1),
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "roster").mkdir()
+
+    entorno["mock"].get(
+        f"{BASE}/realm/dun-modr",
+        json={"connected_realm": {"href": f"{BASE}/connected-realm/1305"}},
+    )
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={
+            "auctions": [
+                _ajena(901, 5001, 60_000, ()),
+                _ajena(911, 5001, 50_000, ()),
+            ]
+        },
+    )
+
+    with caplog.at_level(logging.INFO):
+        ejecutar(
+            entorno,
+            "--undercut",
+            "--dry-run",
+            "--mis-subastas",
+            str(subastas_dir),
+            "--personajes",
+            str(tmp_path / "roster"),
+        )
+
+    assert "cordon arcanotejido" in caplog.text

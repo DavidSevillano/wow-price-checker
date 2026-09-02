@@ -86,6 +86,28 @@ Puntos importantes:
 - Si un nombre da problemas, puedes fijar el id a mano:
   `item_id: 213456`. Lo ves en la URL de Wowhead del objeto.
 
+### Objetos que no dependen del ilvl
+
+Un patron, una receta o una montura no escalan: siempre son el mismo objeto, y
+una tabla por ilvl no significa nada ahi. Esos llevan un precio unico:
+
+```yaml
+items:
+  - name: "Pattern: Arcanoweave Cord"
+    item_id: 258126
+    max_price: 60000
+    avisar_undercut: false
+```
+
+- `max_price` es el limite en oro, y se avisa de cualquier subasta a ese precio
+  o por debajo, venga con el ilvl que venga.
+- Cada objeto lleva `max_price` **o** `max_price_by_ilvl`, nunca los dos.
+- `avisar_undercut: false` apaga los avisos de undercut de ese objeto y solo de
+  ese. Los chollos y los avisos de venta siguen funcionando igual: el undercut
+  se sigue calculando por dentro, porque el seguimiento de ventas lo necesita
+  para no confundir un reposteo tuyo con una venta; lo unico que no pasa es que
+  te lo envie.
+
 Si cambias algo mal, el script te lo dice al arrancar y no llega a escanear.
 
 ### Cuando no se puede saber el ilvl

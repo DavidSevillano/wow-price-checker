@@ -63,7 +63,7 @@ def _time_left_label(raw: str) -> str:
 
 
 def _color_for(deal: Deal) -> int:
-    if not deal.ilvl_confirmed:
+    if not deal.ilvl_confirmed and not deal.sin_ilvl:
         return COLOR_UNCONFIRMED
     if deal.discount_pct >= 50:
         return COLOR_STEAL
@@ -80,17 +80,21 @@ def build_embed(
     quien_compra: str | None = None,
 ) -> dict[str, Any]:
     """Tarjeta de Discord para un chollo."""
-    if deal.ilvl_confirmed:
-        ilvl_text = f"ilvl **{deal.ilvl}**"
+    if deal.sin_ilvl:
+        # Un patron no escala, asi que no hay ilvl del que hablar. El separador
+        # viaja dentro del texto para no dejar un punto suelto colgando.
+        ilvl_text = ""
+    elif deal.ilvl_confirmed:
+        ilvl_text = f"  ·  ilvl **{deal.ilvl}**"
     else:
-        ilvl_text = "ilvl **sin confirmar**"
+        ilvl_text = "  ·  ilvl **sin confirmar**"
 
     description = (
-        f"**{format_gold(deal.price_gold)} de oro**  ·  {ilvl_text}\n"
+        f"**{format_gold(deal.price_gold)} de oro**{ilvl_text}\n"
         f"Un {deal.discount_pct:.0f}% por debajo de tu limite "
         f"({format_gold(deal.threshold_gold)} de oro)."
     )
-    if not deal.ilvl_confirmed:
+    if not deal.ilvl_confirmed and not deal.sin_ilvl:
         description += (
             "\n\n> No he podido determinar el ilvl de esta subasta, asi que la "
             "he comparado con tu precio mas bajo para ese objeto. Comprueba el "

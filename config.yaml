@@ -12,9 +12,16 @@ region: eu
 # ----------------------------------------------------------------------------
 #  OBJETOS QUE VIGILAR
 # ----------------------------------------------------------------------------
-#  Cada objeto tiene su propia tabla "ilvl -> precio maximo EN ORO".
+#  El equipo lleva su propia tabla "ilvl -> precio maximo EN ORO".
 #  Solo se avisa de los ilvl que aparezcan aqui: si una subasta es de un ilvl
 #  que no has listado, se ignora aunque sea baratisima.
+#
+#  Lo que no escala (patrones, recetas, monturas) es siempre el mismo objeto,
+#  asi que en vez de tabla lleva un unico "max_price" en oro y se avisa de
+#  cualquier subasta a ese precio o por debajo.
+#
+#  Con "avisar_undercut: false" ese objeto deja de generar avisos de undercut.
+#  Los chollos y las ventas siguen igual.
 #
 #  Opcionalmente puedes fijar "item_id" para saltarte la busqueda por nombre
 #  (mas rapido y a prueba de cambios de nombre). Lo veras en el log la primera
@@ -47,6 +54,19 @@ items:
 
   - name: "Bound Serpent's Jade Eye"
     max_price_by_ilvl: { 295: 9000, 298: 12000, 305: 40000, 308: 60000, 311: 90000 }
+
+  # Los patrones no escalan: no hay ilvl que valga mas o menos, asi que llevan
+  # un solo precio con "max_price". De estos no quiero avisos de undercut, solo
+  # chollos y ventas, y eso es lo que apaga "avisar_undercut".
+  - name: "Pattern: Arcanoweave Cord"
+    item_id: 258126
+    max_price: 60000
+    avisar_undercut: false
+
+  - name: "Pattern: Luxurious Silvermoon Lounge Cushion"
+    item_id: 258131
+    max_price: 60000
+    avisar_undercut: false
 
 # ----------------------------------------------------------------------------
 #  ORDEN DE LOS AVISOS
