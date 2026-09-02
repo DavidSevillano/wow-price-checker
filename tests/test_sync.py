@@ -148,3 +148,51 @@ def test_git_se_lanza_sin_abrir_ventana(monkeypatch):
 
     esperado = getattr(sp, "CREATE_NO_WINDOW", 0)
     assert visto.get("creationflags") == esperado
+
+
+# ---------------------------------------------------------------------------
+#  Vigilar la salida del juego
+# ---------------------------------------------------------------------------
+#
+#  El addon solo vuelca al salir al selector o cerrar WoW. Si hubiera que
+#  esperar al temporizador, lo normal seria apagar el equipo antes: lo exportado
+#  se quedaria sin subir hasta el siguiente encendido, y para entonces las
+#  subastas ya han caducado y no se puede saber si alguna se vendio.
+
+import sync_subastas as sync
+
+
+def con_volcado(tmp_path, cuenta="403840080#1", contenido="x"):
+    ruta = tmp_path / "WTF" / "Account" / cuenta / "SavedVariables"
+    ruta.mkdir(parents=True, exist_ok=True)
+    fichero = ruta / "WowAlertsExport.lua"
+    fichero.write_text(contenido, encoding="utf-8")
+    return fichero
+
+
+def test_la_firma_cambia_cuando_wow_guarda(tmp_path):
+    con_volcado(tmp_path, contenido="antes")
+    antes = sync.firma_de_los_volcados(tmp_path)
+
+    con_volcado(tmp_path, contenido="despues, mas largo")
+
+    assert sync.firma_de_los_volcados(tmp_path) != antes
+
+
+def test_la_firma_no_cambia_sola(tmp_path):
+    """Si cambiara sin motivo, se sincronizaria en bucle sin parar."""
+    con_volcado(tmp_path)
+
+    assert sync.firma_de_los_volcados(tmp_path) == sync.firma_de_los_volcados(tmp_path)
+
+
+def test_la_firma_cubre_todas_las_cuentas(tmp_path):
+    """Con varias cuentas de WoW hay un fichero por cada una."""
+    con_volcado(tmp_path, cuenta="403840080#1")
+    con_volcado(tmp_path, cuenta="403840080#3")
+
+    assert len(sync.firma_de_los_volcados(tmp_path)) == 2
+
+
+def test_una_carpeta_sin_volcados_da_firma_vacia(tmp_path):
+    assert sync.firma_de_los_volcados(tmp_path) == ()

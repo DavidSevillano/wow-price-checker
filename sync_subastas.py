@@ -19,6 +19,7 @@ import logging
 import platform
 import re
 import subprocess
+import time
 from datetime import datetime
 import sys
 from pathlib import Path
@@ -111,6 +112,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-push",
         action="store_true",
         help="Hace el commit pero no lo sube.",
+    )
+    parser.add_argument(
+        "--vigilar",
+        action="store_true",
+        help="No termina: sincroniza cada vez que WoW guarda los datos del "
+        "addon, que es al salir al selector de personajes o cerrar el juego.",
+    )
+    parser.add_argument(
+        "--vigilar-cada",
+        type=int,
+        default=5,
+        help="Segundos entre comprobaciones con --vigilar (por defecto: 5).",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser
@@ -259,6 +272,75 @@ def run(args: argparse.Namespace) -> int:
     return subir(cambiados, push=not args.no_push)
 
 
+def firma_de_los_volcados(wow_root: Path) -> tuple:
+    """Como estan ahora mismo los ficheros que escribe WoW.
+
+    Fecha y tamano de cada uno. Comparar dos firmas dice si WoW ha guardado algo
+    desde la ultima vez que miramos.
+    """
+    firma = []
+    for fichero in encontrar_savedvariables(wow_root):
+        try:
+            estado = fichero.stat()
+        except OSError:
+            # Puede desaparecer a media escritura: WoW guarda creando y
+            # renombrando. Se recoge en la vuelta siguiente.
+            continue
+        firma.append((str(fichero), estado.st_mtime_ns, estado.st_size))
+    return tuple(firma)
+
+
+def vigilar(args: argparse.Namespace) -> int:
+    """Sincroniza en cuanto WoW guarda los datos del addon.
+
+    WoW escribe los SavedVariables al salir al selector de personajes y al
+    cerrar el juego, asi que vigilar esos ficheros es enterarse justo cuando hay
+    algo nuevo que subir. Sin esto habria que esperar a la siguiente pasada del
+    temporizador, y lo normal es apagar el equipo antes: entonces lo exportado
+    se queda sin subir hasta el siguiente encendido, y para cuando sube, las
+    subastas ya han caducado y no se puede saber si alguna se vendio.
+
+    En la Steam Deck esto lo hace systemd con una unidad .path. En Windows el
+    Programador de tareas no tiene disparador por cambio de fichero, asi que el
+    vigilante es este bucle. Mirar unas fechas cada pocos segundos no cuesta
+    nada, y se espera a que dejen de cambiar antes de sincronizar porque WoW
+    guarda varios ficheros seguidos.
+    """
+    wow_root = Path(args.wow_root) if args.wow_root else detectar_wow_root()
+    if wow_root is None:
+        log.error("No encuentro la carpeta de WoW: no hay nada que vigilar.")
+        return EXIT_ERROR
+
+    log.info(
+        "👀 Vigilando %s. Sincronizare cada vez que salgas al selector de "
+        "personajes o cierres el juego. Ctrl+C para parar.",
+        wow_root,
+    )
+    anterior = firma_de_los_volcados(wow_root)
+    try:
+        while True:
+            time.sleep(args.vigilar_cada)
+            actual = firma_de_los_volcados(wow_root)
+            if actual == anterior:
+                continue
+
+            # Esperar a que WoW termine de guardar: si sincronizaramos con la
+            # primera senal leeriamos un fichero a medias.
+            while True:
+                time.sleep(args.vigilar_cada)
+                despues = firma_de_los_volcados(wow_root)
+                if despues == actual:
+                    break
+                actual = despues
+
+            anterior = actual
+            log.info("💾 WoW ha guardado. Sincronizando.")
+            run(args)
+    except KeyboardInterrupt:
+        log.info("Vigilancia detenida.")
+        return EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(
@@ -267,7 +349,7 @@ def main(argv: list[str] | None = None) -> int:
         stream=sys.stdout,
     )
     try:
-        return run(args)
+        return vigilar(args) if args.vigilar else run(args)
     except MisSubastasError as exc:
         log.error("%s", exc)
         return EXIT_ERROR

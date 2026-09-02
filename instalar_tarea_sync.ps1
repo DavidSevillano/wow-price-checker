@@ -8,6 +8,7 @@
 $ErrorActionPreference = "Stop"
 
 $nombre = "WoW subastas sync"
+$nombreVigilante = "WoW subastas vigilante"
 $proyecto = $PSScriptRoot
 $python = Join-Path $proyecto ".venv\Scripts\pythonw.exe"
 $script = Join-Path $proyecto "sync_subastas.py"
@@ -49,11 +50,53 @@ Register-ScheduledTask `
     -Description "Sube a GitHub las subastas que exporta el addon WowAlertsExport." `
     -Force | Out-Null
 
+# --- Vigilante: sincroniza al salir del juego ------------------------------
+#
+#  El addon solo vuelca sus datos cuando WoW los escribe, y eso pasa al salir al
+#  selector de personajes o cerrar el juego. Esperar a la pasada de los 15
+#  minutos no vale: lo normal es apagar el equipo antes, y entonces lo exportado
+#  se queda sin subir hasta el siguiente encendido. Para cuando sube, las
+#  subastas ya han caducado y no hay forma de saber si alguna se vendio.
+#
+#  En la Steam Deck esto lo hace systemd con una unidad .path. El Programador de
+#  tareas de Windows no tiene disparador por cambio de fichero, asi que aqui se
+#  deja un vigilante en marcha desde el inicio de sesion. No consume: mira unas
+#  fechas cada cinco segundos y duerme.
+$accionVigilante = New-ScheduledTaskAction `
+    -Execute $python `
+    -Argument "`"$script`" --maquina pc --vigilar" `
+    -WorkingDirectory $proyecto
+
+$disparadorVigilante = New-ScheduledTaskTrigger -AtLogOn
+
+# Sin limite de tiempo: el vigilante esta pensado para no terminar nunca. Con el
+# limite por defecto, Windows lo mataria a los tres dias sin decir nada.
+$ajustesVigilante = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -ExecutionTimeLimit (New-TimeSpan -Seconds 0) `
+    -RestartCount 3 `
+    -RestartInterval (New-TimeSpan -Minutes 1)
+
+Register-ScheduledTask `
+    -TaskName $nombreVigilante `
+    -Action $accionVigilante `
+    -Trigger $disparadorVigilante `
+    -Settings $ajustesVigilante `
+    -Description "Sincroniza las subastas en cuanto WoW guarda los datos del addon." `
+    -Force | Out-Null
+
 # Comprobar de verdad que existe, en vez de fiarse de que no haya saltado nada.
 $tarea = Get-ScheduledTask -TaskName $nombre -ErrorAction SilentlyContinue
 if (-not $tarea) {
     throw "La tarea no se ha creado. Revisa los permisos de tu usuario."
 }
+if (-not (Get-ScheduledTask -TaskName $nombreVigilante -ErrorAction SilentlyContinue)) {
+    throw "El vigilante no se ha creado. Revisa los permisos de tu usuario."
+}
+
+# Arrancarlo ya, para no tener que cerrar sesion la primera vez.
+Start-ScheduledTask -TaskName $nombreVigilante
 
 Write-Host ""
 Write-Host "Tarea '$nombre' creada y verificada." -ForegroundColor Green
@@ -64,5 +107,9 @@ Write-Host ""
 Write-Host "Para lanzarla ahora mismo:" -ForegroundColor Green
 Write-Host "  Start-ScheduledTask -TaskName `"$nombre`""
 Write-Host ""
-Write-Host "Para quitarla:" -ForegroundColor Green
+Write-Host "Tarea '$nombreVigilante' creada y arrancada." -ForegroundColor Green
+Write-Host "  Sincroniza en cuanto sales al selector o cierras WoW."
+Write-Host ""
+Write-Host "Para quitarlas:" -ForegroundColor Green
 Write-Host "  Unregister-ScheduledTask -TaskName `"$nombre`" -Confirm:`$false"
+Write-Host "  Unregister-ScheduledTask -TaskName `"$nombreVigilante`" -Confirm:`$false"
