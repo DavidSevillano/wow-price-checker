@@ -267,6 +267,17 @@ a ese en vez de avisar de uno casi caduco.
 En marcha normal no espera nunca, porque el volcado recien salido tiene 2
 minutos y el siguiente esta a 58.
 
+Y tiene freno de mano: esperar sale a cuenta mientras el disparo acabe
+recolocandose, pero si no lo hiciera --la clave de cron-job.org caducada, por
+ejemplo-- esperar 12 minutos cada hora son 288 al dia, y en un repositorio
+privado el tiempo de Actions se paga. Tras 4 pasadas seguidas esperando, tira la
+toalla y lo dice:
+
+```
+⚠️ Llevo 4 pasadas esperando al volcado y el disparo sigue sin recolocarse.
+   Dejo de esperar para no gastar horas de Actions.
+```
+
 Se ajusta en `config.yaml` con `max_dump_age_minutes`, `stale_retries`,
 `stale_retry_wait_seconds`, `dump_poll_seconds` y `espera_maxima_minutos`. Con
 `stale_retries: 0` se desactiva.

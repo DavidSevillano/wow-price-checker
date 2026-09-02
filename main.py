@@ -581,6 +581,13 @@ def run_mis_subastas(
     return EXIT_OK
 
 
+# Cuantas pasadas seguidas se aceptan esperando al volcado nuevo antes de tirar
+# la toalla. Esperar sale a cuenta mientras es pasajero, hasta que el disparo se
+# recoloque; si no se recolocara nunca, esperar cada hora se comeria la cuota de
+# GitHub Actions en pocos dias.
+ESPERAS_SEGUIDAS_MAXIMAS = 4
+
+
 def es_pasada_programada() -> bool:
     """Si nos ha lanzado el cron y no un humano.
 
@@ -837,6 +844,7 @@ def run(args: argparse.Namespace) -> int:
 
     settings = config.settings
     intentos = settings.stale_retries
+    historial = HistorialDeVolcados(state_dir / "volcados.json")
 
     while True:
         result = scan_once(
@@ -865,7 +873,7 @@ def run(args: argparse.Namespace) -> int:
             if result.snapshot_at
             else None
         )
-        inminente = (
+        caduca_ya = (
             not tarde
             and falta is not None
             and 0 < falta <= settings.espera_maxima_minutos
@@ -873,6 +881,26 @@ def run(args: argparse.Namespace) -> int:
             # diez minutos cuando estas probando algo no lo quiere nadie.
             and es_pasada_programada()
         )
+
+        # El contador solo se reinicia cuando el volcado llega sano, no cuando
+        # dejamos de esperar por el tope: si no, se esperaria cuatro de cada
+        # cinco pasadas para siempre, que es justo lo que el tope evita.
+        if not caduca_ya:
+            historial.reinicia_esperas()
+
+        inminente = caduca_ya
+        if caduca_ya and historial.esperas_seguidas >= ESPERAS_SEGUIDAS_MAXIMAS:
+            # Esperar sale a cuenta mientras es pasajero, hasta que el disparo se
+            # recoloque. Si llevamos tantas pasadas asi es que no se ha
+            # recolocado --la clave de cron-job.org caducada, por ejemplo-- y
+            # seguir esperando cada hora se comeria la cuota de Actions.
+            log.warning(
+                "⚠️  Llevo %s pasadas esperando al volcado y el disparo sigue sin "
+                "recolocarse. Dejo de esperar para no gastar horas de Actions: "
+                "los avisos saldran con retraso hasta que muevas el cron.",
+                historial.esperas_seguidas,
+            )
+            inminente = False
 
         if not tarde and not inminente:
             break
@@ -903,6 +931,7 @@ def run(args: argparse.Namespace) -> int:
                 intentos,
             )
         else:
+            historial.apunta_espera()
             # Lo que falte mas un colchon, porque no publican al segundo exacto.
             margen = int(falta * 60) + settings.stale_retry_wait_seconds
             log.warning(
@@ -930,12 +959,15 @@ def run(args: argparse.Namespace) -> int:
     # hay nada que se pierda por esperar. Quedan 16 pasadas al dia despiertas,
     # de sobra para cazar un cambio de horario que pasa cada varias semanas.
     if result.snapshot_at and es_pasada_programada() and not callado:
-        historial = HistorialDeVolcados(state_dir / "volcados.json")
         mantener_disparo_alineado(
             arranque, result.snapshot_at, historial, notifier, dry_run=args.dry_run
         )
-        if not args.dry_run:
-            historial.save()
+
+    # Fuera del if: la cuenta de esperas se lleva en el bucle de arriba y hay que
+    # guardarla aunque no toque medir el disparo, que es de lo que depende el
+    # tope de gasto.
+    if not args.dry_run:
+        historial.save()
 
     if result.failure_ratio > settings.failure_ratio_threshold:
         message = (

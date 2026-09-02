@@ -6,6 +6,7 @@ nada a Discord de verdad.
 
 import json
 import logging
+from pathlib import Path
 from datetime import datetime, timezone
 
 import pytest
@@ -643,6 +644,55 @@ def test_a_mano_no_se_espera_aunque_el_volcado_este_viejo(
 
     assert len(escaneos(entorno["mock"])) == 1
     assert esperas == []
+
+
+def test_deja_de_esperar_si_el_disparo_no_se_recoloca(
+    entorno, reloj_parado, esperas, monkeypatch, caplog, tmp_path
+):
+    """El freno de mano del gasto.
+
+    Esperar sale a cuenta mientras el disparo acabe recolocandose. Si no lo
+    hiciera --la clave de cron-job.org caducada, por ejemplo-- esperar 12 min
+    cada hora son 288 al dia, y en Actions el tiempo de trabajo se paga.
+    """
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    caplog.set_level(logging.WARNING)
+    historial = cli.HistorialDeVolcados(Path(entorno["state"]) / "volcados.json")
+    for _ in range(cli.ESPERAS_SEGUIDAS_MAXIMAS):
+        historial.apunta_espera()
+    historial.save()
+
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": []},
+        headers=VOLCADO_CASI_CADUCO,
+    )
+
+    assert ejecutar(entorno) == 0
+
+    assert len(escaneos(entorno["mock"])) == 1
+    assert esperas == []
+    assert "Dejo de esperar" in caplog.text
+
+
+def test_el_contador_de_esperas_se_reinicia_al_llegar_un_volcado_sano(
+    entorno, reloj_parado, esperas, monkeypatch
+):
+    """Si no, tras un episodio malo quedaria el freno echado para siempre."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    ruta = Path(entorno["state"]) / "volcados.json"
+    historial = cli.HistorialDeVolcados(ruta)
+    historial.apunta_espera()
+    historial.save()
+
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": []},
+        headers=VOLCADO_NUEVO,
+    )
+    ejecutar(entorno)
+
+    assert cli.HistorialDeVolcados(ruta).esperas_seguidas == 0
 
 
 def test_un_volcado_recien_salido_no_hace_esperar(

@@ -214,12 +214,33 @@ class HistorialDeVolcados:
     def __init__(self, path: str | Path, recordar: int = 6) -> None:
         self.path = Path(path)
         self.recordar = recordar
-        raw = (_read_json(self.path) or {}).get("minutos")
+        guardado = _read_json(self.path) or {}
+        raw = guardado.get("minutos")
         self._minutos: list[int] = (
             [int(m) for m in raw if isinstance(m, int) and 0 <= m < 60]
             if isinstance(raw, list)
             else []
         )
+        esperas = guardado.get("esperas")
+        self._esperas: int = esperas if isinstance(esperas, int) and esperas >= 0 else 0
+
+    @property
+    def esperas_seguidas(self) -> int:
+        """Cuantas pasadas seguidas se han quedado esperando al volcado nuevo.
+
+        Es el freno de mano del gasto. Esperar sale a cuenta mientras es algo
+        pasajero, hasta que el disparo se recoloca; si el disparo no se
+        recolocase --la clave de cron-job.org caducada, por ejemplo-- se estaria
+        esperando cada hora para siempre, y el tiempo de trabajo en Actions se
+        paga.
+        """
+        return self._esperas
+
+    def apunta_espera(self) -> None:
+        self._esperas += 1
+
+    def reinicia_esperas(self) -> None:
+        self._esperas = 0
 
     @property
     def minutos(self) -> list[int]:
@@ -240,7 +261,12 @@ class HistorialDeVolcados:
 
     def save(self) -> None:
         _write_json_atomic(
-            self.path, {"version": STATE_VERSION, "minutos": self._minutos}
+            self.path,
+            {
+                "version": STATE_VERSION,
+                "minutos": self._minutos,
+                "esperas": self._esperas,
+            },
         )
 
 
