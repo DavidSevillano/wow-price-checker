@@ -180,17 +180,44 @@ El minuto sale de cuando Blizzard regenera los datos, mas un par de minutos de
 margen. **Ese momento se mueve**: el 2026-08-31 el volcado salia a las
 `:31:22` y el 2026-09-02 ya salia a las `:23:30`.
 
-No hace falta que lo vigiles: cada pasada mide el desfase y lo canta con el
-minuto exacto al que conviene mover el disparo, en los dos sentidos.
+No hace falta que lo vigiles. Cada pasada apunta a que minuto ha publicado
+Blizzard, y cuando **tres pasadas seguidas** coinciden en que el disparo se ha
+descolgado mas de 6 minutos, actua. Tres y no una: si Blizzard tiene un mal rato
+y publica tarde una hora suelta, mover el cron detras de ese tropiezo lo dejaria
+mal puesto el resto del dia.
+
+Funciona en los dos sentidos. Que el disparo se quede corto es incluso peor que
+llegar tarde: la vigilancia esta acotada a unos minutos, asi que si publican mas
+tarde de esa ventana la pasada se va de vacio y pierdes la hora entera.
+
+### Que lo mueva solo (recomendado)
+
+Con estos dos secretos puestos en el repositorio, la pasada lo cambia sola en
+cron-job.org y te lo cuenta por Discord:
+
+| Secreto | De donde sale |
+|---|---|
+| `CRONJOB_API_KEY` | cron-job.org -> Settings -> API, boton *Create API key* |
+| `CRONJOB_JOB_ID` | el numero que sale en la URL del trabajo, `.../jobs/<ID>` |
+
+Se ponen en *Settings -> Secrets and variables -> Actions* del repositorio, igual
+que los de Blizzard y Discord. Usa la API documentada en
+<https://docs.cron-job.org/rest-api.html> y lo unico que toca es el minuto del
+horario.
+
+### Si prefieres cambiarlo tu
+
+Sin esos secretos no se toca nada y el aviso llega igual por Discord, con el
+minuto exacto:
 
 ```
-💡 Blizzard publico a y 23 y la pasada arranco a y 33: llegas 10 min tarde.
-   Adelanta el disparo del cron externo al minuto 25 y tendras los avisos 8 min
-   antes.
+⚠️ El disparo se ha desalineado
+Blizzard lleva 3 pasadas publicando a y 23 y el disparo esta en y 33.
+Entra en cron-job.org y pon el disparo en el minuto 25: tendras los avisos antes.
 ```
 
-Cuando salga eso, entra en cron-job.org y cambia el minuto. Es lo unico que hay
-que hacer a mano, porque el disparo vive fuera de este repositorio.
+Ese aviso no se repite cada hora: tras mandarlo se olvida lo medido y vuelve a
+contar, asi que si no le haces caso reincide cada tres pasadas, no cada una.
 
 ### Si Blizzard llega tarde
 

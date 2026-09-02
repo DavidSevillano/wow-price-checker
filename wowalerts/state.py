@@ -202,6 +202,48 @@ class RealmIdCache(JsonMapCache):
         super().__init__(path, "realms")
 
 
+class HistorialDeVolcados:
+    """A que minuto ha ido publicando Blizzard en las ultimas pasadas.
+
+    Hace falta memoria de varias pasadas porque una sola observacion no
+    distingue "han movido la hora de publicacion" de "hoy han tenido un mal rato
+    y han tardado", y mover el disparo del cron detras de un tropiezo suelto lo
+    dejaria mal puesto el resto del dia.
+    """
+
+    def __init__(self, path: str | Path, recordar: int = 6) -> None:
+        self.path = Path(path)
+        self.recordar = recordar
+        raw = (_read_json(self.path) or {}).get("minutos")
+        self._minutos: list[int] = (
+            [int(m) for m in raw if isinstance(m, int) and 0 <= m < 60]
+            if isinstance(raw, list)
+            else []
+        )
+
+    @property
+    def minutos(self) -> list[int]:
+        """Los minutos observados, el mas reciente al final."""
+        return list(self._minutos)
+
+    def apunta(self, minuto: int) -> None:
+        self._minutos.append(minuto)
+        del self._minutos[: -self.recordar]
+
+    def olvida(self) -> None:
+        """Borra el historial, para empezar a medir de cero tras mover el cron.
+
+        Si no, las observaciones de antes del cambio seguirian ahi y la pasada
+        siguiente volveria a creer que hay que moverlo.
+        """
+        self._minutos.clear()
+
+    def save(self) -> None:
+        _write_json_atomic(
+            self.path, {"version": STATE_VERSION, "minutos": self._minutos}
+        )
+
+
 class SeguimientoVentas:
     """Las subastas tuyas que sigo para detectar cuando se venden.
 

@@ -473,40 +473,109 @@ def test_los_reintentos_se_pueden_desactivar(
 #  llegan tarde, que es la clase de deterioro del que no te enteras nunca.
 
 
-def cron(arranque_min, publicado_min, caplog, hora_publicacion=12):
+class NotificadorFalso:
+    def __init__(self):
+        self.avisos = []
+
+    def send_warning(self, titulo, texto):
+        self.avisos.append((titulo, texto))
+
+
+def alinear(tmp_path, arranque_min, publicado_min, *, hora_publicacion=12, veces=1):
+    """Corre el mantenimiento del disparo `veces` pasadas seguidas."""
+    historial = cli.HistorialDeVolcados(tmp_path / "volcados.json")
+    notificador = NotificadorFalso()
+    for _ in range(veces):
+        cli.mantener_disparo_alineado(
+            datetime(2026, 9, 2, 12, arranque_min, tzinfo=timezone.utc),
+            datetime(
+                2026, 9, 2, hora_publicacion, publicado_min, 30, tzinfo=timezone.utc
+            ),
+            historial,
+            notificador,
+            dry_run=False,
+        )
+    return notificador, historial
+
+
+def test_sin_credenciales_te_avisa_por_discord(tmp_path, monkeypatch, caplog):
+    """Enterrarlo en el log de Actions es lo mismo que no decirlo."""
+    monkeypatch.delenv("CRONJOB_API_KEY", raising=False)
+    monkeypatch.delenv("CRONJOB_JOB_ID", raising=False)
     caplog.set_level(logging.WARNING)
-    cli.avisar_de_cron_desalineado(
-        datetime(2026, 9, 2, 12, arranque_min, tzinfo=timezone.utc),
-        datetime(2026, 9, 2, hora_publicacion, publicado_min, 30, tzinfo=timezone.utc),
-    )
-    return caplog.text
 
+    notificador, _ = alinear(tmp_path, arranque_min=33, publicado_min=23, veces=3)
 
-def test_si_disparas_tarde_te_dice_a_que_minuto_adelantarlo(caplog):
-    texto = cron(arranque_min=33, publicado_min=23, caplog=caplog)
-
-    assert "Adelanta" in texto
+    assert len(notificador.avisos) == 1
+    titulo, texto = notificador.avisos[0]
+    assert "desalineado" in titulo
     assert "minuto 25" in texto
 
 
-def test_si_disparas_pronto_te_dice_que_lo_retrases(caplog):
-    """Duele mas: la espera esta acotada, asi que pasarse pierde la hora entera."""
-    texto = cron(arranque_min=20, publicado_min=23, caplog=caplog)
+def test_con_credenciales_lo_mueve_solo(tmp_path, monkeypatch, requests_mock):
+    monkeypatch.setenv("CRONJOB_API_KEY", "clave")
+    monkeypatch.setenv("CRONJOB_JOB_ID", "7788")
+    requests_mock.patch("https://api.cron-job.org/jobs/7788", json={})
 
-    assert "Retrasa" in texto
-    assert "minuto 25" in texto
+    notificador, _ = alinear(tmp_path, arranque_min=33, publicado_min=23, veces=3)
+
+    assert requests_mock.request_history[-1].json() == {
+        "job": {"schedule": {"minutes": [25]}}
+    }
+    assert "He movido" in notificador.avisos[0][0]
 
 
-def test_un_desfase_de_un_par_de_minutos_no_dice_nada(caplog):
-    """Perseguir un minuto seria pelearse con el ruido del disparo."""
-    assert cron(arranque_min=25, publicado_min=23, caplog=caplog) == ""
+def test_no_avisa_hasta_que_varias_pasadas_coinciden(tmp_path, monkeypatch):
+    """Un tropiezo suelto de Blizzard no puede mover el cron."""
+    monkeypatch.delenv("CRONJOB_API_KEY", raising=False)
+
+    notificador, _ = alinear(tmp_path, arranque_min=33, publicado_min=23, veces=2)
+
+    assert notificador.avisos == []
 
 
-def test_un_volcado_de_hace_horas_no_habla_del_cron(caplog):
+def test_un_disparo_bien_puesto_no_dice_nada(tmp_path, monkeypatch):
+    monkeypatch.delenv("CRONJOB_API_KEY", raising=False)
+
+    notificador, _ = alinear(tmp_path, arranque_min=25, publicado_min=23, veces=4)
+
+    assert notificador.avisos == []
+
+
+def test_tras_avisar_no_reincide_a_la_hora_siguiente(tmp_path, monkeypatch):
+    """Si no, tendrias el mismo aviso cada hora hasta que lo cambiaras."""
+    monkeypatch.delenv("CRONJOB_API_KEY", raising=False)
+
+    notificador, _ = alinear(tmp_path, arranque_min=33, publicado_min=23, veces=4)
+
+    assert len(notificador.avisos) == 1
+
+
+def test_un_volcado_de_hace_horas_no_habla_del_cron(tmp_path, monkeypatch):
     """Ahi el retrasado es Blizzard, y eso ya tiene su propio aviso."""
-    texto = cron(arranque_min=33, publicado_min=23, caplog=caplog, hora_publicacion=10)
+    monkeypatch.delenv("CRONJOB_API_KEY", raising=False)
 
-    assert texto == ""
+    notificador, historial = alinear(
+        tmp_path, arranque_min=33, publicado_min=23, hora_publicacion=10, veces=3
+    )
+
+    assert notificador.avisos == []
+    assert historial.minutos == []
+
+
+def test_si_cron_job_org_falla_se_reintenta_a_la_siguiente(
+    tmp_path, monkeypatch, requests_mock, caplog
+):
+    """Sin olvidar lo medido: un fallo pasajero no puede perder el diagnostico."""
+    monkeypatch.setenv("CRONJOB_API_KEY", "clave")
+    monkeypatch.setenv("CRONJOB_JOB_ID", "7788")
+    requests_mock.patch("https://api.cron-job.org/jobs/7788", status_code=500)
+    caplog.set_level(logging.ERROR)
+
+    _, historial = alinear(tmp_path, arranque_min=33, publicado_min=23, veces=3)
+
+    assert "500" in caplog.text
+    assert historial.minutos != []
 
 
 def test_a_mano_no_se_mide_el_desfase(monkeypatch):

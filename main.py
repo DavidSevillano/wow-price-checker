@@ -18,13 +18,19 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from wowalerts.blizzard import BlizzardAuthError, BlizzardClient, BlizzardError
 from wowalerts.config import ConfigError, load_config
+from wowalerts.disparo import (
+    PASADAS_QUE_TIENEN_QUE_COINCIDIR,
+    CronJobOrg,
+    DisparoError,
+    conviene_mover,
+)
 from wowalerts.items import ItemResolutionError, resolve_item_ids
 from wowalerts.misubastas import MisSubastasError, leer_canceladas, leer_snapshots
 from wowalerts.panel import build_panel
@@ -45,6 +51,7 @@ from wowalerts.scanner import scan_realms
 from wowalerts.silencio import en_silencio
 from wowalerts.snapshot import dump_age, dump_is_stale
 from wowalerts.state import (
+    HistorialDeVolcados,
     JsonMapCache,
     ItemIconCache,
     ItemIdCache,
@@ -570,72 +577,95 @@ def run_mis_subastas(
     return EXIT_OK
 
 
-# Cuantos minutos de retraso se toleran entre que Blizzard publica y arranca la
-# pasada. Por debajo de esto no merece la pena tocar nada: el disparo del cron
-# no es puntual al segundo y perseguir un minuto seria pelearse con el ruido.
-DESFASE_QUE_MERECE_AVISO = 6
-
-# Margen entre la publicacion y el disparo. Un minuto no basta: el volcado no
-# sale siempre al mismo segundo y quedarse corto cuesta una hora entera de
-# espera, mientras que pasarse cuesta un minuto de avisos.
-COLCHON_TRAS_EL_VOLCADO = 2
-
-
 def es_pasada_programada() -> bool:
     """Si nos ha lanzado el cron y no un humano.
 
-    Importa para el aviso del desfase: lanzada a mano, la hora de arranque la
-    eliges tu y no dice nada de como esta puesto el cron.
+    Importa para medir el desfase del disparo: lanzada a mano, la hora de
+    arranque la eliges tu y no dice nada de como esta puesto el cron.
     """
     return os.getenv("GITHUB_ACTIONS", "").lower() == "true"
 
 
-def avisar_de_cron_desalineado(arranque: datetime, publicado: datetime) -> None:
-    """Dice a que minuto conviene disparar el cron, si el actual va tarde.
+def mantener_disparo_alineado(
+    arranque: datetime,
+    publicado: datetime,
+    historial: HistorialDeVolcados,
+    notifier,
+    *,
+    dry_run: bool,
+) -> None:
+    """Vigila que el cron siga disparando justo despues del volcado.
 
     Blizzard mueve la hora de publicacion cada pocas semanas sin avisar: el
-    2026-08-31 el volcado salia a las :31:22 y el 2026-09-02 ya salia a las
-    :23:30. Cuando eso pasa, todo sigue funcionando y lo unico que se nota es
-    que los avisos llegan mas tarde, que es justo la clase de deterioro del que
-    no te enteras nunca. Asi que la pasada lo mide sola y lo canta.
+    2026-08-31 el volcado salia a las :31:22 y el 2026-09-02 a las :23:30.
+    Cuando pasa no se rompe nada, solo llegan los avisos mas tarde, que es la
+    clase de deterioro del que no te enteras nunca.
 
-    No se corrige solo porque el disparo vive en un cron externo, fuera de este
-    repositorio: aqui solo se puede medir y decirlo.
+    Con las credenciales de cron-job.org puestas, la pasada lo mueve sola. Sin
+    ellas avisa por Discord, porque enterrarlo en el log de Actions es lo mismo
+    que no decirlo.
     """
-    desfase = (arranque - publicado).total_seconds() / 60
-    minuto = (publicado.minute + COLCHON_TRAS_EL_VOLCADO) % 60
-
-    # Arrancamos antes de que publicaran y hubo que esperar. Duele mas que
-    # llegar tarde: la espera esta acotada, asi que si se pasan de la ventana la
-    # pasada se va de vacio y pierdes la hora entera.
-    if desfase < 0:
-        log.warning(
-            "💡 Has arrancado a y %02d y Blizzard no publico hasta y %02d: vas "
-            "%.0f min por delante y has tenido que esperar. Retrasa el disparo "
-            "del cron externo al minuto %02d, que si algun dia tardan un poco "
-            "mas te quedas sin la pasada.",
-            arranque.minute,
-            publicado.minute,
-            -desfase,
-            minuto,
-        )
+    # Un volcado de hace mas de una hora no habla del cron, sino de que Blizzard
+    # iba tarde, y eso ya tiene su propio aviso. Ojo: al reves si cuenta, porque
+    # un `publicado` posterior al arranque significa que disparamos antes de que
+    # publicaran y tuvimos que esperar.
+    if (arranque - publicado) >= timedelta(hours=1):
         return
 
-    # Por encima de la hora el volcado no es el de esta pasada, sino uno viejo
-    # porque Blizzard iba tarde. Eso no dice nada del cron y ya tiene su aviso.
-    if not DESFASE_QUE_MERECE_AVISO <= desfase < 60:
+    historial.apunta(publicado.minute)
+    objetivo = conviene_mover(historial.minutos, arranque.minute)
+    if objetivo is None:
         return
 
-    log.warning(
-        "💡 Blizzard publico a y %02d y la pasada arranco a y %02d: llegas %.0f "
-        "min tarde. Adelanta el disparo del cron externo al minuto %02d y "
-        "tendras los avisos %.0f min antes.",
-        publicado.minute,
-        arranque.minute,
-        desfase,
-        minuto,
-        desfase - COLCHON_TRAS_EL_VOLCADO,
+    razon = (
+        f"Blizzard lleva {PASADAS_QUE_TIENEN_QUE_COINCIDIR} pasadas publicando a "
+        f"y {publicado.minute:02d} y el disparo esta en y {arranque.minute:02d}."
     )
+    credenciales = (
+        os.getenv("CRONJOB_API_KEY", ""),
+        os.getenv("CRONJOB_JOB_ID", ""),
+    )
+
+    if dry_run or not all(credenciales):
+        log.warning("💡 %s Conviene moverlo al minuto %02d.", razon, objetivo)
+        if not dry_run:
+            avisar_por_discord(
+                notifier,
+                "El disparo se ha desalineado",
+                f"{razon}\n\nEntra en cron-job.org y pon el disparo en el minuto "
+                f"{objetivo:02d}: tendras los avisos antes.",
+            )
+        # Se olvida lo medido tambien al avisar, para no repetir el aviso cada
+        # hora hasta que lo cambies: vuelve a medir y reincide en tres pasadas.
+        historial.olvida()
+        return
+
+    try:
+        CronJobOrg(*credenciales).mover_a(objetivo)
+    except DisparoError as exc:
+        # Sin olvidar el historial: si ha sido un fallo pasajero, la pasada
+        # siguiente lo vuelve a intentar.
+        log.error("❌ %s", exc)
+        return
+
+    log.warning("🔧 %s Lo he movido al minuto %02d.", razon, objetivo)
+    historial.olvida()
+    avisar_por_discord(
+        notifier,
+        "He movido el disparo",
+        f"{razon}\n\nLo he cambiado al minuto {objetivo:02d} en cron-job.org "
+        f"para que los avisos vuelvan a llegarte nada mas publicarse el volcado.",
+    )
+
+
+def avisar_por_discord(notifier, titulo: str, texto: str) -> None:
+    """Manda un aviso de estado, sin dejar que un fallo de Discord tumbe nada."""
+    if not notifier:
+        return
+    try:
+        notifier.send_warning(titulo, texto)
+    except DiscordError as exc:
+        log.error("Ademas, no he podido avisar por Discord: %s", exc)
 
 
 def esperar_volcado_nuevo(
@@ -854,7 +884,12 @@ def run(args: argparse.Namespace) -> int:
     # Una vez por pasada y no dentro del bucle: si hemos estado esperando a un
     # volcado retrasado, ese retraso es de Blizzard y no dice nada del cron.
     if result.snapshot_at and es_pasada_programada():
-        avisar_de_cron_desalineado(arranque, result.snapshot_at)
+        historial = HistorialDeVolcados(state_dir / "volcados.json")
+        mantener_disparo_alineado(
+            arranque, result.snapshot_at, historial, notifier, dry_run=args.dry_run
+        )
+        if not args.dry_run:
+            historial.save()
 
     if result.failure_ratio > settings.failure_ratio_threshold:
         message = (

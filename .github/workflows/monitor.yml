@@ -68,6 +68,11 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
           BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+          # Opcionales: con ellas, la pasada mueve sola el disparo del cron
+          # cuando Blizzard cambia la hora a la que publica el volcado. Sin
+          # ellas se limita a avisar por Discord de a que minuto ponerlo.
+          CRONJOB_API_KEY: ${{ secrets.CRONJOB_API_KEY }}
+          CRONJOB_JOB_ID: ${{ secrets.CRONJOB_JOB_ID }}
         run: python main.py ${{ inputs.dry_run && '--dry-run' || '' }}
 
       - name: Vigilar mis subastas
