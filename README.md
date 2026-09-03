@@ -916,10 +916,14 @@ reino, su cuenta y el precio mas barato que hay de ese producto en su casa de
 subastas. Cuando pone **"nadie lo vende ahi"** es que ese reino esta limpio, que
 es justo donde interesa entrar.
 
-Pero que falte no basta para decidir. Si de tu ilvl no hay nada puesto y al lado
-hay **uno mejor mas barato**, el tuyo no lo compra nadie: un 295 no se vende con
-un 298 a 30.000 al lado. Eso sale cantado en rojo --**"te pisa el 298 a 30.000
-g"**-- sin tener que abrir nada.
+Pero que falte no basta para decidir. Cuando de tu ilvl **si** hay algo puesto y
+al lado hay **uno mejor mas barato**, ninguno de los dos se vende: el comprador
+se lleva el 298 de 35.000 antes que el 295 de 44.999, asi que meter otro 295 ahi
+es tirar el hueco. Eso sale cantado en rojo --**"te pisa el 298 a 35.000 g"**--
+sin tener que abrir nada.
+
+Con tu ilvl vacio no se avisa: no hay nada que comparar, el precio lo pones tu, y
+el aviso saldria en casi todos los personajes hasta dejar de leerse.
 
 Al tocar un personaje se despliega la **escalera entera de ilvl de su reino**:
 los nueve que vigilas, con lo que hay a la venta en cada uno y cuantos. Los

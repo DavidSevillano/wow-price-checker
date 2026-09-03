@@ -264,17 +264,21 @@ data class Precios(val generado: Long, val reinos: Map<String, ReinoPrecios>) {
     /**
      * El ilvl mejor que el tuyo que te deja sin sitio, si lo hay.
      *
-     * Es la unica comparacion que decide: un comprador que ve un 298 mas barato
-     * que tu 295 se lleva el 298. Cuando de tu ilvl no hay nada puesto, el mas
-     * barato de los superiores sigue siendo el techo al que puedes aspirar.
+     * Un comprador que ve un 298 mas barato que el 295 que hay puesto se lleva
+     * el 298, asi que ese 295 no se vende y meter otro tampoco.
+     *
+     * Solo se avisa cuando de tu ilvl hay algo puesto. Con tu ilvl vacio no hay
+     * nada que comparar --el precio lo pones tu-- y el aviso saldria en casi
+     * todos los personajes hasta dejar de leerse. Ahi la escalera, que esta a
+     * un toque, cuenta el reino entero sin dar nada por hecho.
      */
     fun pisa(reino: String, itemId: Int, ilvl: Int?): Pair<Int, Precio>? {
         if (ilvl == null) return null
         val escalera = escalera(reino, itemId)
-        val mio = escalera.firstOrNull { it.first == ilvl }?.second
+        val mio = escalera.firstOrNull { it.first == ilvl }?.second ?: return null
         val mejor = escalera.filter { it.first > ilvl }.minByOrNull { it.second.minCobre }
             ?: return null
-        if (mio != null && mio.minCobre <= mejor.second.minCobre) return null
+        if (mio.minCobre <= mejor.second.minCobre) return null
         return mejor
     }
 
