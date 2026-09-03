@@ -4,6 +4,18 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -63,12 +75,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import java.text.NumberFormat
 import java.util.Locale
+
+// Cortas a proposito: esto se usa con el juego abierto y a medio repartir un
+// chollo, no es una app de contemplar. Si apagas las animaciones del sistema,
+// Compose las salta solo.
+private const val ENTRADA_MS = 260
+private const val SALIDA_MS = 120
 
 private val Oro = Color(0xFF8A6410)
 private val OroOscuro = Color(0xFFDFB349)
@@ -216,16 +235,37 @@ private fun App() {
         },
     ) { relleno ->
         Box(Modifier.padding(relleno)) {
-            if (elegido == null) {
-                Listado(
-                    cobertura = cobertura,
-                    orden = catalogo.orden,
-                    exportado = datos.exportado,
-                    conDescarga = Repositorio.hayDescarga(context),
-                    alPulsar = { abierto = it.objeto.id },
-                )
-            } else {
-                Detalle(elegido, datos, precios, catalogo.orden.size)
+            // La pantalla entra por el lado hacia el que vas, como en cualquier
+            // app: sin eso, abrir un objeto es un parpadeo y no se sabe si has
+            // entrado o si se ha recargado la lista.
+            AnimatedContent(
+                targetState = abierto,
+                transitionSpec = {
+                    val entrada = tween<Float>(ENTRADA_MS, easing = FastOutSlowInEasing)
+                    val salida = tween<Float>(SALIDA_MS, easing = FastOutSlowInEasing)
+                    val haciaDentro = targetState != null
+                    val desplazamiento = tween<IntOffset>(
+                        ENTRADA_MS, easing = FastOutSlowInEasing
+                    )
+                    (slideInHorizontally(desplazamiento) { ancho ->
+                        if (haciaDentro) ancho / 5 else -ancho / 5
+                    } + fadeIn(entrada)) togetherWith
+                        fadeOut(salida) using SizeTransform(clip = false)
+                },
+                label = "pantalla",
+            ) { id ->
+                val abiertoAhora = cobertura.firstOrNull { it.objeto.id == id }
+                if (abiertoAhora == null) {
+                    Listado(
+                        cobertura = cobertura,
+                        orden = catalogo.orden,
+                        exportado = datos.exportado,
+                        conDescarga = Repositorio.hayDescarga(context),
+                        alPulsar = { abierto = it.objeto.id },
+                    )
+                } else {
+                    Detalle(abiertoAhora, datos, precios, catalogo.orden.size)
+                }
             }
         }
     }
@@ -391,37 +431,58 @@ private fun Detalle(
         }
 
         Spacer(Modifier.height(14.dp))
-        Veredicto(variante, personajes)
 
-        Spacer(Modifier.height(18.dp))
-        if (variante.faltan.isNotEmpty()) {
-            Titulo(
-                if (variante.ilvl != null) "Le falta a — ilvl ${variante.ilvl}" else "Le falta a",
-                "${variante.faltan.size}",
-            )
-            Spacer(Modifier.height(8.dp))
-            variante.faltan.forEach { nombre ->
-                FichaFalta(nombre, datos, precios, cobertura.objeto, variante)
-            }
-            Spacer(Modifier.height(18.dp))
-        }
+        // Al cambiar de ilvl cambia todo lo de abajo. Cruzarlo, en vez de
+        // sustituirlo de golpe, es lo que deja claro que sigues en el mismo
+        // objeto y solo has movido el nivel.
+        AnimatedContent(
+            targetState = variante,
+            transitionSpec = {
+                val sube = (targetState.ilvl ?: 0) > (initialState.ilvl ?: 0)
+                (slideInVertically(
+                    tween(ENTRADA_MS, easing = FastOutSlowInEasing)
+                ) { alto -> if (sube) alto / 12 else -alto / 12 } +
+                    fadeIn(tween(ENTRADA_MS, easing = FastOutSlowInEasing))) togetherWith
+                    fadeOut(tween(SALIDA_MS)) using SizeTransform(clip = false)
+            },
+            label = "variante",
+        ) { actual ->
+            Column {
+                Veredicto(actual, personajes)
 
-        Titulo("Ya lo tiene puesto", "${variante.tienen.size}")
-        Spacer(Modifier.height(8.dp))
-        if (variante.tienen.isEmpty()) {
-            Text(
-                text = if (variante.ilvl != null)
-                    "Nadie lo tiene a ilvl ${variante.ilvl} en el mercado."
-                else "Nadie. Este objeto no está en el mercado con ninguno de tus personajes.",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            variante.tienen.forEach { puesta ->
-                FichaPersonaje(puesta.personaje, datos, puesta)
+                Spacer(Modifier.height(18.dp))
+                if (actual.faltan.isNotEmpty()) {
+                    Titulo(
+                        if (actual.ilvl != null) "Le falta a — ilvl ${actual.ilvl}"
+                        else "Le falta a",
+                        "${actual.faltan.size}",
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    actual.faltan.forEach { nombre ->
+                        FichaFalta(nombre, datos, precios, cobertura.objeto, actual)
+                    }
+                    Spacer(Modifier.height(18.dp))
+                }
+
+                Titulo("Ya lo tiene puesto", "${actual.tienen.size}")
+                Spacer(Modifier.height(8.dp))
+                if (actual.tienen.isEmpty()) {
+                    Text(
+                        text = if (actual.ilvl != null)
+                            "Nadie lo tiene a ilvl ${actual.ilvl} en el mercado."
+                        else "Nadie. Este objeto no está en el mercado con ninguno de tus " +
+                            "personajes.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    actual.tienen.forEach { puesta ->
+                        FichaPersonaje(puesta.personaje, datos, puesta)
+                    }
+                }
+                Spacer(Modifier.height(32.dp))
             }
         }
-        Spacer(Modifier.height(32.dp))
     }
 }
 
@@ -687,18 +748,27 @@ private fun FichaFalta(
             }
         }
 
-        if (pisa != null) {
+        AnimatedVisibility(
+            visible = pisa != null,
+            enter = expandVertically(tween(ENTRADA_MS, easing = FastOutSlowInEasing)) +
+                fadeIn(tween(ENTRADA_MS)),
+            exit = shrinkVertically(tween(SALIDA_MS)) + fadeOut(tween(SALIDA_MS)),
+        ) {
             Text(
-                text = "te pisa el ${pisa.first} a ${oro(pisa.second.oro)}",
+                text = pisa?.let { "te pisa el ${it.first} a ${oro(it.second.oro)}" }.orEmpty(),
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(start = 13.dp, top = 3.dp),
             )
         }
 
-        if (desplegado && escalera.isNotEmpty()) {
-            Spacer(Modifier.height(6.dp))
-            Column(Modifier.padding(start = 13.dp)) {
+        AnimatedVisibility(
+            visible = desplegado && escalera.isNotEmpty(),
+            enter = expandVertically(tween(ENTRADA_MS, easing = FastOutSlowInEasing)) +
+                fadeIn(tween(ENTRADA_MS)),
+            exit = shrinkVertically(tween(SALIDA_MS)) + fadeOut(tween(SALIDA_MS)),
+        ) {
+            Column(Modifier.padding(start = 13.dp, top = 6.dp)) {
                 escalera.chunked(3).forEach { grupo ->
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         grupo.forEach { ilvl ->
