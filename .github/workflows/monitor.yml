@@ -111,7 +111,7 @@ jobs:
         run: python datos_app.py --salida publicar
 
       - name: Subir los datos de la app
-        if: '!cancelled() && !inputs.dry_run && hashFiles('publicar/**') != '''
+        if: "!cancelled() && !inputs.dry_run && hashFiles('publicar/**') != ''"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -119,7 +119,7 @@ jobs:
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
           cd publicar
           git init -q
-          git remote add origin             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           # La rama puede no existir todavia, y eso no es un error.
           git fetch --depth=1 origin datos 2>/dev/null || true
           git checkout -B datos
