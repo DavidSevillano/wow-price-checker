@@ -383,6 +383,8 @@ Codigos de salida: `0` todo bien · `1` error de configuracion o credenciales ·
 config.yaml            Lo unico que editas normalmente
 main.py                Linea de comandos y orquestacion
 estado.py              Comprueba si Actions esta ejecutando el cron
+datos_app.py           Genera lo que lee la app del movil
+android/               La app: que personajes no tienen puesto cada objeto
 wowalerts/
   config.py            Carga y validacion del config
   blizzard.py          API de Blizzard: OAuth, reintentos, endpoints
@@ -393,6 +395,7 @@ wowalerts/
   notifier.py          Embeds y envio a Discord
   ventas.py            Que cuenta como venta y que como caducidad
   snapshot.py          Si el volcado leido es el de esta hora
+  precios.py           El precio a batir en cada reino, para la app
 tests/                 347 tests, sin tocar la red
 ```
 
@@ -897,3 +900,80 @@ ajusta en `config.yaml` con `ah_cut_pct`.
 El aviso lleva el **ilvl** entre parentesis. Con el mismo objeto puesto a 292,
 295, 298 y 305 a la vez, sin eso no se sabe cual se ha ido, y al mirar la casa
 de subastas ves otro del mismo nombre y crees que no se ha vendido nada.
+
+
+---
+
+## 7. La app del movil
+
+Los avisos te dicen lo que ha cambiado. La app contesta la pregunta que te haces
+con el chollo ya comprado en la bolsa: **a que personaje le falta esto, y a
+cuanto tendria que ponerlo ahi**.
+
+Eliges el objeto y, si escala, el ilvl exacto que llevas encima. Debajo salen los
+personajes de `orden_personajes` que **no** lo tienen puesto, cada uno con su
+reino, su cuenta y el precio mas barato que hay de ese producto en su casa de
+subastas. Cuando pone **"nadie lo vende ahi"** es que ese reino esta limpio, que
+es justo donde interesa entrar.
+
+### 7.1 De donde saca los datos
+
+Lee tres cosas de este mismo repositorio, con un token tuyo:
+
+- `mis_subastas/*.json` y `mis_personajes/*.json`, de `main`. Es lo que sube
+  `sync_subastas.py` desde cada maquina.
+- `catalogo.json` y `precios.json`, de la rama **`datos`**, que publica el
+  workflow en cada pasada.
+
+Esos dos ultimos los genera `datos_app.py`:
+
+```bash
+.venv\Scripts\python.exe datos_app.py
+```
+
+El **catalogo** lleva que objetos vigilas, como se llaman en espanol, su icono y
+tu tabla de topes por ilvl. Se genera aqui y no en el movil porque el nombre
+traducido y el icono salen de la API de Blizzard, y esas credenciales no deben
+viajar dentro de una app.
+
+Los **precios** son el minimo de cada objeto e ilvl en los veinte y pico reinos
+donde vendes. Es el dato que no sobrevive a la pasada: el volcado de un reino son
+decenas de miles de subastas que se miran y se tiran.
+
+Van a una rama aparte para no ensuciar el historial de `main` con un commit por
+hora. Cada reino lleva su marca de cuando se vio, que es lo que permite
+distinguir en el movil entre "ahi no lo vende nadie" y "ese reino no se ha
+podido mirar esta hora": sin esa marca las dos cosas se verian igual.
+
+### 7.2 Compilar e instalar
+
+Necesitas el SDK de Android y un JDK 17 o mas nuevo. Desde `android/`:
+
+```bash
+.\gradlew.bat assembleDebug
+```
+
+Y para meterla en el movil, con la depuracion USB aceptada:
+
+```bash
+adb install -r appuild\outputspk\debugpp-debug.apk
+```
+
+En moviles Xiaomi, `gradlew installDebug` falla con
+`INSTALL_FAILED_USER_RESTRICTED` salvo que actives "Instalacion via USB" en las
+opciones de desarrollador. `adb install` funciona igual sin tocar nada.
+
+La primera vez la app arranca con una copia de tus subastas empotrada en el APK
+y lo dice en rojo, con la fecha, para que no te confies. En el engranaje se pega
+un token de GitHub *fine-grained* con permiso `Contents: Read-only` sobre este
+repositorio, y a partir de ahi se actualiza sola y guarda lo ultimo descargado
+para funcionar sin cobertura.
+
+### 7.3 Lo que todavia no hace
+
+Las **mascotas** no salen. El addon solo exporta `itemID`, y en las subastas
+todas las mascotas son el objeto 82800: sin `battlePetSpeciesID` es imposible
+saber cual de las tuyas tiene puesta cada personaje.
+
+Las **monturas** tampoco, pero eso es a proposito: no las repartes entre
+personajes, se venden donde caen.

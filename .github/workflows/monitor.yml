@@ -39,6 +39,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    # Solo para empujar los datos de la app a la rama 'datos'. El resto de la
+    # pasada no escribe nada en el repositorio.
+    permissions:
+      contents: write
+
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v7
@@ -91,6 +96,38 @@ jobs:
           BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
           BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
         run: python main.py --undercut --ventas ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Publicar datos para la app
+        # Los ficheros que lee la app del movil: el catalogo de objetos y el
+        # precio a batir en cada reino donde vendes. Se van a una rama aparte
+        # para no ensuciar el historial de main con un commit por hora.
+        #
+        # Va despues de las alertas y con !cancelled() porque es lo menos
+        # urgente de la pasada: si falla, las alertas ya han salido.
+        if: '!cancelled() && !inputs.dry_run'
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+        run: python datos_app.py --salida publicar
+
+      - name: Subir los datos de la app
+        if: '!cancelled() && !inputs.dry_run && hashFiles('publicar/**') != '''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          cd publicar
+          git init -q
+          git remote add origin             "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # La rama puede no existir todavia, y eso no es un error.
+          git fetch --depth=1 origin datos 2>/dev/null || true
+          git checkout -B datos
+          git add -A
+          # Sin cambios no hay commit: 'commit' devolveria 1 y tumbaria el paso.
+          git diff --cached --quiet && echo "Sin cambios que publicar." && exit 0
+          git commit -q -m "Datos de la app: $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push -q --force origin datos
 
       - name: Guardar memoria de avisos
         # Tambien cuando el escaneo va mal: lo ya avisado sigue siendo valido y
