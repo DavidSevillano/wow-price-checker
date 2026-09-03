@@ -182,7 +182,7 @@ con exactamente esto:
 |---|---|
 | URL | `https://api.github.com/repos/DavidSevillano/wow-price-checker/actions/workflows/monitor.yml/dispatches` |
 | Metodo | `POST` |
-| Horario | cada hora, minuto **33** |
+| Horario | cada hora, minuto **24** |
 | Cuerpo | `{"ref":"main"}` |
 
 Cabeceras:
@@ -198,9 +198,28 @@ La respuesta correcta es **HTTP 204 sin cuerpo**. Un 404 suele significar que
 el token no tiene acceso al repositorio; un 422, que la rama `main` o el nombre
 del workflow no coinciden.
 
-El minuto sale de cuando Blizzard regenera los datos, mas un par de minutos de
+El minuto sale de cuando Blizzard regenera los datos, mas **un** minuto de
 margen. **Ese momento se mueve**: el 2026-08-31 el volcado salia a las
 `:31:22` y el 2026-09-02 ya salia a las `:23:30`.
+
+El margen es de un minuto y no de dos porque es lo que mas pesa en lo que tarda
+un aviso en llegarte. Medido en la pasada de las 18:25 UTC del 2026-09-02:
+
+| Tramo | Tiempo |
+|---|---|
+| Blizzard publica | `18:23:30` |
+| El cron dispara | `18:25:00` (90 s de colchon) |
+| GitHub arranca la maquina | `18:25:18` |
+| Preparar Python | `18:25:26` |
+| Escanear los 92 reinos y avisar | `18:25:43` |
+
+Dos tercios del retraso eran colchon. Con un minuto el aviso sale a los ~75 s de
+publicarse, en vez de a los ~135.
+
+No se baja a cero. Disparar en el minuto exacto de la publicacion obliga a
+esperar medio minuto casi siempre, y **GitHub redondea cada trabajo al minuto
+entero**: se pasaria de 1 a 2 minutos facturados por pasada --el doble de
+cuota-- para ganar 40 segundos.
 
 No hace falta que lo vigiles. Cada pasada apunta a que minuto ha publicado
 Blizzard, y cuando **tres pasadas seguidas** coinciden en que el disparo se ha

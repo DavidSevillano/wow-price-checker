@@ -34,10 +34,21 @@ PASADAS_QUE_TIENEN_QUE_COINCIDIR = 3
 # Blizzard no publica al segundo exacto y un minuto de vaiven es normal.
 VAIVEN_TOLERADO = 1
 
-# Margen entre la publicacion y el disparo. Un minuto no basta: el volcado no
-# sale siempre al mismo segundo y quedarse corto cuesta una hora entera de
-# espera, mientras que pasarse cuesta un minuto de avisos.
-COLCHON_TRAS_EL_VOLCADO = 2
+# Margen entre la publicacion y el disparo, en minutos.
+#
+# Fue 2 mientras llegar pronto salia caro. Ya no: si la pasada se encuentra el
+# volcado sin publicar, espera sondeando cada 15 segundos y escanea en cuanto
+# sale, asi que adelantarse ya no cuesta la hora.
+#
+# Y llegar tarde si cuesta: de los 135 segundos que tardaba un aviso en salir,
+# 90 eran este colchon. Con 1 se recortan a 30 y el aviso sale a los 75 s de
+# publicarse, la mitad que antes.
+#
+# No se baja a 0. Disparar en el minuto exacto de la publicacion obliga a
+# esperar medio minuto casi siempre, y GitHub redondea cada trabajo al minuto
+# entero: pasariamos de 1 a 2 minutos facturados por pasada --el doble de
+# cuota-- para ganar 40 segundos.
+COLCHON_TRAS_EL_VOLCADO = 1
 
 # Cuanto puede descolgarse el disparo antes de que merezca la pena moverlo. Por
 # debajo de esto no se toca: el disparo no es puntual al segundo y perseguir un

@@ -969,7 +969,13 @@ def run(args: argparse.Namespace) -> int:
         caduca_ya = (
             not tarde
             and falta is not None
-            and 0 < falta <= settings.espera_maxima_minutos
+            # Sin cota inferior a proposito: un `falta` negativo significa que
+            # el volcado ya deberia haber salido, que es justo cuando hay que
+            # esperarlo. Con "0 < falta" quedaba un hueco entre los 60 y los 61
+            # minutos de antiguedad --ni retrasado ni inminente-- por el que se
+            # colaban datos de hace una hora. Se ve disparando a y 24 con
+            # publicacion a y 23:30 el dia que Blizzard llega tarde.
+            and falta <= settings.espera_maxima_minutos
             # Solo sin nadie mirando: esperar diez minutos mientras pruebas
             # algo a mano no lo quiere nadie.
             and es_pasada_desatendida()

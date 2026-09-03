@@ -20,7 +20,7 @@ on:
     # 2026-09-02 a las :23:30. No hace falta perseguirlo a ojo, porque cada
     # pasada mide su propio desfase y dice a que minuto conviene moverlo; cuando
     # lo cambies ahi, cambialo tambien aqui.
-    - cron: '25 */3 * * *'
+    - cron: '24 */3 * * *'
   workflow_dispatch:
     inputs:
       dry_run:

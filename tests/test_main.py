@@ -519,7 +519,7 @@ def test_sin_credenciales_te_avisa_por_discord(tmp_path, monkeypatch, caplog):
     assert len(notificador.avisos) == 1
     titulo, texto = notificador.avisos[0]
     assert "desalineado" in titulo
-    assert "minuto 25" in texto
+    assert "minuto 24" in texto
 
 
 def test_con_credenciales_lo_mueve_solo(tmp_path, monkeypatch, requests_mock):
@@ -530,7 +530,7 @@ def test_con_credenciales_lo_mueve_solo(tmp_path, monkeypatch, requests_mock):
     notificador, _ = alinear(tmp_path, arranque_min=33, publicado_min=23, veces=3)
 
     assert requests_mock.request_history[-1].json() == {
-        "job": {"schedule": {"minutes": [25]}}
+        "job": {"schedule": {"minutes": [24]}}
     }
     assert "He movido" in notificador.avisos[0][0]
 
@@ -1044,7 +1044,7 @@ def test_en_silencio_mueve_el_disparo_igual(tmp_path, monkeypatch, requests_mock
     )
 
     assert requests_mock.request_history[-1].json() == {
-        "job": {"schedule": {"minutes": [25]}}
+        "job": {"schedule": {"minutes": [24]}}
     }
     # Lo unico que se aplaza es contarlo.
     assert notificador.avisos == []
@@ -1065,7 +1065,7 @@ def test_el_aviso_de_madrugada_se_recoge_al_despertar(tmp_path, monkeypatch):
     titulo, texto = guardado.recoge_aviso()
 
     assert "desalineado" in titulo
-    assert "minuto 25" in texto
+    assert "minuto 24" in texto
 
 
 def test_el_aviso_aplazado_no_se_manda_dos_veces(tmp_path, monkeypatch):
