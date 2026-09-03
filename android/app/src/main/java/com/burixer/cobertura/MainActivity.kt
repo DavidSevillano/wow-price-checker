@@ -101,6 +101,13 @@ private val EsquemaOscuro = darkColorScheme(
     outline = Color(0xFF262C35),
 )
 
+/** '18,6k', '1,2M': lo justo para que quepan tres escalones en una fila. */
+private fun oroCorto(valor: Long): String = when {
+    valor >= 1_000_000 -> String.format(Locale("es", "ES"), "%.1fM", valor / 1_000_000.0)
+    valor >= 1_000 -> String.format(Locale("es", "ES"), "%.1fk", valor / 1_000.0)
+    else -> "$valor g"
+}
+
 private fun oro(valor: Long): String =
     NumberFormat.getIntegerInstance(Locale("es", "ES")).format(valor) + " g"
 
@@ -394,20 +401,7 @@ private fun Detalle(
             )
             Spacer(Modifier.height(8.dp))
             variante.faltan.forEach { nombre ->
-                // Lo que costaria ser el mas barato de SU reino: sin eso, saber
-                // que le falta no dice si merece la pena entrar.
-                val reino = datos.personajes[nombre]?.reino.orEmpty()
-                FichaPersonaje(
-                    nombre = nombre,
-                    datos = datos,
-                    puesta = null,
-                    consulta = precios.de(
-                        reino = reino,
-                        itemId = cobertura.objeto.id,
-                        ilvl = variante.ilvl,
-                        escala = cobertura.objeto.escala,
-                    ),
-                )
+                FichaFalta(nombre, datos, precios, cobertura.objeto, variante)
             }
             Spacer(Modifier.height(18.dp))
         }
@@ -424,7 +418,7 @@ private fun Detalle(
             )
         } else {
             variante.tienen.forEach { puesta ->
-                FichaPersonaje(puesta.personaje, datos, puesta, null)
+                FichaPersonaje(puesta.personaje, datos, puesta)
             }
         }
         Spacer(Modifier.height(32.dp))
@@ -556,12 +550,7 @@ private fun Titulo(texto: String, contador: String) {
 }
 
 @Composable
-private fun FichaPersonaje(
-    nombre: String,
-    datos: Datos,
-    puesta: Puesta?,
-    consulta: Precios.Consulta?,
-) {
+private fun FichaPersonaje(nombre: String, datos: Datos, puesta: Puesta?) {
     val ficha = datos.personajes[nombre]
     val donde = buildString {
         ficha?.reino?.takeIf { it.isNotBlank() }?.let { append(it) }
@@ -605,7 +594,69 @@ private fun FichaPersonaje(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        } else if (consulta != null) {
+        }
+    }
+}
+
+/**
+ * Un personaje al que le falta el objeto, con lo que cuesta entrar en su reino.
+ *
+ * Que falte no basta para decidir. Si de tu ilvl no hay nada puesto pero al lado
+ * hay uno mejor mas barato, el tuyo no lo compra nadie: eso sale cantado sin
+ * tener que desplegar. Y al tocar aparece la escalera entera de ilvl del reino,
+ * que es lo que deja poner precio con criterio.
+ */
+@Composable
+private fun FichaFalta(
+    nombre: String,
+    datos: Datos,
+    precios: Precios,
+    objeto: Objeto,
+    variante: Variante,
+) {
+    var desplegado by remember(nombre, variante.ilvl) { mutableStateOf(false) }
+
+    val ficha = datos.personajes[nombre]
+    val reino = ficha?.reino.orEmpty()
+    val donde = buildString {
+        reino.takeIf { it.isNotBlank() }?.let { append(it) }
+        ficha?.cuenta?.let { if (isNotEmpty()) append(" · "); append("WoW $it") }
+    }
+
+    val consulta = precios.de(reino, objeto.id, variante.ilvl, objeto.escala)
+    val pisa = if (objeto.escala) precios.pisa(reino, objeto.id, variante.ilvl) else null
+
+    // Todos los ilvl del objeto, no solo los que tienen algo puesto: que uno
+    // este vacio es justo lo que quieres ver, y por ausencia no se ve.
+    val conPrecio = precios.escalera(reino, objeto.id).toMap()
+    val escalera = if (objeto.escala) {
+        (objeto.escalones.map { it.ilvl } + conPrecio.keys).distinct().sorted()
+    } else {
+        emptyList()
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = escalera.isNotEmpty()) { desplegado = !desplegado }
+            .padding(vertical = 7.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .height(34.dp)
+                    .background(MaterialTheme.colorScheme.error)
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(mote(nombre), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    text = donde,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Column(horizontalAlignment = Alignment.End) {
                 when (consulta) {
                     is Precios.Consulta.Hay -> {
@@ -635,6 +686,71 @@ private fun FichaPersonaje(
                 }
             }
         }
+
+        if (pisa != null) {
+            Text(
+                text = "te pisa el ${pisa.first} a ${oro(pisa.second.oro)}",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(start = 13.dp, top = 3.dp),
+            )
+        }
+
+        if (desplegado && escalera.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            Column(Modifier.padding(start = 13.dp)) {
+                escalera.chunked(3).forEach { grupo ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        grupo.forEach { ilvl ->
+                            Escalon(
+                                ilvl = ilvl,
+                                precio = conPrecio[ilvl],
+                                tuyo = ilvl == variante.ilvl,
+                                // Rojo el que te deja sin sitio: mejor que el
+                                // tuyo y mas barato.
+                                estorba = pisa != null && ilvl == pisa.first,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(5.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Escalon(ilvl: Int, precio: Precio?, tuyo: Boolean, estorba: Boolean) {
+    val color = when {
+        estorba -> MaterialTheme.colorScheme.error
+        tuyo -> MaterialTheme.colorScheme.primary
+        precio == null -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    Column(
+        Modifier
+            .width(88.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 5.dp)
+    ) {
+        Text(
+            text = if (tuyo) "$ilvl ←" else "$ilvl",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            fontWeight = if (tuyo) FontWeight.Medium else FontWeight.Normal,
+            color = color,
+        )
+        Text(
+            text = if (precio == null) "—" else oroCorto(precio.oro),
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp,
+            color = color,
+        )
+        Text(
+            text = if (precio == null) "vacío" else "${precio.cuantas} en venta",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

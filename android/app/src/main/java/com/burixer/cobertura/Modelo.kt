@@ -246,6 +246,38 @@ data class Precios(val generado: Long, val reinos: Map<String, ReinoPrecios>) {
         return precio?.let { Consulta.Hay(it, ficha.visto) } ?: Consulta.Vacio(ficha.visto)
     }
 
+    /**
+     * Todos los ilvl de ese objeto que hay a la venta en ese reino, en orden.
+     *
+     * Que falte tu ilvl no basta para decidir: si al lado hay uno mejor mas
+     * barato, el tuyo no lo compra nadie. La escalera entera es lo que deja ver
+     * eso de un vistazo.
+     */
+    fun escalera(reino: String, itemId: Int): List<Pair<Int, Precio>> {
+        val ficha = reinos[slugDeReino(reino)] ?: return emptyList()
+        val delObjeto = ficha.porObjeto[itemId] ?: return emptyList()
+        return delObjeto
+            .mapNotNull { (clave, precio) -> clave.toIntOrNull()?.let { it to precio } }
+            .sortedBy { it.first }
+    }
+
+    /**
+     * El ilvl mejor que el tuyo que te deja sin sitio, si lo hay.
+     *
+     * Es la unica comparacion que decide: un comprador que ve un 298 mas barato
+     * que tu 295 se lleva el 298. Cuando de tu ilvl no hay nada puesto, el mas
+     * barato de los superiores sigue siendo el techo al que puedes aspirar.
+     */
+    fun pisa(reino: String, itemId: Int, ilvl: Int?): Pair<Int, Precio>? {
+        if (ilvl == null) return null
+        val escalera = escalera(reino, itemId)
+        val mio = escalera.firstOrNull { it.first == ilvl }?.second
+        val mejor = escalera.filter { it.first > ilvl }.minByOrNull { it.second.minCobre }
+            ?: return null
+        if (mio != null && mio.minCobre <= mejor.second.minCobre) return null
+        return mejor
+    }
+
     sealed interface Consulta {
         /** El reino no se ha podido mirar; no se sabe nada de el. */
         data object SinDato : Consulta

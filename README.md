@@ -916,6 +916,16 @@ reino, su cuenta y el precio mas barato que hay de ese producto en su casa de
 subastas. Cuando pone **"nadie lo vende ahi"** es que ese reino esta limpio, que
 es justo donde interesa entrar.
 
+Pero que falte no basta para decidir. Si de tu ilvl no hay nada puesto y al lado
+hay **uno mejor mas barato**, el tuyo no lo compra nadie: un 295 no se vende con
+un 298 a 30.000 al lado. Eso sale cantado en rojo --**"te pisa el 298 a 30.000
+g"**-- sin tener que abrir nada.
+
+Al tocar un personaje se despliega la **escalera entera de ilvl de su reino**:
+los nueve que vigilas, con lo que hay a la venta en cada uno y cuantos. Los
+vacios salen con un guion, porque que un ilvl este vacio es justo la informacion
+que buscas y por ausencia no se ve.
+
 ### 7.1 De donde saca los datos
 
 Lee tres cosas de este mismo repositorio, con un token tuyo:
