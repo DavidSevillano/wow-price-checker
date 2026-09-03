@@ -63,6 +63,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -171,7 +172,11 @@ private fun App() {
 
     BackHandler(enabled = elegido != null) { abierto = null }
 
-    fun actualizar() {
+    // La descarga de al abrir no dice nada cuando sale bien: no has pedido nada,
+    // y un aviso cada vez que entras acaba siendo ruido que se ignora. Los
+    // fallos si se cuentan siempre, porque significan que lo que estas viendo no
+    // es de ahora.
+    fun actualizar(avisar: Boolean = true) {
         if (cargando) return
         cargando = true
         alcance.launch {
@@ -182,13 +187,22 @@ private fun App() {
                     // se releen: si has tocado config.yaml, aqui aparece.
                     catalogo = Repositorio.catalogo(context)
                     precios = Repositorio.precios(context)
-                    avisos.showSnackbar("Datos actualizados desde GitHub.")
+                    if (avisar) avisos.showSnackbar("Datos actualizados desde GitHub.")
                 }
                 .onFailure { fallo ->
                     avisos.showSnackbar(fallo.message ?: "No he podido actualizar.")
                 }
             cargando = false
         }
+    }
+
+    // Al abrir, siempre. La activity muere al salir (ver el manifiesto), asi que
+    // esto corre una vez por vez que entras y no en cada recomposicion.
+    //
+    // Sin token no se intenta: no hay de donde bajar, y saltaria el mismo error
+    // cada vez que abres hasta que lo configuras.
+    LaunchedEffect(Unit) {
+        if (Repositorio.token(context).isNotBlank()) actualizar(avisar = false)
     }
 
     Scaffold(

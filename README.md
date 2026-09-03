@@ -970,7 +970,7 @@ Necesitas el SDK de Android y un JDK 17 o mas nuevo. Desde `android/`:
 Y para meterla en el movil, con la depuracion USB aceptada:
 
 ```bash
-adb install -r appuild\outputspk\debugpp-debug.apk
+adb install -r app\build\outputs\apk\debug\app-debug.apk
 ```
 
 En moviles Xiaomi, `gradlew installDebug` falla con
@@ -983,7 +983,29 @@ un token de GitHub *fine-grained* con permiso `Contents: Read-only` sobre este
 repositorio, y a partir de ahi se actualiza sola y guarda lo ultimo descargado
 para funcionar sin cobertura.
 
-### 7.3 Lo que todavia no hace
+### 7.3 Se abre limpia, y siempre con datos de ahora
+
+**Cada vez que la abres se descarga todo otra vez.** No hay que darle a la flecha
+ni acordarse de hacerlo: entras y ya esta bajando, con la ruedecita arriba. Si
+sale bien no dice nada, porque un aviso cada vez que entras se acaba ignorando;
+si falla si te lo dice, que es cuando importa: significa que lo que tienes
+delante no es de ahora.
+
+**Y no se queda en segundo plano.** En cuanto sales --HOME, cambiar de app,
+bloquear el movil-- la app se cierra del todo, y tampoco aparece en recientes.
+Volver a entrar es siempre empezar por la lista.
+
+Suena agresivo, pero es lo unico que vale aqui. Los precios caducan en una hora.
+Si la app sobreviviera en segundo plano, un dia dejarias el movil sobre la mesa
+mirando un personaje, volverias por la tarde y leerias **"nadie lo vende ahi"**
+sobre un volcado de hace seis horas. Ese cartel es justo el que te hace postear,
+y equivocado te cuesta el hueco. Muriendo al salir, no existe una pantalla vieja
+que puedas confundir con una recien bajada.
+
+Girar el movil no cuenta como salir: eso no invalida ningun dato, asi que no hay
+que volver a bajarlo todo ni perder el objeto que tenias abierto.
+
+### 7.4 Lo que todavia no hace
 
 Las **mascotas** no salen. El addon solo exporta `itemID`, y en las subastas
 todas las mascotas son el objeto 82800: sin `battlePetSpeciesID` es imposible
