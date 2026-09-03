@@ -27,9 +27,11 @@ from wowalerts.blizzard import BlizzardAuthError, BlizzardClient, BlizzardError
 from wowalerts.config import ConfigError, load_config
 from wowalerts.disparo import (
     PASADAS_QUE_TIENEN_QUE_COINCIDIR,
+    REAJUSTE_QUE_NO_MERECE_AVISO,
     CronJobOrg,
     DisparoError,
     conviene_mover,
+    distancia,
 )
 from wowalerts.items import ItemResolutionError, resolve_item_ids
 from wowalerts.misubastas import (
@@ -736,6 +738,14 @@ def mantener_disparo_alineado(
 
     log.warning("🔧 %s Lo he movido al minuto %02d.", razon, objetivo)
     historial.olvida()
+
+    # Un minuto arriba o abajo es afinar, no arreglar una averia. Se hace igual
+    # --es lo que mantiene el aviso lo mas rapido posible-- pero no merece una
+    # notificacion: llenaria Discord de mensajes que no piden nada de ti.
+    if distancia(objetivo, arranque.minute) <= REAJUSTE_QUE_NO_MERECE_AVISO:
+        log.info("Reajuste pequeno: no te doy la lata por Discord.")
+        return
+
     contar(
         notifier,
         historial,

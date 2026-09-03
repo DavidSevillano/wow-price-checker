@@ -50,10 +50,20 @@ VAIVEN_TOLERADO = 1
 # cuota-- para ganar 40 segundos.
 COLCHON_TRAS_EL_VOLCADO = 1
 
-# Cuanto puede descolgarse el disparo antes de que merezca la pena moverlo. Por
-# debajo de esto no se toca: el disparo no es puntual al segundo y perseguir un
-# minuto seria pelearse con el ruido.
-DESCUELGUE_QUE_MERECE_MOVERLO = 6
+# Cuanto puede descolgarse el disparo antes de que merezca la pena moverlo.
+#
+# Era 6, y eso toleraba hasta seis minutos de latencia regalada: el aviso salia
+# hasta seis minutos mas tarde de lo necesario y nada lo corregia. Como el
+# colchon bueno es de 1 minuto, cualquier cosa que se pase de ahi ya es peor de
+# lo que se puede tener.
+#
+# No baja de 1 para no perseguir el vaiven normal de Blizzard, que no publica al
+# segundo exacto.
+DESCUELGUE_QUE_MERECE_MOVERLO = 1
+
+# Un reajuste de este tamano o menor se hace igual, pero sin avisar por Discord:
+# es afinar, no arreglar una averia, y no merece una notificacion.
+REAJUSTE_QUE_NO_MERECE_AVISO = 2
 
 
 class DisparoError(Exception):
@@ -88,6 +98,21 @@ def minuto_recomendado(publicado: int) -> int:
     return (publicado + COLCHON_TRAS_EL_VOLCADO) % MINUTOS
 
 
+def la_mas_tardia(minutos: list[int]) -> int:
+    """De unas publicaciones que ya sabemos parecidas, la que llego mas tarde.
+
+    Sirve de referencia estable. Si se tomara la ultima observacion a secas y
+    Blizzard alternase entre y 23 y y 24, el objetivo bailaria entre y 24 y y 25
+    y el cron se pasaria el dia moviendose de uno a otro.
+
+    Se mide en circulo respecto a la ultima para que publicar a y 59 y a y 00 no
+    se lea como 59 minutos de diferencia: ahi la mas tardia es la de y 00.
+    """
+    referencia = minutos[-1]
+    desfases = [((m - referencia + 30) % 60) - 30 for m in minutos]
+    return (referencia + max(desfases)) % MINUTOS
+
+
 def conviene_mover(observadas: list[int], disparo_actual: int) -> int | None:
     """A que minuto mover el disparo, o None si esta bien donde esta.
 
@@ -98,15 +123,17 @@ def conviene_mover(observadas: list[int], disparo_actual: int) -> int | None:
     if not hay_acuerdo(ultimas):
         return None
 
+    publicado = la_mas_tardia(ultimas)
+
     # Cuanto tarda el disparo en llegar despues de la publicacion. Medido en
     # circulo, asi que disparar ANTES de que publiquen sale como un numero
     # enorme, que es justo lo que queremos: es el caso mas urgente de arreglar,
     # porque la espera esta acotada y pasarse pierde la hora entera.
-    descuelgue = distancia(ultimas[-1], disparo_actual)
+    descuelgue = distancia(publicado, disparo_actual)
     if descuelgue <= DESCUELGUE_QUE_MERECE_MOVERLO:
         return None
 
-    objetivo = minuto_recomendado(ultimas[-1])
+    objetivo = minuto_recomendado(publicado)
     return objetivo if objetivo != disparo_actual else None
 
 

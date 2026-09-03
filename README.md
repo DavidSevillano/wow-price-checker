@@ -221,9 +221,14 @@ esperar medio minuto casi siempre, y **GitHub redondea cada trabajo al minuto
 entero**: se pasaria de 1 a 2 minutos facturados por pasada --el doble de
 cuota-- para ganar 40 segundos.
 
-No hace falta que lo vigiles. Cada pasada apunta a que minuto ha publicado
-Blizzard, y cuando **tres pasadas seguidas** coinciden en que el disparo se ha
-descolgado mas de 6 minutos, actua. Tres y no una: si Blizzard tiene un mal rato
+No hace falta que lo vigiles ni que lo pongas tu: cada pasada apunta a que
+minuto ha publicado Blizzard, y cuando **tres pasadas seguidas** coinciden en
+que el disparo se ha descolgado mas de **un** minuto, lo mueve.
+
+Ese margen de un minuto es a proposito. Fue de seis, y eso toleraba hasta seis
+minutos de latencia regalada: el aviso salia mas tarde de lo necesario y nada lo
+corregia, porque el sistema lo daba por bueno. Un reajuste de uno o dos minutos
+se hace igual pero sin avisar por Discord: es afinar, no arreglar una averia. Tres y no una: si Blizzard tiene un mal rato
 y publica tarde una hora suelta, mover el cron detras de ese tropiezo lo dejaria
 mal puesto el resto del dia.
 

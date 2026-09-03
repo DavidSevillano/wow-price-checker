@@ -547,7 +547,7 @@ def test_no_avisa_hasta_que_varias_pasadas_coinciden(tmp_path, monkeypatch):
 def test_un_disparo_bien_puesto_no_dice_nada(tmp_path, monkeypatch):
     monkeypatch.delenv("CRONJOB_API_KEY", raising=False)
 
-    notificador, _ = alinear(tmp_path, arranque_min=25, publicado_min=23, veces=4)
+    notificador, _ = alinear(tmp_path, arranque_min=24, publicado_min=23, veces=4)
 
     assert notificador.avisos == []
 

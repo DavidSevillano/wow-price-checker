@@ -79,9 +79,31 @@ def test_un_disparo_bien_puesto_no_se_toca():
     assert conviene_mover([23, 23, 23], disparo_actual=24) is None
 
 
-def test_un_par_de_minutos_de_retraso_no_merecen_moverlo():
-    """Por debajo del umbral es ruido del disparo, no un desajuste."""
-    assert conviene_mover([23, 23, 23], disparo_actual=28) is None
+def test_disparar_en_el_minuto_justo_de_publicar_tampoco_se_toca():
+    """Un minuto de vaiven es el ruido normal de Blizzard, no un desajuste."""
+    assert conviene_mover([23, 23, 23], disparo_actual=23) is None
+
+
+def test_dos_minutos_de_retraso_ya_merecen_moverlo():
+    """Lo que motivo apretar la tolerancia de 6 a 1.
+
+    Con 6, un cron a y 25 publicando a y 23 se daba por bueno y el aviso salia
+    un minuto mas tarde de lo necesario, para siempre y sin que nada lo dijera.
+    """
+    assert conviene_mover([23, 23, 23], disparo_actual=25) == 24
+
+
+def test_un_vaiven_de_publicacion_no_mueve_el_cron():
+    """Si Blizzard alterna entre y 23 y y 24, el objetivo no puede bailar.
+
+    Se toma como referencia la publicacion mas tardia de las observadas, no la
+    ultima: con la ultima a secas, el objetivo saltaria entre y 24 y y 25 y el
+    cron se pasaria el dia moviendose de uno a otro.
+    """
+    # La mas tardia de las dos es y 24, asi que el objetivo es y 25 en los dos
+    # casos, venga la ultima observacion de donde venga.
+    assert conviene_mover([24, 23, 24], disparo_actual=25) is None
+    assert conviene_mover([23, 24, 23], disparo_actual=25) is None
 
 
 def test_sin_acuerdo_no_se_mueve_nada():
