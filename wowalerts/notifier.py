@@ -62,6 +62,25 @@ def _time_left_label(raw: str) -> str:
     return TIME_LEFT_ES.get(raw.upper(), raw or "desconocido")
 
 
+def _wowhead_url(deal) -> str:
+    """Enlace a la ficha de lo subastado.
+
+    El ancla final no le dice nada a Wowhead, pero hace que cada embed tenga una
+    url distinta. Discord fusiona en uno solo los embeds de un mismo mensaje que
+    comparten url (es su galeria de imagenes), y sin esto varias subastas del
+    mismo objeto se veian como una sola.
+
+    Las mascotas van por /pet: todas comparten el objeto 82800, asi que un
+    enlace /item las llevaria a la jaula vacia en vez de a la mascota.
+    """
+    destino = (
+        f"pet={deal.pet_species_id}"
+        if deal.pet_species_id is not None
+        else f"item={deal.item_id}"
+    )
+    return f"https://www.wowhead.com/{destino}#a{deal.auction_id}"
+
+
 def _color_for(deal: Deal) -> int:
     if not deal.ilvl_confirmed and not deal.sin_ilvl:
         return COLOR_UNCONFIRMED
@@ -124,7 +143,7 @@ def build_embed(
         # tenga una url distinta. Discord fusiona en uno solo los embeds de un
         # mismo mensaje que comparten url (es su galeria de imagenes), y sin
         # esto varias subastas del mismo objeto se veian como una sola.
-        "url": f"https://www.wowhead.com/item={deal.item_id}#a{deal.auction_id}",
+        "url": _wowhead_url(deal),
         "color": _color_for(deal),
         "description": description,
         "fields": fields,

@@ -171,6 +171,121 @@ class BlizzardClient:
             log.debug("Sin icono para el objeto %s: %s", item_id, exc)
         return None
 
+    def item_name(self, item_id: int) -> str | None:
+        """Nombre de un objeto a partir de su id.
+
+        El camino inverso de `search_item_id`, para cuando el id sale de los
+        datos de subastas y lo que falta es como se llama. Devuelve None si no
+        se puede saber: quien llama siempre tiene el id para enseñar.
+        """
+        try:
+            response = self._api_get(
+                f"/data/wow/item/{item_id}", namespace=f"static-{self.region}"
+            )
+            if response.status_code != 200:
+                return None
+            name = response.json().get("name")
+            if isinstance(name, dict):
+                name = name.get(self.locale)
+            return name if isinstance(name, str) and name else None
+        except BlizzardError as exc:
+            log.debug("Sin nombre para el objeto %s: %s", item_id, exc)
+            return None
+
+    def pet_species_name(self, species_id: int) -> str | None:
+        """Nombre de una especie de mascota.
+
+        En las subastas las mascotas no traen nombre: todas son el objeto
+        "jaula" y lo unico que las distingue es este id de especie.
+        """
+        try:
+            response = self._api_get(
+                f"/data/wow/pet/{species_id}", namespace=f"static-{self.region}"
+            )
+            if response.status_code != 200:
+                return None
+            name = response.json().get("name")
+            if isinstance(name, dict):
+                name = name.get(self.locale)
+            return name if isinstance(name, str) and name else None
+        except BlizzardError as exc:
+            log.debug("Sin nombre para la especie %s: %s", species_id, exc)
+            return None
+
+    def item_ids_por_subclase(self, item_class_id: int, item_subclass_id: int) -> list[int]:
+        """Todos los ids de objeto de una clase/subclase (p. ej. monturas).
+
+        La busqueda devuelve como mucho 1000 resultados por peticion y no dice
+        cuantos hay en total, asi que se avanza por id: cada vuelta pide los
+        siguientes al ultimo visto. Cuando una vuelta devuelve menos de 1000,
+        se acabaron.
+        """
+        ids: list[int] = []
+        ultimo = 0
+
+        while True:
+            response = self._api_get(
+                "/data/wow/search/item",
+                namespace=f"static-{self.region}",
+                params={
+                    "item_class.id": item_class_id,
+                    "item_subclass.id": item_subclass_id,
+                    "id": f"[{ultimo + 1},]",
+                    "orderby": "id",
+                    "_pageSize": 1000,
+                },
+            )
+            if response.status_code != 200:
+                raise BlizzardError(
+                    f"Busqueda de la subclase {item_class_id}/{item_subclass_id}: "
+                    f"HTTP {response.status_code}."
+                )
+
+            pagina = [
+                r["data"]["id"]
+                for r in response.json().get("results", [])
+                if isinstance((r.get("data") or {}).get("id"), int)
+            ]
+            if not pagina:
+                return ids
+
+            ids.extend(pagina)
+            ultimo = pagina[-1]
+            if len(pagina) < 1000:
+                return ids
+
+    def toy_ids(self) -> list[int]:
+        """Ids de juguete del indice. No son ids de objeto: ver `toy_item_id`."""
+        response = self._api_get(
+            "/data/wow/toy/index", namespace=f"static-{self.region}"
+        )
+        if response.status_code != 200:
+            raise BlizzardError(f"Indice de juguetes: HTTP {response.status_code}.")
+        return [
+            toy["id"]
+            for toy in response.json().get("toys", [])
+            if isinstance(toy.get("id"), int)
+        ]
+
+    def toy_item_id(self, toy_id: int) -> int | None:
+        """El objeto al que corresponde un juguete.
+
+        Blizzard numera los juguetes en su propio indice, que no tiene nada que
+        ver con los ids de objeto que salen en las subastas. Esta es la unica
+        forma de cruzarlos.
+        """
+        try:
+            response = self._api_get(
+                f"/data/wow/toy/{toy_id}", namespace=f"static-{self.region}"
+            )
+            if response.status_code != 200:
+                return None
+            item_id = (response.json().get("item") or {}).get("id")
+            return item_id if isinstance(item_id, int) else None
+        except BlizzardError as exc:
+            log.debug("Sin objeto para el juguete %s: %s", toy_id, exc)
+            return None
+
     def connected_realm_ids(self) -> list[int]:
         """Ids de todos los connected realms de la region."""
         response = self._api_get(

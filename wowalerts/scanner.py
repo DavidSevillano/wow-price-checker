@@ -36,6 +36,9 @@ class Deal:
     # El objeto no depende del ilvl (un patron es un patron), asi que no hay
     # ilvl que confirmar ni que ensenar.
     sin_ilvl: bool = False
+    # Especie, cuando el chollo es una mascota. Hace falta para enlazarla: por
+    # item_id todas serian la misma jaula.
+    pet_species_id: int | None = None
 
     @property
     def price_gold(self) -> int:
@@ -80,14 +83,26 @@ def find_deals(
     rules_by_item_id: Mapping[int, ItemRule],
     bonus_ilvl_map: Mapping[int, int],
     alert_on_unconfirmed_ilvl: bool = True,
+    rules_by_species: Mapping[int, ItemRule] | None = None,
 ) -> list[Deal]:
     """Filtra las subastas de un reino y devuelve los chollos."""
     deals: list[Deal] = []
+    rules_by_species = rules_by_species or {}
 
     for auction in auctions:
         item_obj = auction.get("item") or {}
         item_id = item_obj.get("id")
-        rule = rules_by_item_id.get(item_id) if isinstance(item_id, int) else None
+        if not isinstance(item_id, int):
+            continue
+
+        # Las mascotas se casan por especie: todas comparten el objeto 82800, y
+        # buscarlas por item_id daria la misma regla para cualquiera de ellas.
+        especie = item_obj.get("pet_species_id")
+        if isinstance(especie, int) and not isinstance(especie, bool):
+            rule = rules_by_species.get(especie)
+        else:
+            especie = None
+            rule = rules_by_item_id.get(item_id)
         if rule is None:
             continue
 
@@ -149,6 +164,7 @@ def find_deals(
                 quantity=int(auction.get("quantity", 1) or 1),
                 time_left=str(auction.get("time_left", "")),
                 sin_ilvl=rule.sin_ilvl,
+                pet_species_id=especie,
             )
         )
 
@@ -160,6 +176,7 @@ def scan_realms(
     config: Config,
     realm_ids: Sequence[int],
     rules_by_item_id: Mapping[int, ItemRule],
+    rules_by_species: Mapping[int, ItemRule] | None = None,
 ) -> ScanResult:
     """Escanea todos los reinos en paralelo y agrega los resultados."""
     result = ScanResult()
@@ -176,6 +193,7 @@ def scan_realms(
             rules_by_item_id,
             config.bonus_ilvl_map,
             config.settings.alert_on_unconfirmed_ilvl,
+            rules_by_species,
         )
         return realm_id, deals, len(snapshot.auctions), snapshot.taken_at
 

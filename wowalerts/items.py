@@ -28,6 +28,11 @@ def resolve_item_ids(
     unresolved: list[str] = []
 
     for rule in config.items:
+        # Las mascotas no tienen objeto que buscar: van por especie y viven en
+        # su propio mapa (ver `reglas_por_especie`).
+        if rule.es_mascota:
+            continue
+
         item_id = rule.item_id
         if item_id is not None:
             log.debug("%s: id %s fijado en el config", rule.name, item_id)
@@ -59,7 +64,7 @@ def resolve_item_ids(
             ", ".join(unresolved),
         )
 
-    if not resolved:
+    if not resolved and not any(r.es_mascota for r in config.items):
         raise ItemResolutionError(
             "No he podido identificar ninguno de los objetos del config.\n"
             "Los nombres deben coincidir exactamente con los del juego en ingles. "
@@ -67,6 +72,32 @@ def resolve_item_ids(
         )
 
     return resolved
+
+
+def reglas_por_especie(config: Config) -> dict[int, ItemRule]:
+    """Devuelve {pet_species_id: regla} para las mascotas del config.
+
+    Van aparte de los objetos a proposito. En las subastas todas las mascotas
+    son el objeto 82800, asi que meterlas en el mapa por item_id haria que una
+    regla para una avisara de todas --y de paso ensuciaria el seguimiento de
+    undercuts y ventas, que tambien casa por item_id--.
+    """
+    reglas: dict[int, ItemRule] = {}
+    for rule in config.items:
+        if not rule.es_mascota:
+            continue
+        especie = rule.pet_species_id
+        if especie in reglas:
+            log.warning(
+                "%r y %r vigilan la misma especie %s; me quedo con la primera.",
+                reglas[especie].name,
+                rule.name,
+                especie,
+            )
+            continue
+        reglas[especie] = rule
+        log.info("  ✓ %s -> especie %s", rule.name, especie)
+    return reglas
 
 
 def _search(client: BlizzardClient, name: str) -> int | None:

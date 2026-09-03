@@ -148,3 +148,70 @@ def test_un_objeto_de_precio_unico_por_encima_del_limite_se_ignora():
     )
 
     assert deals == []
+
+
+# -- mascotas ---------------------------------------------------------------
+#
+# Todas las mascotas se subastan dentro del objeto 82800, asi que casarlas por
+# item_id daria la misma regla para cualquiera. Van por especie y en su propio
+# mapa.
+
+JAULA = 82800
+REGLA_MASCOTA = ItemRule(name="Gusting Grimoire", pet_species_id=1174, max_price=100_000)
+POR_ESPECIE = {1174: REGLA_MASCOTA}
+
+
+def jaula(auction_id=1, especie=1174, calidad=3, buyout=None):
+    item = {"id": JAULA, "pet_species_id": especie, "pet_quality_id": calidad}
+    data = {"id": auction_id, "item": item, "quantity": 1, "time_left": "LONG"}
+    if buyout is not None:
+        data["buyout"] = buyout
+    return data
+
+
+def escanear_mascotas(auctions):
+    return find_deals(
+        auctions, REALM, {}, BONUS_MAP, rules_by_species=POR_ESPECIE
+    )
+
+
+def test_detecta_el_chollo_de_una_mascota_vigilada():
+    deals = escanear_mascotas([jaula(buyout=60_000 * COPPER_PER_GOLD)])
+
+    assert len(deals) == 1
+    assert deals[0].item_name == "Gusting Grimoire"
+    assert deals[0].pet_species_id == 1174
+    assert deals[0].price_gold == 60_000
+    assert deals[0].threshold_gold == 100_000
+
+
+def test_no_avisa_de_una_mascota_que_no_se_vigila():
+    """Lo que rompe el casar por item_id: aqui la especie no coincide."""
+    assert escanear_mascotas([jaula(especie=42, buyout=1 * COPPER_PER_GOLD)]) == []
+
+
+def test_una_mascota_cara_no_es_chollo():
+    assert escanear_mascotas([jaula(buyout=100_001 * COPPER_PER_GOLD)]) == []
+
+
+def test_una_regla_de_objeto_no_pesca_mascotas():
+    """Sin esto, una regla con item_id 82800 avisaria de toda mascota de EU."""
+    reglas = {JAULA: ItemRule(name="Jaula", max_price=100_000)}
+    deals = find_deals(
+        [jaula(buyout=1 * COPPER_PER_GOLD)], REALM, reglas, BONUS_MAP
+    )
+    assert deals == []
+
+
+def test_los_dos_mapas_conviven_en_la_misma_pasada():
+    deals = find_deals(
+        [
+            auction(auction_id=1, buyout=50_000 * COPPER_PER_GOLD),
+            jaula(auction_id=2, buyout=60_000 * COPPER_PER_GOLD),
+        ],
+        REALM,
+        RULES,
+        BONUS_MAP,
+        rules_by_species=POR_ESPECIE,
+    )
+    assert {d.item_name for d in deals} == {"Botas", "Gusting Grimoire"}

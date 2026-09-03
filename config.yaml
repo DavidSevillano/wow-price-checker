@@ -86,6 +86,133 @@ items:
     max_price: 60000
     avisar_undercut: false
 
+  # --------------------------------------------------------------------------
+  #  Monturas caras
+  # --------------------------------------------------------------------------
+  #  Tope de 200.000 para todas, que esta muy por debajo de lo que valen: la
+  #  mas barata de la region (Innovation Investigator) tiene una mediana de
+  #  878.000 y la mas cara (Wooly White Rhino) de 2.899.981. O sea que esto no
+  #  avisa de "esta baratita", avisa de que alguien se ha equivocado.
+  #
+  #  Por eso mismo saltara poco: en el volcado del 2026-09-03 ninguna estaba
+  #  por debajo ni de la mitad de su mediana. Es una trampa puesta, no una
+  #  lista de la compra.
+  - name: "Wooly White Rhino"
+    item_id: 54068
+    max_price: 200000
+    avisar_undercut: false
+
+  - name: "X-51 Nether-Rocket X-TREME"
+    item_id: 49286
+    max_price: 200000
+    avisar_undercut: false
+
+  - name: "Crowd Pummeler 2-30"
+    item_id: 221967
+    max_price: 200000
+    avisar_undercut: false
+
+  - name: "Margin Manipulator"
+    item_id: 229954
+    max_price: 200000
+    avisar_undercut: false
+
+  - name: "Asset Advocator"
+    item_id: 229952
+    max_price: 200000
+    avisar_undercut: false
+
+  - name: "Innovation Investigator"
+    item_id: 229941
+    max_price: 200000
+    avisar_undercut: false
+
+  # --------------------------------------------------------------------------
+  #  Mascotas caras
+  # --------------------------------------------------------------------------
+  #  Las mascotas van por "pet_species_id" y no por "item_id". No es un capricho:
+  #  en las subastas TODAS las mascotas son el objeto 82800, y lo unico que las
+  #  distingue es la especie. Una regla con item_id 82800 avisaria de cada rata
+  #  en venta de la region.
+  #
+  #  Tope de 100.000 para todas. Las medianas van de 487.999 (Phoenix Wishwing)
+  #  a 1.198.800 (Nightsaber Cub), asi que aqui tambien se avisa solo del error
+  #  de otro.
+  #
+  #  Ojo con una cosa que no se mira: el NIVEL. Una mascota de nivel 25 vale mas
+  #  que la misma de nivel 1, y para el vigilante son la misma. La inmensa
+  #  mayoria de lo que se subasta es de nivel 1, asi que como mucho te llevaras
+  #  la sorpresa buena.
+  - name: "Nightsaber Cub"
+    pet_species_id: 303
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Landro's Lichling"
+    pet_species_id: 302
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Guardian Cub"
+    pet_species_id: 311
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Landro's Lil' XT"
+    pet_species_id: 285
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Ethereal Soul-Trader"
+    pet_species_id: 183
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Purple Puffer"
+    pet_species_id: 328
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Gregarious Grell"
+    pet_species_id: 333
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Gusting Grimoire"
+    pet_species_id: 1174
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Spectral Tiger Cub"
+    pet_species_id: 242
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Crimson Mechasaur"
+    pet_species_id: 4638
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Phoenix Wishwing"
+    pet_species_id: 3292
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Gilded Wader"
+    pet_species_id: 2938
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Everliving Spore"
+    pet_species_id: 1998
+    max_price: 100000
+    avisar_undercut: false
+
+  - name: "Knockoff Blingtron"
+    pet_species_id: 1806
+    max_price: 100000
+    avisar_undercut: false
+
 # ----------------------------------------------------------------------------
 #  ORDEN DE LOS AVISOS
 # ----------------------------------------------------------------------------

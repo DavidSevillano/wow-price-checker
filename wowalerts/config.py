@@ -40,6 +40,10 @@ class ItemRule:
     name: str
     max_price_by_ilvl: Mapping[int, int] = field(default_factory=dict)  # ilvl -> oro
     item_id: int | None = None
+    # Especie de mascota, cuando la regla vigila una mascota en vez de un objeto.
+    # En las subastas todas las mascotas son el objeto 82800 y lo unico que las
+    # distingue es este id, asi que sin el no hay forma de pedir una en concreto.
+    pet_species_id: int | None = None
     # Precio maximo unico, en oro, para los objetos que no dependen del ilvl.
     max_price: int | None = None
     # Los undercuts se apagan por objeto: de algunas cosas quieres que te avisen
@@ -50,6 +54,10 @@ class ItemRule:
     def sin_ilvl(self) -> bool:
         """Si el objeto lleva precio unico en vez de tabla por ilvl."""
         return self.max_price is not None
+
+    @property
+    def es_mascota(self) -> bool:
+        return self.pet_species_id is not None
 
     def threshold_gold(self, ilvl: int) -> int | None:
         """Precio maximo para ese ilvl, o None si ese ilvl no interesa."""
@@ -213,8 +221,21 @@ def _parse_items(value: Any) -> tuple[ItemRule, ...]:
             raise ConfigError(f"{where}: el objeto {name!r} esta repetido en la lista.")
         seen.add(name)
 
+        especie = _parse_optional_id(entry.get("pet_species_id"), name, "pet_species_id")
+        if especie is not None and entry.get("item_id") is not None:
+            raise ConfigError(
+                f"{name!r}: pon 'pet_species_id' o 'item_id', no los dos. Una "
+                "mascota no tiene objeto propio: en las subastas todas son el "
+                "82800 y lo que las distingue es la especie."
+            )
+
         tabla = entry.get("max_price_by_ilvl")
         unico = entry.get("max_price")
+        if especie is not None and tabla is not None:
+            raise ConfigError(
+                f"{name!r}: las mascotas no tienen ilvl, asi que llevan un "
+                "'max_price' unico y no 'max_price_by_ilvl'."
+            )
         if (tabla is None) == (unico is None):
             raise ConfigError(
                 f"{name!r}: pon 'max_price' o 'max_price_by_ilvl', una de las dos "
@@ -230,7 +251,8 @@ def _parse_items(value: Any) -> tuple[ItemRule, ...]:
                     {} if tabla is None else _parse_price_table(tabla, name)
                 ),
                 max_price=None if unico is None else _parse_max_price(unico, name),
-                item_id=_parse_optional_item_id(entry.get("item_id"), name),
+                item_id=_parse_optional_id(entry.get("item_id"), name, "item_id"),
+                pet_species_id=especie,
                 avisar_undercut=_parse_bool(
                     entry.get("avisar_undercut"), name, "avisar_undercut", True
                 ),
@@ -306,16 +328,18 @@ def _parse_price_table(value: Any, item_name: str) -> Mapping[int, int]:
     return table
 
 
-def _parse_optional_item_id(value: Any, item_name: str) -> int | None:
+def _parse_optional_id(value: Any, item_name: str, campo: str) -> int | None:
     if value is None:
         return None
     try:
-        item_id = int(value)
+        numero = int(value)
     except (TypeError, ValueError) as exc:
-        raise ConfigError(f"{item_name!r}: 'item_id' debe ser un numero entero.") from exc
-    if item_id <= 0:
-        raise ConfigError(f"{item_name!r}: 'item_id' debe ser mayor que 0.")
-    return item_id
+        raise ConfigError(
+            f"{item_name!r}: {campo!r} debe ser un numero entero."
+        ) from exc
+    if numero <= 0:
+        raise ConfigError(f"{item_name!r}: {campo!r} debe ser mayor que 0.")
+    return numero
 
 
 def _parse_bonus_map(value: Any) -> Mapping[int, int]:

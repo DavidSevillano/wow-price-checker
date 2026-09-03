@@ -33,7 +33,11 @@ from wowalerts.disparo import (
     conviene_mover,
     distancia,
 )
-from wowalerts.items import ItemResolutionError, resolve_item_ids
+from wowalerts.items import (
+    ItemResolutionError,
+    reglas_por_especie,
+    resolve_item_ids,
+)
 from wowalerts.misubastas import (
     MisSubastasError,
     leer_canceladas,
@@ -918,6 +922,7 @@ def run(args: argparse.Namespace) -> int:
 
     log.info("🔍 Identificando los %s objetos vigilados...", len(config.items))
     rules_by_item_id = resolve_item_ids(client, config, item_cache)
+    rules_by_species = reglas_por_especie(config)
     if not args.dry_run:
         item_cache.save()
 
@@ -955,6 +960,7 @@ def run(args: argparse.Namespace) -> int:
             config,
             realm_ids,
             rules_by_item_id,
+            rules_by_species,
             notified,
             icon_cache,
             notifier,
@@ -1112,6 +1118,7 @@ def scan_once(
     config,
     realm_ids,
     rules_by_item_id,
+    rules_by_species,
     notified,
     icon_cache,
     notifier,
@@ -1129,7 +1136,7 @@ def scan_once(
     para entonces lo habran comprado, pero el aviso salio a tiempo.
     """
     started = time.monotonic()
-    result = scan_realms(client, config, realm_ids, rules_by_item_id)
+    result = scan_realms(client, config, realm_ids, rules_by_item_id, rules_by_species)
     elapsed = time.monotonic() - started
 
     log.info(

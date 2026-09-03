@@ -300,3 +300,68 @@ def test_avisar_undercut_tiene_que_ser_si_o_no(tmp_path):
     text = 'region: eu\nitems:\n  - name: "X"\n    max_price: 10\n    avisar_undercut: quizas\n'
     with pytest.raises(ConfigError, match="avisar_undercut"):
         load_config(write(tmp_path, text))
+
+
+# -- mascotas ---------------------------------------------------------------
+
+
+def test_una_mascota_se_declara_por_especie(tmp_path):
+    config = load_config(write(
+        tmp_path,
+        """
+        region: eu
+        items:
+          - name: "Gusting Grimoire"
+            pet_species_id: 1174
+            max_price: 100000
+        """,
+    ))
+    regla = config.items[0]
+
+    assert regla.es_mascota
+    assert regla.pet_species_id == 1174
+    assert regla.max_price == 100_000
+
+
+def test_una_mascota_no_puede_llevar_tambien_item_id(tmp_path):
+    """Una mascota no tiene objeto propio: en subastas todas son la 82800."""
+    with pytest.raises(ConfigError, match="no los dos"):
+        load_config(write(
+            tmp_path,
+            """
+            region: eu
+            items:
+              - name: "Gusting Grimoire"
+                pet_species_id: 1174
+                item_id: 82800
+                max_price: 100000
+            """,
+        ))
+
+
+def test_una_mascota_no_lleva_tabla_por_ilvl(tmp_path):
+    with pytest.raises(ConfigError, match="no tienen ilvl"):
+        load_config(write(
+            tmp_path,
+            """
+            region: eu
+            items:
+              - name: "Gusting Grimoire"
+                pet_species_id: 1174
+                max_price_by_ilvl: { 311: 90000 }
+            """,
+        ))
+
+
+def test_la_especie_tiene_que_ser_un_numero(tmp_path):
+    with pytest.raises(ConfigError, match="pet_species_id"):
+        load_config(write(
+            tmp_path,
+            """
+            region: eu
+            items:
+              - name: "Gusting Grimoire"
+                pet_species_id: "mil ciento setenta y cuatro"
+                max_price: 100000
+            """,
+        ))
