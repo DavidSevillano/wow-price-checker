@@ -89,3 +89,61 @@ def volcar(
             (generado_en,),
         )
     return len(filas)
+
+
+def recalcular_estadisticas(con: sqlite3.Connection) -> int:
+    """Reconstruye `estadistica` (mediana, extremos, reinos) desde `precio`.
+
+    Se corre una vez por pasada horaria para que la web nunca tenga que sacar
+    una mediana al vuelo en una petición.
+
+    La mediana no se interpola: tiene que ser un precio que exista de verdad
+    en algún reino, porque se le enseña al usuario como "lo que cuesta
+    normalmente" y un promedio entre dos reinos daría un número que no se
+    cumple en ninguno. Con un número par de reinos se toma el de arriba de
+    los dos del medio. Ordenando de menor a mayor y contando desde 0, esa
+    posición es (n - 1) / 2 + (n - 1) % 2 (división entera): n=1→0, n=2→1,
+    n=3→1, n=4→2, n=6→3.
+
+    Ojo: esto NO es lo mismo que `wowalerts.mercado.percentil`, que redondea
+    con round(0.5 * (n - 1)) (banker's rounding de Python). Para n par las
+    dos fórmulas coinciden solo a veces -- n=4 da el mismo índice en las dos,
+    pero n=6 da 3 aquí y 2 allá. Las dos garantizan un precio real, pero no
+    son la misma regla.
+    """
+    # Se calcula con una CTE de funciones ventana en vez de una subconsulta
+    # correlacionada: SQLite no deja usar el COUNT(*) de la consulta externa
+    # dentro del OFFSET de una subconsulta correlacionada ("misuse of
+    # aggregate function COUNT()"), así que hace falta ROW_NUMBER()/COUNT()
+    # OVER (PARTITION BY ...) y quedarse con la fila en la posición calculada.
+    with _transaccion(con):
+        con.execute("DELETE FROM estadistica")
+        con.execute(
+            """
+            INSERT INTO estadistica
+                (tipo, producto_id, variante, mediana, minimo, maximo, reinos)
+            WITH numerado AS (
+                SELECT
+                    tipo, producto_id, variante, minimo,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY tipo, producto_id, variante
+                        ORDER BY minimo
+                    ) AS orden,
+                    COUNT(*) OVER (
+                        PARTITION BY tipo, producto_id, variante
+                    ) AS reinos,
+                    MIN(minimo) OVER (
+                        PARTITION BY tipo, producto_id, variante
+                    ) AS grupo_min,
+                    MAX(minimo) OVER (
+                        PARTITION BY tipo, producto_id, variante
+                    ) AS grupo_max
+                FROM precio
+            )
+            SELECT tipo, producto_id, variante, minimo, grupo_min, grupo_max, reinos
+              FROM numerado
+             WHERE orden = (reinos - 1) / 2 + (reinos - 1) % 2 + 1
+            """
+        )
+        (filas,) = con.execute("SELECT COUNT(*) FROM estadistica").fetchone()
+    return filas

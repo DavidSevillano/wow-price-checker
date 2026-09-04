@@ -4,7 +4,7 @@ import pytest
 
 from wowalerts.mercado import TIPO_MASCOTA, TIPO_OBJETO, Clave, ResumenReino
 from web.db import abrir
-from web.ingesta import SIN_VARIANTE, filas_de_precio, volcar
+from web.ingesta import SIN_VARIANTE, filas_de_precio, recalcular_estadisticas, volcar
 
 
 def resumen(*precios, listados=None):
@@ -80,3 +80,84 @@ def test_si_falla_a_media_escritura_se_queda_lo_de_antes(tmp_path):
     filas = con.execute("SELECT producto_id, minimo FROM precio").fetchall()
     assert [tuple(f) for f in filas] == [(1, 100)]
     assert con.execute("SELECT generado_en FROM volcado").fetchone()[0] == 1
+
+
+def test_estadisticas_de_un_producto(tmp_path):
+    con = abrir(tmp_path / "p.db")
+    agregado = {
+        Clave(TIPO_OBJETO, 271440, 305): {
+            1305: resumen(400_000_000),
+            1329: resumen(600_000_000),
+            3391: resumen(900_000_000),
+        }
+    }
+    volcar(con, agregado, generado_en=1)
+    recalcular_estadisticas(con)
+
+    fila = con.execute("SELECT * FROM estadistica").fetchone()
+    assert fila["minimo"] == 400_000_000
+    assert fila["maximo"] == 900_000_000
+    assert fila["mediana"] == 600_000_000
+    assert fila["reinos"] == 3
+
+
+def test_con_un_numero_par_de_reinos_la_mediana_es_la_de_arriba(tmp_path):
+    """No se interpola: la mediana tiene que ser un precio que exista.
+
+    Un promedio entre dos reinos daría un número que no se cumple en ninguno,
+    y este número se le enseña al usuario como "lo que cuesta normalmente".
+    """
+    con = abrir(tmp_path / "p.db")
+    agregado = {
+        Clave(TIPO_OBJETO, 1, 305): {
+            1: resumen(100),
+            2: resumen(200),
+            3: resumen(300),
+            4: resumen(400),
+        }
+    }
+    volcar(con, agregado, generado_en=1)
+    recalcular_estadisticas(con)
+    assert con.execute("SELECT mediana FROM estadistica").fetchone()[0] == 300
+
+
+def test_un_solo_reino_es_su_propia_mediana(tmp_path):
+    con = abrir(tmp_path / "p.db")
+    volcar(con, {Clave(TIPO_OBJETO, 1, 305): {1: resumen(700)}}, generado_en=1)
+    recalcular_estadisticas(con)
+
+    fila = con.execute("SELECT * FROM estadistica").fetchone()
+    assert (fila["mediana"], fila["minimo"], fila["maximo"], fila["reinos"]) == (
+        700, 700, 700, 1
+    )
+
+
+def test_cada_variante_lleva_su_propia_estadistica(tmp_path):
+    """El mismo objeto a ilvl 295 y a 318 son dos mercados distintos."""
+    con = abrir(tmp_path / "p.db")
+    volcar(
+        con,
+        {
+            Clave(TIPO_OBJETO, 1, 295): {1: resumen(100), 2: resumen(200)},
+            Clave(TIPO_OBJETO, 1, 318): {1: resumen(9000), 2: resumen(11000)},
+        },
+        generado_en=1,
+    )
+    recalcular_estadisticas(con)
+
+    filas = {
+        f["variante"]: f["mediana"]
+        for f in con.execute("SELECT variante, mediana FROM estadistica")
+    }
+    assert filas == {295: 200, 318: 11000}
+
+
+def test_recalcular_reemplaza_lo_anterior(tmp_path):
+    con = abrir(tmp_path / "p.db")
+    volcar(con, {Clave(TIPO_OBJETO, 1, 305): {1: resumen(100)}}, generado_en=1)
+    recalcular_estadisticas(con)
+    volcar(con, {Clave(TIPO_OBJETO, 2, 305): {1: resumen(200)}}, generado_en=2)
+    recalcular_estadisticas(con)
+
+    filas = con.execute("SELECT producto_id FROM estadistica").fetchall()
+    assert [f[0] for f in filas] == [2]
