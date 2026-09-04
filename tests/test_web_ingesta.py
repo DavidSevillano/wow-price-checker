@@ -4,7 +4,15 @@ import pytest
 
 from wowalerts.mercado import TIPO_MASCOTA, TIPO_OBJETO, Clave, ResumenReino
 from web.db import abrir
-from web.ingesta import SIN_VARIANTE, filas_de_precio, recalcular_estadisticas, volcar
+from web.ingesta import (
+    SIN_VARIANTE,
+    filas_de_precio,
+    guardar_nombres,
+    guardar_reinos,
+    recalcular_estadisticas,
+    slug,
+    volcar,
+)
 
 
 def resumen(*precios, listados=None):
@@ -168,3 +176,68 @@ def test_recalcular_reemplaza_lo_anterior(tmp_path):
 
     filas = con.execute("SELECT producto_id FROM estadistica").fetchall()
     assert [f[0] for f in filas] == [2]
+
+
+def test_guardar_reinos(tmp_path):
+    con = abrir(tmp_path / "p.db")
+    guardar_reinos(con, {1305: "Kazzak", 1379: "Zul'jin / Uldum"})
+
+    fila = con.execute("SELECT * FROM reino WHERE id = 1379").fetchone()
+    assert fila["nombre"] == "Zul'jin / Uldum"
+    assert fila["slug"] == "zuljin-uldum"
+
+
+def test_guardar_reinos_actualiza_los_que_ya_estaban(tmp_path):
+    con = abrir(tmp_path / "p.db")
+    guardar_reinos(con, {1305: "Kazzak"})
+    guardar_reinos(con, {1305: "Kazzak Renombrado"})
+
+    filas = con.execute("SELECT nombre FROM reino").fetchall()
+    assert [f[0] for f in filas] == ["Kazzak Renombrado"]
+
+
+def test_los_reinos_cirilicos_tienen_slug_propio(tmp_path):
+    """Quitar los acentos deja en nada un nombre en cirílico.
+
+    Son reinos de verdad de EU. Sin esto los tres compartirían el slug vacío y
+    /realm/ devolvería cualquiera de ellos.
+    """
+    con = abrir(tmp_path / "p.db")
+    guardar_reinos(
+        con,
+        {1602: "Гордунни", 1604: "Свежеватель Душ", 1615: "Ревущий фьорд"},
+    )
+
+    slugs = [f[0] for f in con.execute("SELECT slug FROM reino ORDER BY id")]
+    assert all(s for s in slugs), f"algún slug vino vacío: {slugs}"
+    assert len(set(slugs)) == 3, f"slugs repetidos: {slugs}"
+
+
+def test_slug_de_un_nombre_normal():
+    assert slug("Blackmoore / Tichondrius / Lordaeron") == "blackmoore-tichondrius-lordaeron"
+    assert slug("Dentarg / Tarren Mill") == "dentarg-tarren-mill"
+
+
+def test_guardar_nombres(tmp_path):
+    con = abrir(tmp_path / "p.db")
+    guardar_nombres(
+        con,
+        [
+            (TIPO_OBJETO, 271440, "en", "Greaves of the Noxious Depths", "http://i/1.jpg"),
+            (TIPO_OBJETO, 271440, "es", "Grebas de las profundidades nocivas", None),
+        ],
+    )
+    fila = con.execute(
+        "SELECT * FROM nombre WHERE producto_id = 271440 AND idioma = 'es'"
+    ).fetchone()
+    assert fila["nombre"] == "Grebas de las profundidades nocivas"
+    assert fila["icono"] is None
+
+
+def test_guardar_nombres_actualiza_los_que_ya_estaban(tmp_path):
+    con = abrir(tmp_path / "p.db")
+    guardar_nombres(con, [(TIPO_OBJETO, 1, "en", "Viejo", None)])
+    guardar_nombres(con, [(TIPO_OBJETO, 1, "en", "Nuevo", "http://i/2.jpg")])
+
+    filas = con.execute("SELECT nombre, icono FROM nombre").fetchall()
+    assert [tuple(f) for f in filas] == [("Nuevo", "http://i/2.jpg")]

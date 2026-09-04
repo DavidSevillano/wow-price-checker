@@ -6,9 +6,11 @@ producto, qué precio mínimo y cuántos listados hay en cada reino.
 
 from __future__ import annotations
 
+import re
 import sqlite3
+import unicodedata
 from contextlib import contextmanager
-from typing import Iterator, Mapping
+from typing import Iterable, Iterator, Mapping
 
 from wowalerts.mercado import Clave, ResumenReino
 
@@ -158,3 +160,69 @@ def recalcular_estadisticas(con: sqlite3.Connection) -> int:
         )
         (filas,) = con.execute("SELECT COUNT(*) FROM estadistica").fetchone()
     return filas
+
+
+def slug(texto: str) -> str:
+    """Nombre de reino a fragmento de URL: "Zul'jin / Uldum" -> "zuljin-uldum".
+
+    Normaliza a NFKD, se queda solo con ASCII, pasa a minúsculas, quita los
+    apóstrofos (para que "Zul'jin" salga "zuljin" y no "zul-jin") y colapsa
+    cualquier tirada de los caracteres que queden que no sean letras o
+    dígitos en un solo guion, sin guiones sobrantes al principio o al final.
+
+    Puede devolver "" de verdad: un nombre enteramente en cirílico (hay
+    reinos así en EU, p.ej. "Гордунни") no tiene ninguna letra ASCII que
+    sobreviva al filtro. Esta función no lo resuelve -- decidir qué hacer con
+    ese caso vacío es cosa de quien la llama (`guardar_reinos` cae al id).
+    """
+    descompuesto = unicodedata.normalize("NFKD", texto)
+    solo_ascii = descompuesto.encode("ascii", errors="ignore").decode("ascii")
+    minusculas = solo_ascii.lower()
+    sin_apostrofos = minusculas.replace("'", "")
+    return re.sub(r"[^a-z0-9]+", "-", sin_apostrofos).strip("-")
+
+
+def guardar_reinos(con: sqlite3.Connection, nombres: Mapping[int, str]) -> None:
+    """Upsert de id de reino -> nombre y slug.
+
+    EU tiene reinos con el nombre enteramente en cirílico (p.ej. "Гордунни",
+    "Свежеватель Душ", "Ревущий фьорд"): `slug()` les da "" porque no les
+    queda ni una letra ASCII. Si se guardara ese "" tal cual, los tres
+    reinos compartirían slug y `/realm/<slug>` no sabría a cuál de ellos
+    servir. Por eso, cuando el slug sale vacío, se usa el id del reino como
+    slug de repuesto -- es feo pero es único de por sí, sin depender de una
+    librería de transliteración.
+    """
+    filas = []
+    for reino_id, nombre in nombres.items():
+        slug_calculado = slug(nombre) or str(reino_id)
+        filas.append((reino_id, slug_calculado, nombre))
+
+    with _transaccion(con):
+        con.executemany(
+            "INSERT INTO reino (id, slug, nombre) VALUES (?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET slug = excluded.slug, "
+            "nombre = excluded.nombre",
+            filas,
+        )
+
+
+def guardar_nombres(
+    con: sqlite3.Connection,
+    filas: Iterable[tuple[str, int, str, str, str | None]],
+) -> None:
+    """Upsert de (tipo, producto_id, idioma) -> nombre localizado e icono.
+
+    La API de Blizzard trae el nombre de cada objeto en ocho idiomas sin
+    coste extra, y eso multiplica gratis la superficie de búsqueda del
+    sitio: cada idioma es una entrada más por la que se puede encontrar el
+    mismo producto.
+    """
+    with _transaccion(con):
+        con.executemany(
+            "INSERT INTO nombre (tipo, producto_id, idioma, nombre, icono) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(tipo, producto_id, idioma) DO UPDATE SET "
+            "nombre = excluded.nombre, icono = excluded.icono",
+            filas,
+        )
