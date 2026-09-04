@@ -192,6 +192,34 @@ class BlizzardClient:
             log.debug("Sin nombre para el objeto %s: %s", item_id, exc)
             return None
 
+    def item_names(self, item_id: int) -> dict[str, str]:
+        """Todos los idiomas de golpe, para las páginas de la web pública.
+
+        Es la misma petición que `item_name`: Blizzard devuelve el nombre ya
+        traducido a todos los idiomas y `item_name` se queda con uno. Pedir
+        ocho veces el mismo objeto para sacar ocho idiomas sería tirar siete
+        peticiones, y son veinte mil objetos.
+        """
+        try:
+            response = self._api_get(
+                f"/data/wow/item/{item_id}", namespace=f"static-{self.region}"
+            )
+            if response.status_code != 200:
+                return {}
+            name = response.json().get("name")
+            if isinstance(name, dict):
+                return {
+                    idioma: texto
+                    for idioma, texto in name.items()
+                    if isinstance(texto, str) and texto
+                }
+            if isinstance(name, str) and name:
+                return {self.locale: name}
+            return {}
+        except BlizzardError as exc:
+            log.debug("Sin nombres para el objeto %s: %s", item_id, exc)
+            return {}
+
     def pet_species_name(self, species_id: int) -> str | None:
         """Nombre de una especie de mascota.
 

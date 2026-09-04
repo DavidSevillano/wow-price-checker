@@ -310,3 +310,57 @@ def test_busqueda_sin_coincidencia_devuelve_none(requests_mock, client):
 )
 def test_extraccion_del_id_de_reino(href, esperado):
     assert _realm_id_from_href(href) == esperado
+
+
+def test_item_names_devuelve_todos_los_idiomas(requests_mock, client):
+    give_token(requests_mock)
+    requests_mock.get(
+        "https://eu.api.blizzard.com/data/wow/item/271440",
+        json={
+            "name": {
+                "en_GB": "Greaves of the Noxious Depths",
+                "es_ES": "Grebas de las profundidades nocivas",
+                "de_DE": "Beinschienen der schädlichen Tiefen",
+            }
+        },
+    )
+    nombres = client.item_names(271440)
+    assert nombres["es_ES"] == "Grebas de las profundidades nocivas"
+    assert len(nombres) == 3
+
+
+def test_item_names_con_un_nombre_suelto_lo_pone_en_el_locale_del_cliente(
+    requests_mock, client
+):
+    """Algunos objetos vuelven con `name` como cadena y no como diccionario."""
+    give_token(requests_mock)
+    requests_mock.get(
+        "https://eu.api.blizzard.com/data/wow/item/1", json={"name": "Suelto"}
+    )
+    assert client.item_names(1) == {client.locale: "Suelto"}
+
+
+def test_item_names_de_un_objeto_que_no_existe_es_vacio(requests_mock, client):
+    give_token(requests_mock)
+    requests_mock.get("https://eu.api.blizzard.com/data/wow/item/2", status_code=404)
+    assert client.item_names(2) == {}
+
+
+def test_item_names_descarta_los_idiomas_vacios(requests_mock, client):
+    """Blizzard manda la clave con cadena vacía para idiomas sin traducir."""
+    give_token(requests_mock)
+    requests_mock.get(
+        "https://eu.api.blizzard.com/data/wow/item/3",
+        json={"name": {"en_GB": "Algo", "ko_KR": "", "it_IT": None}},
+    )
+    assert client.item_names(3) == {"en_GB": "Algo"}
+
+
+def test_item_name_sigue_dando_un_solo_idioma(requests_mock, client):
+    """El vigilante usa item_name y no se entera de que existe item_names."""
+    give_token(requests_mock)
+    requests_mock.get(
+        "https://eu.api.blizzard.com/data/wow/item/4",
+        json={"name": {"en_GB": "Solo este", "es_ES": "Este no"}},
+    )
+    assert client.item_name(4) == "Solo este"
