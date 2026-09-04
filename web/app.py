@@ -37,14 +37,22 @@ def crear_app(ruta_db: Path | str = RUTA_POR_DEFECTO) -> FastAPI:
         "/estaticos", StaticFiles(directory=str(AQUI / "estaticos")), name="estaticos"
     )
 
+    # Se abre una vez al arrancar solo para dejar el esquema puesto (las seis
+    # CREATE TABLE IF NOT EXISTS más el índice); se cierra enseguida porque no
+    # sirve para nada más. Así cada petición puede abrir con esquema=False.
+    abrir(ruta_db).close()
+
     def conexion() -> sqlite3.Connection:
         # Una conexión por petición: SQLite no deja compartirlas entre hilos, y
-        # abrir una cuesta microsegundos.
-        return abrir(ruta_db)
+        # abrir una cuesta ~0,9 ms (medido contra una base de 800.000 filas).
+        # El esquema ya está puesto por `crear_app`, así que aquí se salta:
+        # volver a comprobarlo en cada petición costaba ~0,15 ms de las
+        # ~1,07 ms totales, más que la propia consulta de la página.
+        return abrir(ruta_db, esquema=False)
 
     @app.get("/item/{producto_id}", response_class=HTMLResponse)
     def pagina_producto(
-        request: Request, producto_id: int, ilvl: Optional[int] = None
+        request: Request, producto_id: int, ilvl: Optional[str] = None
     ):
         con = conexion()
         try:
@@ -70,16 +78,26 @@ def crear_app(ruta_db: Path | str = RUTA_POR_DEFECTO) -> FastAPI:
     return app
 
 
-def _variante_pedida(variantes: list[dict], ilvl: Optional[int]) -> dict:
+def _variante_pedida(variantes: list[dict], ilvl: Optional[str]) -> dict:
     """La variante pedida, o la que más reinos tiene si no se pidió ninguna.
+
+    El ilvl llega como texto y se convierte aquí a propósito. Si se tipara como
+    int, un `?ilvl=abc` daría el 422 en JSON de FastAPI en una página que
+    Google rastrea, mientras que un `?ilvl=9999` --el mismo error del
+    usuario-- cae con elegancia en la variante por defecto. Un solo camino.
 
     La más extendida y no la primera: en las Grebas, el ilvl 318 solo está en
     12 reinos y el 305 en 85, así que abrir por el 305 enseña más mercado.
     """
     if ilvl is not None:
-        for v in variantes:
-            if v["variante"] == ilvl:
-                return v
+        try:
+            pedido = int(ilvl)
+        except (TypeError, ValueError):
+            pedido = None
+        if pedido is not None:
+            for v in variantes:
+                if v["variante"] == pedido:
+                    return v
     return max(variantes, key=lambda v: v["reinos"])
 
 

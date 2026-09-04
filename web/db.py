@@ -31,8 +31,19 @@ def aplicar_esquema(con: sqlite3.Connection) -> None:
     con.commit()
 
 
-def abrir(ruta: Path | str = RUTA_POR_DEFECTO) -> sqlite3.Connection:
-    """Abre la base, la deja en WAL y se asegura de que el esquema está."""
+def abrir(
+    ruta: Path | str = RUTA_POR_DEFECTO, esquema: bool = True
+) -> sqlite3.Connection:
+    """Abre la base, la deja en WAL y, si se pide, se asegura de que el esquema está.
+
+    `esquema=False` se lo pasa la web en cada petición: el esquema ya está
+    puesto al arrancar (una vez, en `crear_app`), y volver a comprobarlo con
+    `executescript` --seis CREATE TABLE IF NOT EXISTS más un índice-- cuesta
+    más que la propia consulta de la página (medido: ~0,15 ms del esquema
+    contra ~0,028 ms de `ficha` + `reinos_de`). El valor por defecto sigue
+    siendo True para no romper a quien no sabe que puede saltárselo: la
+    ingesta y los tests de este módulo abren así.
+    """
     # isolation_level=None es autocommit: cada execute() se confirma solo y
     # commit() no delimita nada aquí. Quien haga una transacción de verdad
     # (la pasada horaria, por ejemplo) la abre y la cierra ella misma con
@@ -47,5 +58,6 @@ def abrir(ruta: Path | str = RUTA_POR_DEFECTO) -> sqlite3.Connection:
     # ante un corte de luz, y lo que se pierde se regenera en una hora.
     con.execute("PRAGMA synchronous = NORMAL")
     con.execute("PRAGMA foreign_keys = ON")
-    aplicar_esquema(con)
+    if esquema:
+        aplicar_esquema(con)
     return con

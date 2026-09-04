@@ -85,3 +85,30 @@ def test_los_precios_salen_en_oro_y_no_en_cobre(cliente):
     texto = cliente.get("/item/271440").text
     assert "100" in texto            # 1.000.000 de cobre son 100 de oro
     assert "1000000" not in texto
+
+
+def test_un_ilvl_que_no_es_un_numero_tampoco_revienta(cliente):
+    """El mismo error del usuario no puede dar dos respuestas distintas."""
+    r = cliente.get("/item/271440?ilvl=abc")
+    assert r.status_code == 200
+    assert "Greaves of the Noxious Depths" in r.text
+
+
+def test_el_nombre_del_objeto_sale_escapado(tmp_path):
+    """El nombre viene de la API de Blizzard: es texto de fuera.
+
+    Hoy Jinja2 escapa solo, pero nada en la suite lo sujetaba: un `| safe`
+    puesto más adelante para "nombres con formato" reabriría el agujero sin
+    que fallara nada.
+    """
+    ruta = tmp_path / "x.db"
+    con = abrir(ruta)
+    guardar_reinos(con, {1: "Reino 1"})
+    guardar_nombres(con, [(TIPO_OBJETO, 1, "en", "<script>alert(1)</script>", None)])
+    volcar(con, {Clave(TIPO_OBJETO, 1, 305): {1: resumen(1_000_000)}}, generado_en=1)
+    recalcular_estadisticas(con)
+    con.close()
+
+    texto = TestClient(crear_app(ruta)).get("/item/1").text
+    assert "<script>alert(1)</script>" not in texto
+    assert "&lt;script&gt;" in texto
