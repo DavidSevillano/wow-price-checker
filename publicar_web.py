@@ -28,6 +28,12 @@ from wowalerts.mercado import TIPO_OBJETO, Clave, ResumenReino, agregar, resumir
 
 log = logging.getLogger("publicar_web")
 
+# Mismos numeros que `main.py` (EXIT_OK / EXIT_TOO_MANY_FAILURES): un cron que
+# vigile las dos pasadas no tiene que aprenderse dos convenios distintos para
+# saber si una region ha salido incompleta.
+EXIT_OK = 0
+EXIT_DEMASIADOS_FALLOS = 2
+
 # Mismo suelo que analizar_mercado.py: por debajo de esto hay decenas de
 # miles de objetos de dos cobres que nadie busca jamas, y la region entera no
 # cabria en memoria si se guardaran.
@@ -180,6 +186,11 @@ def pedir_nombres(
             for locale, codigo in IDIOMAS.items():
                 nombre = nombres.get(locale)
                 if nombre:
+                    # El icono se deja siempre en None: pedirlo es una peticion
+                    # aparte por objeto (`client.item_icon_url`), y con ~20 000
+                    # objetos en la primera pasada eso duplicaria el trabajo de
+                    # `pedir_nombres`. Ningun template de la web lo lee todavia,
+                    # asi que no hay nada que ganar por ahora.
                     filas.append((TIPO_OBJETO, producto_id, codigo, nombre, None))
 
     return filas
@@ -212,7 +223,13 @@ def poblar(
     return filas
 
 
-def main(argv=None) -> int:
+def main(argv=None, *, client: BlizzardClient | None = None) -> int:
+    """Punto de entrada del script.
+
+    `client` es la unica costura pensada para los tests: dejar que se inyecte
+    un cliente falso permite probar el contrato de codigos de salida sin red,
+    sin tocar como esta construido el resto de la funcion.
+    """
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -221,13 +238,14 @@ def main(argv=None) -> int:
     load_dotenv()
     config = load_config(args.config)
 
-    client = BlizzardClient(
-        os.getenv("BLIZZARD_CLIENT_ID", ""),
-        os.getenv("BLIZZARD_CLIENT_SECRET", ""),
-        region=config.region,
-        locale=config.locale,
-        timeout=config.settings.request_timeout,
-    )
+    if client is None:
+        client = BlizzardClient(
+            os.getenv("BLIZZARD_CLIENT_ID", ""),
+            os.getenv("BLIZZARD_CLIENT_SECRET", ""),
+            region=config.region,
+            locale=config.locale,
+            timeout=config.settings.request_timeout,
+        )
 
     realm_ids = (
         [int(r) for r in args.realms.split(",") if r.strip()]
@@ -242,9 +260,30 @@ def main(argv=None) -> int:
     resumenes, nombres_reino = descargar_reinos(
         client, config, realm_ids, PRECIO_MINIMO_ORO * COPPER_PER_GOLD
     )
-    if not resumenes:
-        log.error("Ningun reino ha respondido. No se toca la base.")
-        return 2
+
+    # Mismo umbral que usa `main.py` para la misma decision (ver
+    # `wowalerts.config.Settings.failure_ratio_threshold`): si fallan mas
+    # reinos de la cuenta, no se toca la base. Publicar solo lo que ha
+    # respondido no es "publicar un poco menos" -- `volcar()` borra la tabla
+    # `precio` entera y reinserta solo esos reinos, asi que los que fallan
+    # desaparecen de la web hasta la pasada siguiente. Los datos de la pasada
+    # anterior tienen como mucho una hora; una region a medio reemplazar es
+    # peor que eso, y encima no se nota porque el proceso sigue saliendo bien.
+    # "Ningun reino ha respondido" no es un caso aparte: con resumenes vacio
+    # el ratio sale 1.0, muy por encima de cualquier umbral razonable.
+    fallidos = len(realm_ids) - len(resumenes)
+    ratio_fallos = fallidos / len(realm_ids) if realm_ids else 0.0
+    if ratio_fallos > config.settings.failure_ratio_threshold:
+        log.error(
+            "%s de %s reinos han fallado (%.0f%%), por encima del limite "
+            "del %.0f%%: no toco la base. Me quedo a proposito con la "
+            "pasada anterior.",
+            fallidos,
+            len(realm_ids),
+            ratio_fallos * 100,
+            config.settings.failure_ratio_threshold * 100,
+        )
+        return EXIT_DEMASIADOS_FALLOS
     log.info(
         "%s de %s reinos en %.0f s",
         len(resumenes),
@@ -279,7 +318,7 @@ def main(argv=None) -> int:
         filas,
         len(faltan),
     )
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":
