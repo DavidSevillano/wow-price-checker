@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from typing import Any, Optional
 
 from web.ingesta import SIN_VARIANTE
@@ -87,3 +88,38 @@ def reinos_de(
         args.append(limite)
 
     return [dict(fila) for fila in con.execute(sql, args)]
+
+
+def anotar_peticion(
+    con: sqlite3.Connection,
+    tipo: str,
+    producto_id: int,
+    ahora: Optional[int] = None,
+) -> None:
+    """Deja constancia de que alguien ha pedido esta página.
+
+    De aquí sale qué páginas existen de verdad: en vez de publicar las 20.144
+    el primer día --que es el patrón que Google trata como contenido
+    generado--, el índice crece con la demanda que ya hay.
+    """
+    con.execute(
+        "INSERT INTO pagina (tipo, producto_id, primera_peticion) "
+        "VALUES (?, ?, ?) "
+        "ON CONFLICT(tipo, producto_id) DO UPDATE SET "
+        "peticiones = peticiones + 1",
+        (tipo, producto_id, ahora if ahora is not None else int(time.time())),
+    )
+
+
+def paginas_mas_pedidas(
+    con: sqlite3.Connection, limite: int = 100
+) -> list[dict[str, Any]]:
+    """Para el sitemap: solo entra lo que la gente busca de verdad."""
+    return [
+        dict(fila)
+        for fila in con.execute(
+            "SELECT tipo, producto_id, peticiones FROM pagina "
+            " ORDER BY peticiones DESC, producto_id LIMIT ?",
+            (limite,),
+        )
+    ]

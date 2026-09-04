@@ -2,7 +2,7 @@ import pytest
 
 from wowalerts.mercado import TIPO_OBJETO, Clave, ResumenReino
 from web.db import abrir
-from web.consultas import REINOS_GRATIS, ficha, reinos_de
+from web.consultas import REINOS_GRATIS, anotar_peticion, ficha, paginas_mas_pedidas, reinos_de
 from web.ingesta import guardar_nombres, guardar_reinos, recalcular_estadisticas, volcar
 
 
@@ -102,3 +102,44 @@ def test_lo_que_no_escala_se_pide_con_variante_none(con):
 
     filas = reinos_de(con, TIPO_OBJETO, 258126, None, limite=None)
     assert [f["minimo"] for f in filas] == [4200]
+
+
+def test_la_primera_peticion_crea_la_pagina(con):
+    anotar_peticion(con, TIPO_OBJETO, 271440, ahora=1000)
+
+    fila = con.execute("SELECT * FROM pagina").fetchone()
+    assert fila["producto_id"] == 271440
+    assert fila["primera_peticion"] == 1000
+    assert fila["peticiones"] == 1
+
+
+def test_las_siguientes_solo_cuentan(con):
+    anotar_peticion(con, TIPO_OBJETO, 271440, ahora=1000)
+    anotar_peticion(con, TIPO_OBJETO, 271440, ahora=2000)
+
+    fila = con.execute("SELECT * FROM pagina").fetchone()
+    assert fila["peticiones"] == 2
+    # La fecha es la de la PRIMERA vez: dice desde cuándo existe la página.
+    assert fila["primera_peticion"] == 1000
+
+
+def test_sin_hora_usa_la_de_ahora(con):
+    import time
+
+    antes = int(time.time())
+    anotar_peticion(con, TIPO_OBJETO, 271440)
+    fila = con.execute("SELECT primera_peticion FROM pagina").fetchone()
+    assert antes <= fila[0] <= int(time.time())
+
+
+def test_las_mas_pedidas_salen_primero(con):
+    anotar_peticion(con, TIPO_OBJETO, 1, ahora=1)
+    for _ in range(3):
+        anotar_peticion(con, TIPO_OBJETO, 2, ahora=1)
+
+    assert [p["producto_id"] for p in paginas_mas_pedidas(con, limite=2)] == [2, 1]
+
+
+def test_sin_paginas_pedidas_la_lista_esta_vacia(con):
+    """Un sitio recién desplegado: el sitemap sale vacío, no con 20.144 URLs."""
+    assert paginas_mas_pedidas(con) == []
