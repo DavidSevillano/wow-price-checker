@@ -149,3 +149,34 @@ def test_el_sitemap_es_xml_de_verdad(cliente):
     assert r.headers["content-type"].startswith("application/xml")
     raiz = ET.fromstring(r.text)
     assert raiz.tag.endswith("urlset")
+
+
+def test_la_ficha_no_promete_un_precio_normal_que_no_sabe(cliente):
+    """El ilvl 318 solo esta en un reino: ahi no hay precio "normal".
+
+    Presentar el unico precio que existe como "lo que cuesta normalmente" es
+    afirmar algo que la base no sabe.
+    """
+    texto = cliente.get("/item/271440?ilvl=318").text
+    assert "Normally costs" not in texto
+    assert "1 realm" in texto
+
+
+def test_con_reinos_de_sobra_si_sale_el_precio_normal(cliente):
+    """El 305 esta en diez reinos: ahi la mediana si significa algo."""
+    assert "Normally costs" in cliente.get("/item/271440?ilvl=305").text
+
+
+def test_la_web_abre_la_base_que_diga_el_entorno(ruta_db, monkeypatch):
+    """Sin esto, un uvicorn lanzado desde otra carpeta abre una base vacia,
+    la crea con el esquema puesto, y da 404 en todo sin decir por que.
+    """
+    monkeypatch.setenv("AUCTION_DB", str(ruta_db))
+    assert TestClient(crear_app()).get("/item/271440").status_code == 200
+
+
+def test_sin_variable_de_entorno_usa_la_de_por_defecto(tmp_path, monkeypatch):
+    """Y si la de por defecto no tiene nada, la pagina no existe: 404."""
+    monkeypatch.delenv("AUCTION_DB", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert TestClient(crear_app()).get("/item/271440").status_code == 404

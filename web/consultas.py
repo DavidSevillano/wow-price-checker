@@ -16,6 +16,19 @@ log = logging.getLogger("web.consultas")
 # en el HTML que se pueda descubrir quitando un estilo.
 REINOS_GRATIS = 5
 
+# A partir de cuántos reinos una mediana significa "lo que cuesta
+# normalmente". Por debajo no es un precio típico: con dos reinos es el más
+# caro de los dos, y con uno es el único precio que existe. La ficha no puede
+# presentar eso como el precio normal, porque no lo sabe.
+#
+# No es un caso raro. En una base de dos reinos, 5.034 de 16.239 productos
+# tenían datos de un solo reino; en la región entera son menos --269 de
+# 20.144-- pero siguen siendo cientos de páginas afirmando lo que no consta.
+#
+# `productos_de_reino` ya tiene este mismo guardia con su propio umbral (15),
+# y por la misma razón: no comparar contra una mediana que no significa nada.
+REINOS_PARA_MEDIANA = 5
+
 IDIOMA_POR_DEFECTO = "en"
 
 
@@ -30,16 +43,20 @@ def ficha(
     Devuelve None si de ese producto no hay nada en el último volcado, que es
     lo que la ruta convierte en un 404.
     """
-    variantes = [
-        dict(fila)
-        for fila in con.execute(
-            "SELECT variante, mediana, minimo, maximo, reinos "
-            "  FROM estadistica "
-            " WHERE tipo = ? AND producto_id = ? "
-            " ORDER BY variante",
-            (tipo, producto_id),
-        )
-    ]
+    variantes = []
+    for fila in con.execute(
+        "SELECT variante, mediana, minimo, maximo, reinos "
+        "  FROM estadistica "
+        " WHERE tipo = ? AND producto_id = ? "
+        " ORDER BY variante",
+        (tipo, producto_id),
+    ):
+        variante = dict(fila)
+        # La decisión se toma aquí y no en la plantilla para poder probarla:
+        # una condición escrita en Jinja no la cubre ningún test.
+        variante["mediana_fiable"] = variante["reinos"] >= REINOS_PARA_MEDIANA
+        variantes.append(variante)
+
     if not variantes:
         return None
 

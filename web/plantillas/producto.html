@@ -20,10 +20,26 @@ EU realms. Updated hourly.{% endblock %}
   </nav>
 
   <section class="baldosas">
+    {# Con pocos reinos no hay precio "normal": la mediana es el único precio
+       que existe, o el más caro de dos. Se enseña el rango, que sí es cierto,
+       en vez de afirmar lo que la base no sabe. #}
+    {% if actual.mediana_fiable %}
     <div class="baldosa">
       <span class="et">Normally costs</span>
       <span class="val">{{ actual.mediana | oro }}g</span>
     </div>
+    {% else %}
+    <div class="baldosa">
+      <span class="et">Price range</span>
+      <span class="val">
+        {%- if actual.minimo == actual.maximo -%}
+          {{ actual.minimo | oro }}g
+        {%- else -%}
+          {{ actual.minimo | oro }}–{{ actual.maximo | oro }}g
+        {%- endif -%}
+      </span>
+    </div>
+    {% endif %}
     <div class="baldosa">
       <span class="et">Cheapest right now</span>
       <span class="val barato">{{ actual.minimo | oro }}g</span>
@@ -33,6 +49,15 @@ EU realms. Updated hourly.{% endblock %}
       <span class="val">{{ actual.reinos }}</span>
     </div>
   </section>
+
+  {% if not actual.mediana_fiable %}
+  <p class="aviso">
+    Only {{ actual.reinos }} realm{{ "" if actual.reinos == 1 else "s" }}
+    {{ "has" if actual.reinos == 1 else "have" }} this at item level
+    {{ actual.variante }} right now, so there is no typical price to compare
+    against yet.
+  </p>
+  {% endif %}
 
   <table>
     <thead>

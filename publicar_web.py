@@ -16,11 +16,12 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Sequence
 
 from dotenv import load_dotenv
 
-from web.db import RUTA_POR_DEFECTO, abrir
+from web.db import abrir, ruta_de_entorno
 from web.ingesta import guardar_nombres, guardar_reinos, recalcular_estadisticas, volcar
 from wowalerts.blizzard import BlizzardClient, BlizzardError
 from wowalerts.config import COPPER_PER_GOLD, load_config
@@ -74,7 +75,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument(
-        "--db", default=str(RUTA_POR_DEFECTO), help="Ruta de la base de la web publica."
+        # Sin valor por defecto aqui: se resuelve en main(), DESPUES de
+        # load_dotenv(), porque argparse evalua los defaults al construir el
+        # parser y para entonces el .env todavia no se ha leido.
+        "--db",
+        default=None,
+        help="Ruta de la base de la web publica. Por defecto, $AUCTION_DB.",
     )
     parser.add_argument(
         "--realms",
@@ -236,6 +242,9 @@ def main(argv=None, *, client: BlizzardClient | None = None) -> int:
         format="%(message)s",
     )
     load_dotenv()
+    # Ahora si: el .env ya esta leido, asi que AUCTION_DB dice lo que tenga que
+    # decir. El --db explicito sigue mandando sobre el.
+    ruta_db = Path(args.db) if args.db else ruta_de_entorno()
     config = load_config(args.config)
 
     if client is None:
@@ -294,7 +303,7 @@ def main(argv=None, *, client: BlizzardClient | None = None) -> int:
     agregado = agregar(resumenes)
     log.info("%s productos distintos en lo bajado", len(agregado))
 
-    con = abrir(args.db)
+    con = abrir(ruta_db)
 
     faltan = productos_sin_nombre(con, agregado)
     log.info("%s productos sin nombre todavia", len(faltan))

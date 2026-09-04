@@ -4,6 +4,7 @@ from wowalerts.mercado import TIPO_OBJETO, Clave, ResumenReino
 from web.db import abrir
 from web.consultas import (
     REINOS_GRATIS,
+    REINOS_PARA_MEDIANA,
     anotar_peticion,
     ficha,
     paginas_mas_pedidas,
@@ -257,3 +258,46 @@ def test_el_limite_recorta(con_rebajas):
 def test_solo_sale_lo_que_esta_por_debajo_de_su_mediana(con_rebajas):
     """En el reino 5 los dos están a su precio normal: no hay rebaja."""
     assert productos_de_reino(con_rebajas, 5, limite=10, reinos_minimos=10) == []
+
+
+def test_con_pocos_reinos_la_mediana_no_es_fiable(con):
+    """Con un solo reino la "mediana" es el unico precio que existe.
+
+    El fixture tiene el ilvl 318 en un reino y el 305 en diez, asi que sirven
+    los dos casos sin montar nada aparte.
+    """
+    variantes = {v["variante"]: v for v in ficha(con, TIPO_OBJETO, 271440)["variantes"]}
+    assert variantes[318]["reinos"] == 1
+    assert variantes[318]["mediana_fiable"] is False
+
+
+def test_con_reinos_de_sobra_la_mediana_es_fiable(con):
+    variantes = {v["variante"]: v for v in ficha(con, TIPO_OBJETO, 271440)["variantes"]}
+    assert variantes[305]["reinos"] >= REINOS_PARA_MEDIANA
+    assert variantes[305]["mediana_fiable"] is True
+
+
+def test_el_umbral_es_el_de_la_constante(tmp_path):
+    """Justo por debajo no, justo en el umbral si."""
+    con = abrir(tmp_path / "u.db")
+    guardar_reinos(con, {i: f"Reino {i}" for i in range(1, 21)})
+    volcar(
+        con,
+        {
+            Clave(TIPO_OBJETO, 1, 305): {
+                i: resumen(i * 100) for i in range(1, REINOS_PARA_MEDIANA)
+            },
+            Clave(TIPO_OBJETO, 2, 305): {
+                i: resumen(i * 100) for i in range(1, REINOS_PARA_MEDIANA + 1)
+            },
+        },
+        generado_en=1,
+    )
+    recalcular_estadisticas(con)
+
+    justo_debajo = ficha(con, TIPO_OBJETO, 1)["variantes"][0]
+    justo_encima = ficha(con, TIPO_OBJETO, 2)["variantes"][0]
+    assert justo_debajo["reinos"] == REINOS_PARA_MEDIANA - 1
+    assert justo_debajo["mediana_fiable"] is False
+    assert justo_encima["reinos"] == REINOS_PARA_MEDIANA
+    assert justo_encima["mediana_fiable"] is True

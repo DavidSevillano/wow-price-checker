@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from pathlib import Path
@@ -23,7 +24,9 @@ from web.consultas import (
     reino_por_slug,
     reinos_de,
 )
-from web.db import RUTA_POR_DEFECTO, abrir
+from web.db import VARIABLE_DB, abrir, ruta_de_entorno
+
+log = logging.getLogger("web.app")
 
 AQUI = Path(__file__).parent
 
@@ -42,8 +45,13 @@ def _oro(cobre: int) -> str:
     return f"{cobre // COPPER_PER_GOLD:,}"
 
 
-def crear_app(ruta_db: Path | str = RUTA_POR_DEFECTO) -> FastAPI:
-    """Fabrica la app. Recibe la ruta para que los tests usen su propia base."""
+def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
+    """Fabrica la app. Recibe la ruta para que los tests usen su propia base.
+
+    Sin ruta se usa la que diga `AUCTION_DB`, que es como la nombra el
+    servidor: `uvicorn web.app:app` no puede pasar argumentos.
+    """
+    ruta_db = Path(ruta_db) if ruta_db is not None else ruta_de_entorno()
     app = FastAPI(title="Auction Sentinel")
     plantillas = Jinja2Templates(directory=str(AQUI / "plantillas"))
     plantillas.env.filters["oro"] = _oro
@@ -51,10 +59,29 @@ def crear_app(ruta_db: Path | str = RUTA_POR_DEFECTO) -> FastAPI:
         "/estaticos", StaticFiles(directory=str(AQUI / "estaticos")), name="estaticos"
     )
 
-    # Se abre una vez al arrancar solo para dejar el esquema puesto (las seis
-    # CREATE TABLE IF NOT EXISTS más el índice); se cierra enseguida porque no
-    # sirve para nada más. Así cada petición puede abrir con esquema=False.
-    abrir(ruta_db).close()
+    # Se abre una vez al arrancar para dejar el esquema puesto (las seis
+    # CREATE TABLE IF NOT EXISTS más el índice), y de paso para decir en el log
+    # QUÉ fichero se ha abierto. Sin esa línea, apuntar a la base equivocada se
+    # nota como 404 en todas las páginas y en ningún otro sitio: `abrir()` crea
+    # la base que falte, así que no hay ni un error que buscar.
+    con = abrir(ruta_db)
+    try:
+        filas = con.execute("SELECT count(*) FROM precio").fetchone()[0]
+    finally:
+        con.close()
+
+    log.info("Sirviendo %s (%s filas de precio)", ruta_db.resolve(), f"{filas:,}")
+    if not filas:
+        # No se aborta: una instalación recién hecha tiene la base vacía hasta
+        # que termina la primera pasada, y eso es legítimo.
+        log.warning(
+            "La base %s está vacía, así que todas las páginas van a dar 404. "
+            "Llénala con `publicar_web.py --db %s`, o apunta %s a la base "
+            "buena.",
+            ruta_db.resolve(),
+            ruta_db,
+            VARIABLE_DB,
+        )
 
     def conexion() -> sqlite3.Connection:
         # Una conexión por petición: SQLite no deja compartirlas entre hilos, y

@@ -20,6 +20,10 @@ EnvironmentFile=/opt/auction-sentinel/.env
 # paralelo. Si el CPU del VPS va sobrado y el trafico crece, subir este
 # numero es seguro: cada worker abre sus propias conexiones SQLite en modo
 # WAL, que admite muchos lectores a la vez.
+# uvicorn no puede pasarle argumentos a la app, asi que la base la dice
+# AUCTION_DB desde el EnvironmentFile de arriba -- la misma variable que usa la
+# pasada. Al arrancar, el log dice que fichero ha abierto y cuantas filas
+# tiene: si esta vacia se ve en la primera linea, no en forma de 404.
 ExecStart=/opt/auction-sentinel/.venv/bin/uvicorn web.app:app --host 127.0.0.1 --port 8000 --workers 2
 
 Restart=always

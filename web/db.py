@@ -8,13 +8,36 @@ viendo los datos de la pasada anterior hasta que la nueva termina.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
 ESQUEMA = Path(__file__).parent / "esquema.sql"
 
+# La variable de entorno que dice qué base es la buena.
+#
+# Hace falta porque `RUTA_POR_DEFECTO` es relativa al directorio desde el que
+# se arranque, y las dos mitades del sistema se arrancan de maneras distintas:
+# la pasada con una ruta absoluta en `--db`, el servidor con un uvicorn que
+# resuelve contra su directorio de trabajo. Si no coinciden, el servidor abre
+# un fichero que no existe, `abrir()` lo crea con el esquema puesto, y todas
+# las páginas dan 404 sin que nada lo diga. Pasó de verdad la primera vez que
+# se levantó a mano.
+VARIABLE_DB = "AUCTION_DB"
+
 # Por defecto junto al código; en el servidor se pasa la ruta a mano.
 RUTA_POR_DEFECTO = Path("web.db")
+
+
+def ruta_de_entorno() -> Path:
+    """La base que dice `AUCTION_DB`, o la de por defecto si no está puesta.
+
+    Se lee al llamar y no al importar a propósito: `publicar_web.py` carga el
+    `.env` después de montar el parser de argumentos, así que una constante
+    resuelta en el import se quedaría con lo que hubiera antes de leerlo.
+    """
+    return Path(os.environ.get(VARIABLE_DB) or RUTA_POR_DEFECTO)
+
 
 # Cuánto espera una escritura a que se suelte el bloqueo antes de rendirse.
 # El bloqueo de SQLite es de toda la base, no de una tabla, y la pasada horaria

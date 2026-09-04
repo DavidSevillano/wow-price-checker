@@ -67,12 +67,12 @@ Copia la plantilla del repositorio y edita:
 cp .env.example .env
 ```
 
-Para la web publica hacen falta **tres variables**, dos de la plantilla y una
-que no esta en ella:
+Para la web publica hacen falta **cuatro variables**:
 
 ```
 BLIZZARD_CLIENT_ID=tu_client_id
 BLIZZARD_CLIENT_SECRET=tu_client_secret
+AUCTION_DB=/opt/auction-sentinel/web.db
 BASE_URL=https://tudominio.example
 ```
 
@@ -81,13 +81,19 @@ BASE_URL=https://tudominio.example
   vigilante. Las lee `publicar_web.py` (via `os.getenv`, igual que
   `main.py`); la web propiamente dicha (`web/app.py`) no habla nunca con
   Blizzard, solo lee la base que `publicar_web.py` ha llenado.
+- `AUCTION_DB`: **ruta absoluta** del fichero SQLite. La leen **las dos
+  mitades** —la pasada que lo llena y el servidor que lo sirve—, y ese es el
+  motivo de que exista. Sin ella, cada mitad resuelve la ruta relativa
+  `web.db` contra su propio directorio de trabajo; en cuanto no coinciden, el
+  servidor abre un fichero que no existe, `abrir()` se lo crea con el esquema
+  puesto, y **todas las paginas dan 404 sin que nada lo diga**. Con ella, el
+  servidor escribe en su primera linea de log que fichero ha abierto y cuantas
+  filas tiene.
 - `BASE_URL`: el dominio publico, sin barra final. Lo lee `web/app.py` (con
   `os.environ.get`) para construir las URLs absolutas de `sitemap.xml` —
-  Google no acepta URLs relativas ahi. **No esta en `.env.example`** porque
-  ese fichero es compartido con el vigilante, que no lo necesita para nada.
-  Tiene que ser el mismo dominio que pongas en `server_name` dentro de
-  `nginx.conf` (apartado 6): si no coinciden, el sitemap anuncia un dominio y
-  nginx sirve otro.
+  Google no acepta URLs relativas ahi. Tiene que ser el mismo dominio que
+  pongas en `server_name` dentro de `nginx.conf` (apartado 6): si no
+  coinciden, el sitemap anuncia un dominio y nginx sirve otro.
 
 **Deja vacias, o borra directamente, las tres lineas de Discord**
 (`DISCORD_WEBHOOK_URL`, `DISCORD_UNDERCUT_WEBHOOK_URL`,
@@ -102,7 +108,7 @@ pensando que este proceso manda algo a Discord.
 Antes de instalar nada automatico, llena la base una vez a mano:
 
 ```bash
-.venv/bin/python publicar_web.py --db /opt/auction-sentinel/web.db -v
+.venv/bin/python publicar_web.py -v
 ```
 
 **Esto tarda mucho la primera vez, y es normal.** Medido durante el
@@ -124,7 +130,7 @@ Si la conexion SSH se puede cortar durante esos minutos, lanzala en segundo
 plano y no en primer plano:
 
 ```bash
-nohup .venv/bin/python publicar_web.py --db /opt/auction-sentinel/web.db -v \
+nohup .venv/bin/python publicar_web.py -v \
     > /tmp/primera-pasada.log 2>&1 &
 tail -f /tmp/primera-pasada.log
 ```
@@ -206,6 +212,23 @@ solo al instalar el paquete).
 ---
 
 ## 7. Como saber si va bien
+
+**Lo primero: ¿que base ha abierto?**
+
+```bash
+journalctl -u auction-sentinel.service --no-pager | grep Sirviendo | tail -1
+```
+
+Sale una linea asi:
+
+```
+Sirviendo /opt/auction-sentinel/web.db (792.403 filas de precio)
+```
+
+Esa linea vale por media hora de diagnostico. Si la ruta no es la que pusiste
+en `AUCTION_DB`, o si dice `(0 filas de precio)`, ya sabes por que las paginas
+dan 404 sin tener que mirar nada mas. Con la base vacia sale ademas un aviso
+diciendolo con todas las letras.
 
 **¿Esta viva la web?**
 

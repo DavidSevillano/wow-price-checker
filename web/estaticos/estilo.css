@@ -34,5 +34,7 @@ th:first-child, td:first-child { text-align: left; }
 th { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 td { font-variant-numeric: tabular-nums; }
 .muro { padding: 14px; background: var(--surface); border: 1px solid var(--line); border-top: none; margin: 0; }
+/* El aviso de que no hay precio normal: se lee, pero no compite con los datos. */
+.aviso { margin: -8px 0 20px; color: var(--muted); font-size: 13px; max-width: 62ch; }
 .vacio { color: var(--muted); padding: 14px; background: var(--surface); border: 1px solid var(--line); margin: 0; }
 .pie { max-width: 900px; margin: 32px auto; padding: 0 24px; color: var(--muted); font-size: 12.5px; }
