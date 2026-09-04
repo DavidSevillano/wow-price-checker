@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from wowalerts.config import COPPER_PER_GOLD
 from wowalerts.mercado import TIPO_OBJETO
 from web.consultas import REINOS_GRATIS, anotar_peticion, ficha, reinos_de
 from web.db import RUTA_POR_DEFECTO, abrir
@@ -18,10 +19,20 @@ from web.db import RUTA_POR_DEFECTO, abrir
 AQUI = Path(__file__).parent
 
 
+def _oro(cobre: int) -> str:
+    """Cobre a oro, que es en lo que piensa el jugador.
+
+    La conversión sale de `COPPER_PER_GOLD` y no de un 10000 escrito a mano en
+    la plantilla: son el mismo número hoy, pero nada los ataba.
+    """
+    return f"{cobre // COPPER_PER_GOLD:,}"
+
+
 def crear_app(ruta_db: Path | str = RUTA_POR_DEFECTO) -> FastAPI:
     """Fabrica la app. Recibe la ruta para que los tests usen su propia base."""
     app = FastAPI(title="Auction Sentinel")
     plantillas = Jinja2Templates(directory=str(AQUI / "plantillas"))
+    plantillas.env.filters["oro"] = _oro
     app.mount(
         "/estaticos", StaticFiles(directory=str(AQUI / "estaticos")), name="estaticos"
     )
@@ -72,20 +83,4 @@ def _variante_pedida(variantes: list[dict], ilvl: Optional[int]) -> dict:
     return max(variantes, key=lambda v: v["reinos"])
 
 
-def __getattr__(name: str):
-    """`app` perezoso, para servir con `uvicorn web.app:app`.
-
-    Si `app = crear_app()` estuviera a nivel de módulo, el mero
-    `from web.app import crear_app` de los tests ya ejecutaría `abrir()`
-    sobre `RUTA_POR_DEFECTO` ("web.db") como efecto colateral de importar el
-    módulo, dejando una base suelta en el directorio de trabajo cada vez que
-    se recolectan los tests. Con `__getattr__` (PEP 562) esa construcción
-    solo ocurre cuando alguien pide `web.app.app` de verdad -- uvicorn, no
-    pytest -- y el resultado se cachea en el módulo para no reabrir la base
-    en cada acceso posterior.
-    """
-    if name == "app":
-        app = crear_app()
-        globals()["app"] = app
-        return app
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+app = crear_app()

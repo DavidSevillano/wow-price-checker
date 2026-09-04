@@ -22,11 +22,11 @@ EU realms. Updated hourly.{% endblock %}
   <section class="baldosas">
     <div class="baldosa">
       <span class="et">Normally costs</span>
-      <span class="val">{{ "{:,}".format(actual.mediana // 10000) }}g</span>
+      <span class="val">{{ actual.mediana | oro }}g</span>
     </div>
     <div class="baldosa">
       <span class="et">Cheapest right now</span>
-      <span class="val barato">{{ "{:,}".format(actual.minimo // 10000) }}g</span>
+      <span class="val barato">{{ actual.minimo | oro }}g</span>
     </div>
     <div class="baldosa">
       <span class="et">Realms in stock</span>
@@ -43,7 +43,7 @@ EU realms. Updated hourly.{% endblock %}
       <tr>
         <td>{{ r.nombre }}</td>
         <td>{{ r.listados }}</td>
-        <td>{{ "{:,}".format(r.minimo // 10000) }}g</td>
+        <td>{{ r.minimo | oro }}g</td>
       </tr>
       {% endfor %}
     </tbody>
