@@ -152,6 +152,13 @@ def test_cada_variante_lleva_su_propia_estadistica(tmp_path):
     assert filas == {295: 200, 318: 11000}
 
 
+def test_sin_precios_no_hay_estadisticas(tmp_path):
+    """Una base recién creada, antes de la primera pasada."""
+    con = abrir(tmp_path / "p.db")
+    assert recalcular_estadisticas(con) == 0
+    assert con.execute("SELECT count(*) FROM estadistica").fetchone()[0] == 0
+
+
 def test_recalcular_reemplaza_lo_anterior(tmp_path):
     con = abrir(tmp_path / "p.db")
     volcar(con, {Clave(TIPO_OBJETO, 1, 305): {1: resumen(100)}}, generado_en=1)

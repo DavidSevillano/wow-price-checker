@@ -123,25 +123,36 @@ def recalcular_estadisticas(con: sqlite3.Connection) -> int:
             INSERT INTO estadistica
                 (tipo, producto_id, variante, mediana, minimo, maximo, reinos)
             WITH numerado AS (
-                SELECT
-                    tipo, producto_id, variante, minimo,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY tipo, producto_id, variante
-                        ORDER BY minimo
-                    ) AS orden,
-                    COUNT(*) OVER (
-                        PARTITION BY tipo, producto_id, variante
-                    ) AS reinos,
-                    MIN(minimo) OVER (
-                        PARTITION BY tipo, producto_id, variante
-                    ) AS grupo_min,
-                    MAX(minimo) OVER (
-                        PARTITION BY tipo, producto_id, variante
-                    ) AS grupo_max
-                FROM precio
+                SELECT tipo, producto_id, variante, minimo,
+                       ROW_NUMBER() OVER w AS orden,
+                       COUNT(*)    OVER w AS reinos,
+                       MIN(minimo) OVER w AS grupo_min,
+                       MAX(minimo) OVER w AS grupo_max
+                  FROM precio
+                -- Una sola ventana para las cuatro funciones: con specs
+                -- distintas (ROW_NUMBER con ORDER BY, las demás sin él)
+                -- SQLite las resolvía en corrutinas separadas y metía un
+                -- "USE TEMP B-TREE FOR ORDER BY" que ordenaba las 792 403
+                -- filas dos veces. El ROWS BETWEEN ... es obligatorio: en
+                -- cuanto la ventana lleva ORDER BY, el marco por defecto es
+                -- "hasta la fila actual", y sin fijarlo entero COUNT/MIN/MAX
+                -- pasarían de ver toda la partición a ir acumulando fila a
+                -- fila (reinos contando hacia arriba, minimo == maximo ==
+                -- mediana).
+                WINDOW w AS (
+                    PARTITION BY tipo, producto_id, variante ORDER BY minimo
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                )
             )
+            -- La fila que cae en la posición `orden` es la mediana (por eso
+            -- su `minimo` de partida pasa a la columna `mediana` del
+            -- INSERT); `grupo_min`/`grupo_max` son el mínimo y el máximo de
+            -- todo el grupo, no de esa fila.
             SELECT tipo, producto_id, variante, minimo, grupo_min, grupo_max, reinos
               FROM numerado
+             -- `orden` es 1-indexado (ROW_NUMBER), pero la fórmula de la
+             -- mediana en el docstring está en base 0: el +1 de aquí es lo
+             -- que hace la conversión, no lo quites si tocas esto.
              WHERE orden = (reinos - 1) / 2 + (reinos - 1) % 2 + 1
             """
         )
