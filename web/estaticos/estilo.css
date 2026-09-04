@@ -34,4 +34,5 @@ th:first-child, td:first-child { text-align: left; }
 th { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
 td { font-variant-numeric: tabular-nums; }
 .muro { padding: 14px; background: var(--surface); border: 1px solid var(--line); border-top: none; margin: 0; }
+.vacio { color: var(--muted); padding: 14px; background: var(--surface); border: 1px solid var(--line); margin: 0; }
 .pie { max-width: 900px; margin: 32px auto; padding: 0 24px; color: var(--muted); font-size: 12.5px; }

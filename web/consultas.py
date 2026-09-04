@@ -148,6 +148,17 @@ def productos_de_reino(
     reinos en la región; `reinos_minimos` es un parámetro y no una constante
     interna para que los tests con una región de juguete (10 reinos en la
     fixture) puedan bajarlo sin tocar el criterio real.
+
+    Coste medido en producción (92 reinos, 20.144 productos, 787.880 filas en
+    `precio`): ~27 ms por vista de página de reino, frente a ~0,028 ms de las
+    consultas de la página de producto. Se probó un índice en
+    precio(reino_id, tipo, producto_id, variante) y se descartó: la lectura
+    solo bajaba un 12% (26,8 ms → 23,6 ms) porque el coste está en el JOIN por
+    fila contra `estadistica` y `nombre`, no en el acceso a `precio`; a cambio
+    la pasada horaria que reescribe la tabla se volvía un 85% más lenta
+    (1,37 s → 2,53 s). El arreglo de verdad es precalcular las filas rebajadas
+    durante esa misma pasada en una tabla pequeña indexada por reino, pero eso
+    queda fuera de v1.
     """
     return [
         dict(fila)

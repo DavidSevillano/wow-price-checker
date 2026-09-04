@@ -8,6 +8,7 @@ compared with the rest of the EU realms. Updated hourly.{% endblock %}
 <main class="ficha">
   <h1>{{ reino.nombre }}</h1>
   <p class="et">Going for less here than they normally do</p>
+  {% if productos %}
   <table>
     <thead>
       <tr><th>Item</th><th>Normally</th><th>Here</th></tr>
@@ -22,5 +23,14 @@ compared with the rest of the EU realms. Updated hourly.{% endblock %}
       {% endfor %}
     </tbody>
   </table>
+  {% else %}
+  <!-- Estado vacío: sin esto la tabla salía con cabeceras y cero filas bajo
+       un titular que promete rebajas, y esta página va en el sitemap, así
+       que Google indexaba lo que parece un error. -->
+  <p class="vacio">
+    Nothing is currently going cheap on this realm. Check back after the
+    next hourly update.
+  </p>
+  {% endif %}
 </main>
 {% endblock %}

@@ -2,7 +2,15 @@ import pytest
 
 from wowalerts.mercado import TIPO_OBJETO, Clave, ResumenReino
 from web.db import abrir
-from web.consultas import REINOS_GRATIS, anotar_peticion, ficha, paginas_mas_pedidas, reinos_de
+from web.consultas import (
+    REINOS_GRATIS,
+    anotar_peticion,
+    ficha,
+    paginas_mas_pedidas,
+    productos_de_reino,
+    reino_por_slug,
+    reinos_de,
+)
 from web.ingesta import guardar_nombres, guardar_reinos, recalcular_estadisticas, volcar
 
 
@@ -168,9 +176,6 @@ def test_hay_que_decir_cuantas_paginas_se_quieren(con):
         paginas_mas_pedidas(con)
 
 
-from web.consultas import productos_de_reino, reino_por_slug
-
-
 def test_un_reino_por_su_slug(con):
     r = reino_por_slug(con, "reino-3")
     assert r["id"] == 3
@@ -198,3 +203,57 @@ def test_lo_mas_rebajado_de_un_reino_sale_primero(con):
 def test_un_reino_caro_no_tiene_rebajas(con):
     """El reino 10 es el más caro de los diez: nada por debajo de la mediana."""
     assert productos_de_reino(con, 10, limite=10, reinos_minimos=10) == []
+
+
+@pytest.fixture
+def con_rebajas(tmp_path):
+    """Dos productos con descuentos distintos en el mismo reino.
+
+    Hace falta más de uno para poder ver el orden: con una sola fila, una
+    consulta que ordenara por precio bruto en vez de por descuento pasaría
+    igual, que es justo lo que este fixture existe para impedir.
+    """
+    c = abrir(tmp_path / "r.db")
+    guardar_reinos(c, {i: f"Reino {i}" for i in range(1, 11)})
+    guardar_nombres(
+        c,
+        [
+            (TIPO_OBJETO, 100, "en", "Barato pero poco rebajado", None),
+            (TIPO_OBJETO, 200, "en", "Caro y muy rebajado", None),
+        ],
+    )
+    volcar(
+        c,
+        {
+            # Mediana 100, y en el reino 1 está a 95: solo un 5% de rebaja.
+            # Precio bruto BAJO (95) pero descuento pequeño.
+            Clave(TIPO_OBJETO, 100, 305): {
+                1: resumen(95), **{i: resumen(100) for i in range(2, 11)}
+            },
+            # Mediana 10000, y en el reino 1 está a 8000: un 20% de rebaja.
+            # Precio bruto ALTO (8000) pero descuento grande. Si la consulta
+            # ordenara por precio bruto en vez de por descuento, el 100
+            # (95 < 8000) saldría primero; ordenando por descuento gana el
+            # 200, que es justo lo que comprueba el test de abajo.
+            Clave(TIPO_OBJETO, 200, 305): {
+                1: resumen(8000), **{i: resumen(10000) for i in range(2, 11)}
+            },
+        },
+        generado_en=1,
+    )
+    recalcular_estadisticas(c)
+    return c
+
+
+def test_gana_el_mas_rebajado_no_el_mas_barato(con_rebajas):
+    filas = productos_de_reino(con_rebajas, 1, limite=10, reinos_minimos=10)
+    assert [f["producto_id"] for f in filas] == [200, 100]
+
+
+def test_el_limite_recorta(con_rebajas):
+    assert len(productos_de_reino(con_rebajas, 1, limite=1, reinos_minimos=10)) == 1
+
+
+def test_solo_sale_lo_que_esta_por_debajo_de_su_mediana(con_rebajas):
+    """En el reino 5 los dos están a su precio normal: no hay rebaja."""
+    assert productos_de_reino(con_rebajas, 5, limite=10, reinos_minimos=10) == []

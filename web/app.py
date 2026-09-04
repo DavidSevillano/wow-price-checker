@@ -132,7 +132,14 @@ def crear_app(ruta_db: Path | str = RUTA_POR_DEFECTO) -> FastAPI:
             + "".join(f"<url><loc>{u}</loc></url>" for u in urls)
             + "</urlset>"
         )
-        return Response(content=cuerpo, media_type="application/xml")
+        # Los datos solo cambian con la pasada horaria, así que una hora de
+        # caché no cuesta nada y evita reconstruir un megabyte por cada
+        # rastreo: la audiencia entera de esta ruta son crawlers que vuelven.
+        return Response(
+            content=cuerpo,
+            media_type="application/xml",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
 
     return app
 
