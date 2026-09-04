@@ -1,3 +1,7 @@
+import sqlite3
+
+import pytest
+
 from wowalerts.mercado import TIPO_MASCOTA, TIPO_OBJETO, Clave, ResumenReino
 from web.db import abrir
 from web.ingesta import SIN_VARIANTE, filas_de_precio, volcar
@@ -50,3 +54,29 @@ def test_volcar_reemplaza_lo_anterior(tmp_path):
     filas = con.execute("SELECT producto_id FROM precio").fetchall()
     assert [f[0] for f in filas] == [2]
     assert con.execute("SELECT generado_en FROM volcado").fetchone()[0] == 2
+
+
+def test_si_falla_a_media_escritura_se_queda_lo_de_antes(tmp_path):
+    """La tabla se reemplaza entera o no se toca: nunca a medias.
+
+    Se provoca el fallo con dos claves distintas que acaban en la misma fila:
+    `variante=None` se guarda como -1, así que colisiona con una variante -1
+    literal y salta la clave primaria a mitad del executemany.
+    """
+    con = abrir(tmp_path / "p.db")
+    volcar(con, {Clave(TIPO_OBJETO, 1, 305): {1305: resumen(100)}}, generado_en=1)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        volcar(
+            con,
+            {
+                Clave(TIPO_OBJETO, 2, None): {1305: resumen(200)},
+                Clave(TIPO_OBJETO, 2, SIN_VARIANTE): {1305: resumen(300)},
+            },
+            generado_en=2,
+        )
+
+    # Sigue estando lo de la primera pasada, no una tabla vacía ni una mezcla.
+    filas = con.execute("SELECT producto_id, minimo FROM precio").fetchall()
+    assert [tuple(f) for f in filas] == [(1, 100)]
+    assert con.execute("SELECT generado_en FROM volcado").fetchone()[0] == 1
