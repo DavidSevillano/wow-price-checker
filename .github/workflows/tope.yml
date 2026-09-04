@@ -1,0 +1,120 @@
+name: Ajustar un tope
+
+# Cambiar un tope desde el movil, sin abrir config.yaml.
+#
+# Lo dispara una issue con la etiqueta 'tope', que abre cualquiera de los tres
+# caminos: la app Wow Alerts, el formulario de desplegables, o el de texto al
+# que apunta el enlace de un aviso de Discord. Los tres generan el mismo cuerpo,
+# asi que aqui no hay ramas por origen.
+#
+# 'reopened' ademas de 'opened' para poder reintentar: una issue que fallo --o
+# que se abrio cuando este workflow todavia no existia-- se recupera cerrandola
+# y volviendo a abrirla, sin tener que repetir el cambio desde el movil.
+on:
+  issues:
+    types: [opened, reopened]
+
+# Dos issues a la vez editarian el mismo fichero, y la segunda commitearia sobre
+# una copia vieja. En serie, cada una parte del config.yaml que dejo la anterior.
+concurrency:
+  group: tope-config
+  cancel-in-progress: false
+
+jobs:
+  aplicar:
+    # Se mira la etiqueta O el titulo, y no solo la etiqueta, porque GitHub NO
+    # aplica una etiqueta de plantilla que no exista ya en el repositorio: si
+    # falta la etiqueta 'tope', la issue se crea sin ella y esto no se disparaba
+    # nunca, en silencio. El prefijo del titulo lo ponen las dos plantillas y la
+    # app, asi que aguanta aunque la etiqueta no llegue a existir.
+    #
+    # El autor tiene que ser el dueno del repositorio. El repositorio es privado,
+    # asi que esto es cinturon sobre tirantes, pero un job con 'contents: write'
+    # disparado por una issue se los merece los dos.
+    if: >-
+      (contains(github.event.issue.labels.*.name, 'tope') ||
+       startsWith(github.event.issue.title, 'Tope:')) &&
+      github.event.issue.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v7
+
+      - name: Instalar Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Aplicar el cambio
+        id: aplicar
+        env:
+          # El cuerpo viaja por el entorno y NO interpolado dentro del script:
+          # es texto que escribe un formulario, y metido en un 'run:' seria una
+          # inyeccion de shell de manual.
+          CUERPO: ${{ github.event.issue.body }}
+        run: |
+          set +e
+          printf '%s' "$CUERPO" | python aplicar_tope.py > comentario.md
+          echo "codigo=$?" >> "$GITHUB_OUTPUT"
+          set -e
+          cat comentario.md
+
+      - name: Commitear config.yaml
+        if: steps.aplicar.outputs.codigo == '0'
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add config.yaml
+          # Poner el tope que ya tenia es un cambio valido que no deja diff.
+          if git diff --cached --quiet; then
+            echo "" >> comentario.md
+            echo "Ese ya era el tope, asi que no hay nada que commitear." >> comentario.md
+            exit 0
+          fi
+          git commit -q -m "Tope: ${{ github.event.issue.title }}"
+          git push -q
+          echo "" >> comentario.md
+          echo "Commit \`$(git rev-parse --short HEAD)\` en \`main\`." >> comentario.md
+
+      - name: Responder en la issue
+        # Tambien cuando el cambio ha fallado: el comentario es justamente lo que
+        # te dice por que, y sin el te quedas con una issue muda.
+        if: always() && steps.aplicar.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUMERO: ${{ github.event.issue.number }}
+        run: |
+          gh issue comment "$NUMERO" --body-file comentario.md
+          # Si ha ido mal, la issue se queda ABIERTA: es lo que te deja corregir
+          # sin volver a empezar.
+          if [ "${{ steps.aplicar.outputs.codigo }}" = "0" ]; then
+            gh issue close "$NUMERO"
+          fi
+
+  rechazar:
+    # Una issue con la etiqueta pero abierta por otro. No deberia pasar en un
+    # repositorio privado, pero callarse seria peor que decirlo.
+    if: >-
+      (contains(github.event.issue.labels.*.name, 'tope') ||
+       startsWith(github.event.issue.title, 'Tope:')) &&
+      github.event.issue.user.login != github.repository_owner
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUMERO: ${{ github.event.issue.number }}
+        run: |
+          gh issue close "$NUMERO" --repo "$GITHUB_REPOSITORY" \
+            --comment "Solo el dueno del repositorio puede cambiar topes. No he tocado config.yaml."

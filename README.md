@@ -979,9 +979,18 @@ opciones de desarrollador. `adb install` funciona igual sin tocar nada.
 
 La primera vez la app arranca con una copia de tus subastas empotrada en el APK
 y lo dice en rojo, con la fecha, para que no te confies. En el engranaje se pega
-un token de GitHub *fine-grained* con permiso `Contents: Read-only` sobre este
-repositorio, y a partir de ahi se actualiza sola y guarda lo ultimo descargado
-para funcionar sin cobertura.
+un token de GitHub *fine-grained* sobre este repositorio, y a partir de ahi se
+actualiza sola y guarda lo ultimo descargado para funcionar sin cobertura.
+
+El token necesita dos permisos:
+
+| Permiso | Para que |
+|---|---|
+| `Contents: Read-only` | Leer tus subastas, el catalogo y los precios |
+| `Issues: Read and write` | Cambiar topes desde la app (ver 7.5) |
+
+Con solo el primero la app funciona entera salvo el cambio de topes, que ni
+siquiera se ofrece: el tope sale como texto y no como boton.
 
 ### 7.3 Se abre limpia, y siempre con datos de ahora
 
@@ -1013,3 +1022,94 @@ saber cual de las tuyas tiene puesta cada personaje.
 
 Las **monturas** tampoco, pero eso es a proposito: no las repartes entre
 personajes, se venden donde caen.
+
+### 7.5 Cambiar un tope sin abrir `config.yaml`
+
+Los topes viven en `config.yaml` y nada mas los define. Pero el momento en que
+te das cuenta de que uno esta alto es cuando lo estas mirando: en la app, con el
+tope y el precio real del mercado uno al lado del otro. Ese es el sitio para
+cambiarlo, no un fichero en el PC.
+
+**Tocas el `tope` de un ilvl, escribes el numero, y ya.**
+
+Lo que pasa detras es que la app **no escribe `config.yaml`**: abre una issue, y
+el workflow `.github/workflows/tope.yml` es quien edita el fichero y lo
+commitea. Es a proposito, y por dos razones:
+
+- El token del movil **no necesita permiso de escritura sobre el contenido**.
+  Le basta `Issues: Read and write`. Uno filtrado no puede tocar un solo fichero
+  del repositorio: lo peor que hace es abrirte issues.
+- La edicion del YAML la hace **Python, con tests**, en vez de Kotlin a ciegas
+  en un movil. Y es una edicion delicada: ver mas abajo.
+
+El tope nuevo entra en vigor **en la pasada siguiente**, como mucho una hora.
+Mientras tanto la app ensena `tope 4.000 (pendiente)`, porque el catalogo que
+tiene descargado sigue trayendo el viejo. Ese aviso se guarda en disco y no en
+memoria: la app se muere al salir (7.3), y en memoria moriria con ella y
+volverias a ver el numero viejo justo despues de haberlo cambiado.
+
+#### Los otros dos caminos
+
+El mismo workflow atiende dos formularios de GitHub, que existen porque la app
+no siempre esta a mano:
+
+- **Issues -> New -> "Ajustar un tope"**: desplegables con tus objetos y tus
+  ilvl. El camino desde el PC.
+- **El enlace "Ajustar tope" de cada aviso de Discord**: abre un formulario con
+  el objeto y el ilvl **ya rellenos**, y solo tecleas el numero.
+
+Son dos plantillas y no una porque GitHub solo sabe prerrellenar por URL los
+campos de texto, nunca un desplegable. El de desplegables es comodo a mano; el
+de texto es el unico que puede venir relleno desde un aviso.
+
+Los tres caminos generan exactamente el mismo cuerpo de issue, asi que al otro
+lado hay un solo parser.
+
+#### Que hace falta la primera vez
+
+**Crea la etiqueta `tope`** en el repositorio (Issues -> Labels -> New label).
+GitHub **no aplica una etiqueta de plantilla que no exista ya**, asi que sin
+crearla las issues saldrian sin ella. Por eso el workflow mira tambien el
+prefijo `Tope:` del titulo y sigue disparandose igual, pero con la etiqueta
+creada las tienes todas juntas y filtrables.
+
+#### Por que no se rompe `config.yaml`
+
+`wowalerts/topes.py` **no pasa por PyYAML**. Un round-trip de carga y volcado
+devolveria un YAML equivalente pero reformateado y sin un solo comentario, y los
+comentarios de este fichero son la mitad de su valor. Asi que se edita el texto:
+se localiza el bloque del objeto, se sustituye ese numero, y el resto queda byte
+a byte identico. El diff de un cambio es **una linea**.
+
+Editar YAML con expresiones regulares da miedo, con razon. La red esta en
+`aplicar_tope.py`, que despues de editar comprueba tres cosas antes de dejar que
+se commitee nada:
+
+1. El resultado carga con `load_config()`.
+2. El tope pedido ha quedado en el valor pedido.
+3. **Ningun otro tope se ha movido.**
+
+Si algo falla, no escribe, no commitea, y te lo comenta en la issue, que **se
+queda abierta** para que puedas corregir. `config.yaml` no se queda a medias
+nunca.
+
+#### Lo que no hace
+
+- **Un tope por issue.** Cambiar varios de golpe sigue siendo trabajo de
+  `config.yaml`.
+- **No anade objetos ni escalones nuevos.** Solo mueve el numero de un ilvl que
+  ya esta en tu tabla. En la app, los ilvl que no vigilas salen sin boton.
+- **No es instantaneo**, y no tiene por que serlo: la casa de subastas se
+  regenera una vez por hora de todas formas.
+
+#### Cuando anadas o quites objetos
+
+El desplegable del formulario tiene las opciones escritas dentro, asi que hay
+que regenerarlo:
+
+```bash
+.venv\Scripts\python.exe topes_form.py
+```
+
+No hace falta acordarse: `tests/test_topes_form.py` falla mientras la plantilla
+no cuadre con `config.yaml`.

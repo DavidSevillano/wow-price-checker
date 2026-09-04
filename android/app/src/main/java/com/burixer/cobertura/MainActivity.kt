@@ -167,6 +167,12 @@ private fun App() {
     var ajustes by remember { mutableStateOf(false) }
     var abierto by remember { mutableStateOf<Int?>(null) }
 
+    // Topes enviados y todavia no confirmados. Se leen de disco porque la app se
+    // muere al salir: en memoria moririan con ella y volverias a ver el numero
+    // viejo justo despues de cambiarlo.
+    var pendientes by remember { mutableStateOf(Topes.pendientes(context)) }
+    var editando by remember { mutableStateOf<Variante?>(null) }
+
     val cobertura = remember(datos) { Calculo.cobertura(catalogo, datos) }
     val elegido = cobertura.firstOrNull { it.objeto.id == abierto }
 
@@ -187,6 +193,9 @@ private fun App() {
                     // se releen: si has tocado config.yaml, aqui aparece.
                     catalogo = Repositorio.catalogo(context)
                     precios = Repositorio.precios(context)
+                    // La descarga ya ha borrado los pendientes que el catalogo
+                    // nuevo confirma; esto releele lo que queda vivo.
+                    pendientes = Topes.pendientes(context)
                     if (avisar) avisos.showSnackbar("Datos actualizados desde GitHub.")
                 }
                 .onFailure { fallo ->
@@ -278,10 +287,45 @@ private fun App() {
                         alPulsar = { abierto = it.objeto.id },
                     )
                 } else {
-                    Detalle(abiertoAhora, datos, precios, catalogo.orden.size)
+                    Detalle(
+                        cobertura = abiertoAhora,
+                        datos = datos,
+                        precios = precios,
+                        personajes = catalogo.orden.size,
+                        pendientes = pendientes,
+                        // Sin token no se ofrece: el envio fallaria y el boton
+                        // solo serviria para descubrirlo a base de tocarlo.
+                        alTocarTope = if (Repositorio.token(context).isBlank()) null
+                        else ({ editando = it }),
+                    )
                 }
             }
         }
+    }
+
+    editando?.let { variante ->
+        val objeto = cobertura.first { c -> c.variantes.any { it === variante } }.objeto
+        DialogoTope(
+            objeto = objeto,
+            variante = variante,
+            pendiente = pendientes[Topes.clave(objeto.id, variante.ilvl)],
+            alCerrar = { editando = null },
+            alEnviar = { tope ->
+                editando = null
+                alcance.launch {
+                    Topes.enviar(context, objeto, variante.ilvl, tope)
+                        .onSuccess {
+                            pendientes = Topes.pendientes(context)
+                            avisos.showSnackbar(
+                                "Tope enviado. Entra en vigor en la pasada siguiente."
+                            )
+                        }
+                        .onFailure { fallo ->
+                            avisos.showSnackbar(fallo.message ?: "No he podido enviarlo.")
+                        }
+                }
+            },
+        )
     }
 
     if (ajustes) {
@@ -414,6 +458,8 @@ private fun Detalle(
     datos: Datos,
     precios: Precios,
     personajes: Int,
+    pendientes: Map<String, Long> = emptyMap(),
+    alTocarTope: ((Variante) -> Unit)? = null,
 ) {
     var variante by remember(cobertura.objeto.id) { mutableStateOf(cobertura.porDefecto) }
 
@@ -462,7 +508,17 @@ private fun Detalle(
             label = "variante",
         ) { actual ->
             Column {
-                Veredicto(actual, personajes)
+                Veredicto(
+                    variante = actual,
+                    total = personajes,
+                    pendiente = pendientes[Topes.clave(cobertura.objeto.id, actual.ilvl)],
+                    // Solo se deja tocar un escalon que ya esta en tu tabla.
+                    // Anadir uno nuevo es otra operacion, y esa sigue siendo
+                    // trabajo de config.yaml.
+                    alTocarTope = if (actual.vigilado && alTocarTope != null) {
+                        { alTocarTope(actual) }
+                    } else null,
+                )
 
                 Spacer(Modifier.height(18.dp))
                 if (actual.faltan.isNotEmpty()) {
@@ -558,7 +614,12 @@ private fun Fichas(
 }
 
 @Composable
-private fun Veredicto(variante: Variante, total: Int) {
+private fun Veredicto(
+    variante: Variante,
+    total: Int,
+    pendiente: Long? = null,
+    alTocarTope: (() -> Unit)? = null,
+) {
     Card(
         colors = CardDefaults.cardColors(
             containerColor = if (variante.faltan.isEmpty())
@@ -594,12 +655,23 @@ private fun Veredicto(variante: Variante, total: Int) {
                     modifier = Modifier.weight(1f),
                 )
             }
-            variante.tope?.let {
+            // El tope y el mercado, juntos: es la comparacion que te dice si el
+            // limite esta alto, y por eso este es el sitio para cambiarlo.
+            //
+            // Mientras el cambio esta en vuelo se ensena el enviado, no el del
+            // catalogo, que sigue siendo el viejo hasta la pasada siguiente.
+            (pendiente ?: variante.tope)?.let {
                 Text(
-                    text = "tope ${oro(it)}",
+                    text = "tope ${oro(it)}" + if (pendiente != null) " (pendiente)" else "",
                     fontFamily = FontFamily.Monospace,
                     fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (pendiente != null) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = if (alTocarTope != null) {
+                        Modifier
+                            .clickable(onClick = alTocarTope)
+                            .padding(6.dp, 4.dp)
+                    } else Modifier,
                 )
             }
         }
@@ -855,6 +927,77 @@ private fun Icono(url: String?, tamano: androidx.compose.ui.unit.Dp) {
     }
 }
 
+/**
+ * Cambiar el tope de una variante.
+ *
+ * No escribe config.yaml: abre una issue que un workflow aplica. Por eso el
+ * boton dice "Enviar" y no "Guardar", y por eso avisa de que tarda: prometer un
+ * cambio inmediato seria mentir, y volverias a tocarlo creyendo que fallo.
+ */
+@Composable
+private fun DialogoTope(
+    objeto: Objeto,
+    variante: Variante,
+    pendiente: Long?,
+    alCerrar: () -> Unit,
+    alEnviar: (Long) -> Unit,
+) {
+    val actual = pendiente ?: variante.tope
+    var texto by remember { mutableStateOf(actual?.toString().orEmpty()) }
+
+    val nuevo = texto.filter { it.isDigit() }.toLongOrNull()
+    val valido = nuevo != null && nuevo > 0
+
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = {
+            Text(
+                if (variante.ilvl != null) "Tope · ilvl ${variante.ilvl}" else "Tope"
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    text = objeto.es,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = if (actual != null) {
+                        "Ahora: ${oro(actual)}" + if (pendiente != null) " (pendiente)" else ""
+                    } else "Sin tope puesto.",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = texto,
+                    onValueChange = { texto = it },
+                    label = { Text("tope nuevo, en oro") },
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "Se manda como una issue a GitHub. El tope entra en vigor " +
+                        "en la pasada siguiente, como mucho dentro de una hora.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { nuevo?.let(alEnviar) },
+                enabled = valido && nuevo != actual,
+            ) { Text("Enviar") }
+        },
+        dismissButton = {
+            TextButton(onClick = alCerrar) { Text("Cancelar") }
+        },
+    )
+}
+
 @Composable
 private fun DialogoAjustes(
     tokenInicial: String,
@@ -871,8 +1014,9 @@ private fun DialogoAjustes(
         text = {
             Column {
                 Text(
-                    text = "Un token de acceso personal de solo lectura sobre el " +
-                        "repositorio. Se queda en este móvil.",
+                    text = "Un token de acceso personal sobre el repositorio, que se " +
+                        "queda en este móvil. Necesita Contents: Read-only para ver " +
+                        "los datos, y Issues: Read and write para cambiar topes.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

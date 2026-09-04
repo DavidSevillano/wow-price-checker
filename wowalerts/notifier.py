@@ -8,9 +8,11 @@ fina encima.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from datetime import datetime
 from typing import Any, Iterable, Mapping, Sequence
+from urllib.parse import urlencode
 
 import requests
 
@@ -40,6 +42,12 @@ MAX_UNDERCUT_LINES_PER_MESSAGE = 20
 # Los nombres de objeto de WoW no pasan de 60 caracteres, pero recortarlos
 # garantiza que una linea suelta nunca pueda desbordar un mensaje entero.
 MAX_ITEM_NAME = 100
+
+# Donde vive el repositorio, para el enlace de "Ajustar tope". En Actions lo
+# pone el propio runner; fuera se usa este, que es el unico sitio del proyecto
+# que necesita saberlo.
+REPO_POR_DEFECTO = "DavidSevillano/wow-price-checker"
+PLANTILLA_TOPE = "tope-aviso.yml"
 
 TIME_LEFT_ES = {
     "SHORT": "menos de 30 min",
@@ -79,6 +87,31 @@ def _wowhead_url(deal) -> str:
         else f"item={deal.item_id}"
     )
     return f"https://www.wowhead.com/{destino}#a{deal.auction_id}"
+
+
+def _repo() -> str:
+    return os.getenv("GITHUB_REPOSITORY") or REPO_POR_DEFECTO
+
+
+def _ajustar_tope_url(deal: Deal) -> str:
+    """Enlace al formulario que cambia el tope de este objeto.
+
+    El aviso ya te dice contra que limite se ha comparado, asi que es el sitio
+    natural para corregirlo cuando ves que ese limite esta alto. Lleva el objeto
+    y el ilvl puestos: lo unico que se teclea es el numero.
+
+    Se prerrellena por 'objeto' e 'ilvl', que son los ids de los campos de
+    tope-aviso.yml. Esa plantilla usa campos de texto y no desplegables
+    justamente por esto: GitHub no sabe prerrellenar un dropdown.
+    """
+    parametros = {"template": PLANTILLA_TOPE, "objeto": deal.item_name}
+
+    # El ilvl solo se prerrellena cuando se sabe cual es. Con un ilvl en duda,
+    # ponerlo invitaria a cambiar el tope del escalon equivocado.
+    if deal.ilvl is not None and deal.ilvl_confirmed and not deal.sin_ilvl:
+        parametros["ilvl"] = str(deal.ilvl)
+
+    return f"https://github.com/{_repo()}/issues/new?{urlencode(parametros)}"
 
 
 def _color_for(deal: Deal) -> int:
@@ -136,6 +169,15 @@ def build_embed(
         # Un chollo en un reino donde no tienes a nadie no se puede comprar, y
         # saberlo antes de abrir el juego ahorra el viaje.
         fields.append({"name": "Ir con", "value": quien_compra, "inline": False})
+
+    # Cuando el aviso llega y ves que a ese precio no era chollo, lo que sobra es
+    # el tope, no la subasta. Esto lleva al formulario con el objeto y el ilvl
+    # ya puestos, para corregirlo sin abrir config.yaml.
+    fields.append({
+        "name": "Ajustar tope",
+        "value": f"[cambiar el limite]({_ajustar_tope_url(deal)})",
+        "inline": False,
+    })
 
     embed: dict[str, Any] = {
         "title": deal.item_name,

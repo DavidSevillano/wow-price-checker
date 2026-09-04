@@ -10,7 +10,7 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Cobertura">
+        android:theme="@style/Theme.WowAlerts">
 
         <!--
             noHistory y excludeFromRecents: la app se muere en cuanto la dejas
@@ -32,7 +32,7 @@
             android:noHistory="true"
             android:excludeFromRecents="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
-            android:theme="@style/Theme.Cobertura">
+            android:theme="@style/Theme.WowAlerts">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

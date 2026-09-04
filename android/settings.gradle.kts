@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Cobertura"
+rootProject.name = "WowAlerts"
 include(":app")

@@ -614,3 +614,70 @@ def test_un_objeto_sin_ilvl_no_se_avisa_como_ilvl_sin_confirmar():
     assert "sin confirmar" not in embed["description"]
     # Y no sale en gris: el precio es tan fiable como el de cualquier otro.
     assert embed["color"] != COLOR_UNCONFIRMED
+
+
+# ----------------------------------------------------------------------------
+#  El enlace para ajustar el tope sin abrir config.yaml
+# ----------------------------------------------------------------------------
+
+def _campo(embed, nombre):
+    return next((c for c in embed["fields"] if c["name"] == nombre), None)
+
+
+def test_el_embed_lleva_enlace_para_ajustar_el_tope():
+    from urllib.parse import parse_qs, urlparse
+
+    embed = build_embed(make_deal(), REALMS[1305])
+    campo = _campo(embed, "Ajustar tope")
+    assert campo is not None
+
+    url = campo["value"].split("(")[1].rstrip(")")
+    partes = urlparse(url)
+    assert partes.path.endswith("/issues/new")
+
+    query = parse_qs(partes.query)
+    assert query["template"] == ["tope-aviso.yml"]
+    assert query["objeto"] == ["Greaves of the Noxious Depths"]
+    assert query["ilvl"] == ["311"]
+
+
+def test_el_enlace_escapa_lo_que_haga_falta():
+    """Los nombres llevan apostrofos y espacios; sin escapar, la URL se rompe."""
+    from urllib.parse import parse_qs, urlparse
+
+    deal = make_deal()
+    deal = type(deal)(**{**deal.__dict__, "item_name": "Temple Delver's Mystic Helm"})
+    embed = build_embed(deal, REALMS[1305])
+
+    url = _campo(embed, "Ajustar tope")["value"].split("(")[1].rstrip(")")
+    assert " " not in url
+    query = parse_qs(urlparse(url).query)
+    assert query["objeto"] == ["Temple Delver's Mystic Helm"]
+
+
+def test_un_chollo_de_precio_unico_no_lleva_ilvl_en_el_enlace():
+    from urllib.parse import parse_qs, urlparse
+
+    deal = make_deal()
+    deal = type(deal)(**{**deal.__dict__, "sin_ilvl": True, "ilvl": None})
+    embed = build_embed(deal, REALMS[1305])
+
+    url = _campo(embed, "Ajustar tope")["value"].split("(")[1].rstrip(")")
+    assert "ilvl" not in parse_qs(urlparse(url).query)
+
+
+def test_un_ilvl_sin_confirmar_no_lleva_ilvl_en_el_enlace():
+    """Con el ilvl en duda, prerrellenarlo invitaria a cambiar el tope del que no es."""
+    from urllib.parse import parse_qs, urlparse
+
+    embed = build_embed(make_deal(confirmed=False), REALMS[1305])
+
+    url = _campo(embed, "Ajustar tope")["value"].split("(")[1].rstrip(")")
+    assert "ilvl" not in parse_qs(urlparse(url).query)
+
+
+def test_el_repositorio_sale_del_entorno_en_actions(monkeypatch):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "otro/repo")
+    embed = build_embed(make_deal(), REALMS[1305])
+
+    assert "github.com/otro/repo/issues/new" in _campo(embed, "Ajustar tope")["value"]

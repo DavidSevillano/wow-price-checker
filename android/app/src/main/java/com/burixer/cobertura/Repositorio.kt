@@ -134,6 +134,11 @@ object Repositorio {
                     .onSuccess { File(context.filesDir, nombre).writeText(it) }
             }
 
+            // Un tope que enviaste y que el catalogo recien bajado ya trae deja
+            // de estar pendiente. Va aqui y no en la pantalla porque el catalogo
+            // solo cambia cuando se descarga.
+            runCatching { Topes.limpiarConfirmados(context, catalogo(context)) }
+
             prefs(context).edit().putLong(CLAVE_DESCARGA, System.currentTimeMillis()).apply()
             Parser.datos(fusion.toString())
         }
