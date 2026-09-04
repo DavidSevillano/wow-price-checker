@@ -142,4 +142,27 @@ def test_las_mas_pedidas_salen_primero(con):
 
 def test_sin_paginas_pedidas_la_lista_esta_vacia(con):
     """Un sitio recién desplegado: el sitemap sale vacío, no con 20.144 URLs."""
-    assert paginas_mas_pedidas(con) == []
+    assert paginas_mas_pedidas(con, limite=100) == []
+
+
+def test_un_fallo_al_contar_no_tumba_la_pagina(con, caplog):
+    """Contar visitas es contabilidad, no contenido.
+
+    Se tira la tabla para provocar un fallo de verdad de SQLite, en vez de
+    simularlo: si `anotar_peticion` dejara subir la excepción, el visitante
+    se llevaría un 500 con la ficha ya cargada y lista para pintarse.
+    """
+    import logging as _logging
+
+    con.execute("DROP TABLE pagina")
+
+    with caplog.at_level(_logging.WARNING):
+        anotar_peticion(con, TIPO_OBJETO, 271440)  # no debe lanzar
+
+    assert "271440" in caplog.text
+
+
+def test_hay_que_decir_cuantas_paginas_se_quieren(con):
+    """Sin valor por defecto: un sitemap truncado en silencio no se ve."""
+    with pytest.raises(TypeError):
+        paginas_mas_pedidas(con)
