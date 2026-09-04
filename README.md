@@ -1113,3 +1113,24 @@ que regenerarlo:
 
 No hace falta acordarse: `tests/test_topes_form.py` falla mientras la plantilla
 no cuadre con `config.yaml`.
+
+---
+
+## 8. La web publica de precios
+
+Ademas del vigilante privado, el repositorio incluye una web publica de solo
+lectura con los precios de la region: pagina de producto, pagina de reino y
+`sitemap.xml`. Vive en `web/` (FastAPI + Jinja2, base SQLite propia,
+`web.db`) y no comparte nada con el vigilante salvo el codigo de
+`wowalerts/` que habla con la API de Blizzard.
+
+La llena `publicar_web.py`, que se ejecuta aparte de `main.py` a proposito
+—no conviene tocar el vigilante para esto— y hace una pasada por toda la
+region una vez por hora:
+
+```bash
+.venv\Scripts\python.exe publicar_web.py --db web.db
+```
+
+Para desplegarla en un servidor de verdad, con systemd y nginx, esta todo en
+[`despliegue/README.md`](despliegue/README.md).
