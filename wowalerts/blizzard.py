@@ -195,14 +195,19 @@ class BlizzardClient:
     def item_names(self, item_id: int) -> dict[str, str]:
         """Todos los idiomas de golpe, para las páginas de la web pública.
 
-        Es la misma petición que `item_name`: Blizzard devuelve el nombre ya
-        traducido a todos los idiomas y `item_name` se queda con uno. Pedir
-        ocho veces el mismo objeto para sacar ocho idiomas sería tirar siete
-        peticiones, y son veinte mil objetos.
+        Es la misma petición que `item_name`: sin locale, Blizzard devuelve el
+        nombre ya traducido a todos los idiomas y `item_name` se queda con
+        uno. Pedir ocho veces el mismo objeto para sacar ocho idiomas sería
+        tirar siete peticiones, y son veinte mil objetos.
         """
         try:
+            # Sin locale: con locale Blizzard colapsa la respuesta a un solo
+            # idioma, justo lo que este metodo existe para evitar (mismo
+            # motivo que `connected_realm_name`).
             response = self._api_get(
-                f"/data/wow/item/{item_id}", namespace=f"static-{self.region}"
+                f"/data/wow/item/{item_id}",
+                namespace=f"static-{self.region}",
+                localized=False,
             )
             if response.status_code != 200:
                 return {}

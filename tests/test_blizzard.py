@@ -356,6 +356,22 @@ def test_item_names_descarta_los_idiomas_vacios(requests_mock, client):
     assert client.item_names(3) == {"en_GB": "Algo"}
 
 
+def test_item_names_se_pide_sin_locale(client, requests_mock):
+    """Con locale, Blizzard devuelve un solo idioma y no se puede elegir.
+
+    Es el mismo motivo por el que `connected_realm_name` lo pide sin locale.
+    Sin esta comprobación el fallo es invisible: el mock responde con el
+    diccionario de idiomas mires lo que mires en la petición.
+    """
+    give_token(requests_mock)
+    requests_mock.get(
+        "https://eu.api.blizzard.com/data/wow/item/271440",
+        json={"name": {"en_GB": "Algo", "es_ES": "Cosa"}},
+    )
+    client.item_names(271440)
+    assert "locale" not in requests_mock.last_request.qs
+
+
 def test_item_name_sigue_dando_un_solo_idioma(requests_mock, client):
     """El vigilante usa item_name y no se entera de que existe item_names."""
     give_token(requests_mock)
