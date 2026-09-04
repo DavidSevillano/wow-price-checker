@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block titulo %}{{ ficha.nombre }} — cheapest realm, EU{% endblock %}
+{% block descripcion %}Where {{ ficha.nombre }} is cheapest right now across all
+EU realms. Updated hourly.{% endblock %}
+
+{% block contenido %}
+<main class="ficha">
+  <h1>{{ ficha.nombre }}</h1>
+
+  <nav class="ilvls">
+    {% for v in ficha.variantes %}
+      {% if v.variante != -1 %}
+        <a href="?ilvl={{ v.variante }}"
+           class="ilvl {% if v.variante == actual.variante %}activo{% endif %}">
+          {{ v.variante }}
+        </a>
+      {% endif %}
+    {% endfor %}
+  </nav>
+
+  <section class="baldosas">
+    <div class="baldosa">
+      <span class="et">Normally costs</span>
+      <span class="val">{{ "{:,}".format(actual.mediana // 10000) }}g</span>
+    </div>
+    <div class="baldosa">
+      <span class="et">Cheapest right now</span>
+      <span class="val barato">{{ "{:,}".format(actual.minimo // 10000) }}g</span>
+    </div>
+    <div class="baldosa">
+      <span class="et">Realms in stock</span>
+      <span class="val">{{ actual.reinos }}</span>
+    </div>
+  </section>
+
+  <table>
+    <thead>
+      <tr><th>Realm</th><th>Listings</th><th>Cheapest</th></tr>
+    </thead>
+    <tbody>
+      {% for r in reinos %}
+      <tr>
+        <td>{{ r.nombre }}</td>
+        <td>{{ r.listados }}</td>
+        <td>{{ "{:,}".format(r.minimo // 10000) }}g</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if actual.reinos > reinos|length %}
+  <p class="muro">
+    {{ actual.reinos - reinos|length }} more realms ranked by price.
+    <a href="/pro">See all realms</a>
+  </p>
+  {% endif %}
+</main>
+{% endblock %}

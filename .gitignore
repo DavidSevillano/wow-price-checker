@@ -6,3 +6,9 @@ __pycache__/
 .state/
 analisis/
 publicar/
+
+# Base de la web pública (web/db.py): se genera al arrancar el servidor o al
+# importar web.app fuera de un test, nunca se versiona.
+web.db
+web.db-wal
+web.db-shm

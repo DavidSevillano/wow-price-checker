@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block titulo %}Auction Sentinel{% endblock %}</title>
+  <meta name="description" content="{% block descripcion %}{% endblock %}">
+  <link rel="stylesheet" href="/estaticos/estilo.css">
+</head>
+<body>
+  <nav class="nav">
+    <a class="marca" href="/">AUCTION SENTINEL</a>
+  </nav>
+  {% block contenido %}{% endblock %}
+  <footer class="pie">
+    Prices from the EU auction house, refreshed hourly.
+    Not affiliated with Blizzard Entertainment.
+  </footer>
+</body>
+</html>
