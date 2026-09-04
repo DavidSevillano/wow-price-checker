@@ -45,6 +45,21 @@ def test_la_ficha_trae_cuando_se_generaron_los_datos(con):
     assert ficha(con, TIPO_OBJETO, 271440)["generado_en"] == 1788451184
 
 
+def test_sin_volcado_la_ficha_sale_sin_fecha_en_vez_de_reventar(con):
+    """Una base a medias no debe tumbar la página, solo dejarla sin fecha.
+
+    No pasa por el camino normal --`volcar` escribe precio y volcado en la
+    misma transacción-- pero sí con una base restaurada a medias o con un
+    borrado a mano, y ahí un 500 es peor que una ficha sin sello de hora.
+    """
+    con.execute("DELETE FROM volcado")
+
+    f = ficha(con, TIPO_OBJETO, 271440)
+    assert f is not None
+    assert f["nombre"] == "Greaves of the Noxious Depths"
+    assert f["generado_en"] is None
+
+
 def test_un_producto_que_no_existe_no_tiene_ficha(con):
     assert ficha(con, TIPO_OBJETO, 999999) is None
 

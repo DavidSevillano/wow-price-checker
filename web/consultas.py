@@ -45,13 +45,18 @@ def ficha(
         (tipo, producto_id, idioma),
     ).fetchone()
 
+    # Si `volcado` está vacío la base quedó inconsistente (no es el camino
+    # normal, porque `volcar` escribe precio y volcado en la misma
+    # transacción): mejor una ficha sin fecha que un 500 para quien la ve.
+    volcado = con.execute("SELECT generado_en FROM volcado").fetchone()
+
     return {
         "tipo": tipo,
         "producto_id": producto_id,
         "nombre": fila["nombre"] if fila else f"#{producto_id}",
         "icono": fila["icono"] if fila else None,
         "variantes": variantes,
-        "generado_en": con.execute("SELECT generado_en FROM volcado").fetchone()[0],
+        "generado_en": volcado[0] if volcado else None,
     }
 
 
