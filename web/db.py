@@ -16,6 +16,14 @@ ESQUEMA = Path(__file__).parent / "esquema.sql"
 # Por defecto junto al código; en el servidor se pasa la ruta a mano.
 RUTA_POR_DEFECTO = Path("web.db")
 
+# Cuánto espera una escritura a que se suelte el bloqueo antes de rendirse.
+# El bloqueo de SQLite es de toda la base, no de una tabla, y la pasada horaria
+# reemplaza las 792.403 filas de `precio` dentro de una sola transacción. Las
+# escrituras pequeñas --contar la visita a una página-- tienen que aguantar esa
+# espera en vez de reventar: el defecto de Python son 5 segundos, bastante menos
+# de lo que tarda el reemplazo, y eso daría un error 500 una vez por hora.
+ESPERA_BLOQUEO_SEGUNDOS = 30.0
+
 
 def aplicar_esquema(con: sqlite3.Connection) -> None:
     """Crea lo que falte. Es idempotente: todo el DDL lleva IF NOT EXISTS."""
@@ -25,7 +33,13 @@ def aplicar_esquema(con: sqlite3.Connection) -> None:
 
 def abrir(ruta: Path | str = RUTA_POR_DEFECTO) -> sqlite3.Connection:
     """Abre la base, la deja en WAL y se asegura de que el esquema está."""
-    con = sqlite3.connect(str(ruta), isolation_level=None)
+    # isolation_level=None es autocommit: cada execute() se confirma solo y
+    # commit() no delimita nada aquí. Quien haga una transacción de verdad
+    # (la pasada horaria, por ejemplo) la abre y la cierra ella misma con
+    # BEGIN/COMMIT explícitos.
+    con = sqlite3.connect(
+        str(ruta), isolation_level=None, timeout=ESPERA_BLOQUEO_SEGUNDOS
+    )
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode = WAL")
     # Sin esto, cada INSERT del volcado espera al disco y la pasada tarda

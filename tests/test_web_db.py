@@ -1,6 +1,6 @@
 import sqlite3
 
-from web.db import abrir, aplicar_esquema
+from web.db import ESPERA_BLOQUEO_SEGUNDOS, abrir, aplicar_esquema
 
 
 def test_abrir_crea_las_tablas(tmp_path):
@@ -32,3 +32,11 @@ def test_aplicar_esquema_es_idempotente(tmp_path):
     aplicar_esquema(con)
     aplicar_esquema(con)
     assert con.execute("SELECT count(*) FROM reino").fetchone()[0] == 0
+
+
+def test_las_escrituras_esperan_al_bloqueo_de_la_pasada(tmp_path):
+    """El reemplazo horario bloquea la base entera durante bastante más que
+    los 5 segundos que Python pone por defecto."""
+    con = abrir(tmp_path / "prueba.db")
+    espera_ms = con.execute("PRAGMA busy_timeout").fetchone()[0]
+    assert espera_ms == int(ESPERA_BLOQUEO_SEGUNDOS * 1000)
