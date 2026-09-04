@@ -30,7 +30,7 @@ region: eu
 items:
   - name: "Greaves of the Noxious Depths"
     max_price_by_ilvl:
-      { 295: 6999, 298: 12000, 305: 40000, 308: 50000, 311: 90000,
+      { 295: 6999, 298: 12000, 305: 30000, 308: 50000, 311: 90000,
         318: 200000, 321: 200000, 324: 200000 }
 
   - name: "Temple Delver's Mystic Helm"
