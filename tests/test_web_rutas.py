@@ -112,3 +112,40 @@ def test_el_nombre_del_objeto_sale_escapado(tmp_path):
     texto = TestClient(crear_app(ruta)).get("/item/1").text
     assert "<script>alert(1)</script>" not in texto
     assert "&lt;script&gt;" in texto
+
+
+def test_la_pagina_de_reino_lista_lo_mas_rebajado(cliente):
+    r = cliente.get("/realm/reino-1")
+    assert r.status_code == 200
+    assert "Reino 1" in r.text
+
+
+def test_un_reino_desconocido_da_404(cliente):
+    assert cliente.get("/realm/no-existe").status_code == 404
+
+
+def test_el_sitemap_solo_lleva_lo_ya_pedido(cliente):
+    """Anunciar 20.144 URLs que nadie ha visitado es contenido generado."""
+    antes = cliente.get("/sitemap.xml").text
+    assert "/item/271440" not in antes
+
+    cliente.get("/item/271440")
+
+    despues = cliente.get("/sitemap.xml").text
+    assert despues.startswith("<?xml")
+    assert "/item/271440" in despues
+
+
+def test_el_sitemap_lleva_siempre_los_reinos(cliente):
+    """Los reinos son 92 y fijos: esos sí se anuncian desde el primer día."""
+    assert "/realm/reino-1" in cliente.get("/sitemap.xml").text
+
+
+def test_el_sitemap_es_xml_de_verdad(cliente):
+    """Si no parsea, Google lo descarta entero y no dice por qué."""
+    import xml.etree.ElementTree as ET
+
+    r = cliente.get("/sitemap.xml")
+    assert r.headers["content-type"].startswith("application/xml")
+    raiz = ET.fromstring(r.text)
+    assert raiz.tag.endswith("urlset")

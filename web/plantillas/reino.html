@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block titulo %}{{ reino.nombre }} — best auction house deals, EU{% endblock %}
+{% block descripcion %}What is going cheap on {{ reino.nombre }} right now,
+compared with the rest of the EU realms. Updated hourly.{% endblock %}
+
+{% block contenido %}
+<main class="ficha">
+  <h1>{{ reino.nombre }}</h1>
+  <p class="et">Going for less here than they normally do</p>
+  <table>
+    <thead>
+      <tr><th>Item</th><th>Normally</th><th>Here</th></tr>
+    </thead>
+    <tbody>
+      {% for p in productos %}
+      <tr>
+        <td><a href="/item/{{ p.producto_id }}">{{ p.nombre or "#" ~ p.producto_id }}</a></td>
+        <td>{{ p.mediana | oro }}g</td>
+        <td>{{ p.minimo | oro }}g</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</main>
+{% endblock %}

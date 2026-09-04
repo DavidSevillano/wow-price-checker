@@ -2,21 +2,35 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from wowalerts.config import COPPER_PER_GOLD
 from wowalerts.mercado import TIPO_OBJETO
-from web.consultas import REINOS_GRATIS, anotar_peticion, ficha, reinos_de
+from web.consultas import (
+    REINOS_GRATIS,
+    anotar_peticion,
+    ficha,
+    paginas_mas_pedidas,
+    productos_de_reino,
+    reino_por_slug,
+    reinos_de,
+)
 from web.db import RUTA_POR_DEFECTO, abrir
 
 AQUI = Path(__file__).parent
+
+# El sitemap necesita URLs absolutas (Google no las acepta relativas), y el
+# dominio real solo se conoce en el servidor -- aquí, en desarrollo y en los
+# tests, se usa uno de mentira.
+BASE_URL = os.environ.get("BASE_URL", "https://auctionsentinel.example")
 
 
 def _oro(cobre: int) -> str:
@@ -74,6 +88,51 @@ def crear_app(ruta_db: Path | str = RUTA_POR_DEFECTO) -> FastAPI:
             name="producto.html",
             context={"ficha": datos, "actual": actual, "reinos": filas},
         )
+
+    @app.get("/realm/{slug}", response_class=HTMLResponse)
+    def pagina_reino(request: Request, slug: str):
+        con = conexion()
+        try:
+            reino = reino_por_slug(con, slug)
+            if reino is None:
+                raise HTTPException(status_code=404, detail="Realm not found")
+            filas = productos_de_reino(con, reino["id"], limite=100)
+        finally:
+            con.close()
+
+        return plantillas.TemplateResponse(
+            request=request,
+            name="reino.html",
+            context={"reino": reino, "productos": filas},
+        )
+
+    @app.get("/sitemap.xml")
+    def sitemap():
+        """Solo entra lo que ya se ha pedido, más los reinos.
+
+        Anunciar de golpe las 20.144 páginas posibles de producto es el patrón
+        que Google trata como contenido generado; en cambio el índice crece
+        con la demanda real, página a página, según la deja `anotar_peticion`.
+        Los reinos son distintos: son 92, son fijos, y no dependen de que
+        nadie los pida --por eso se anuncian todos desde el primer día.
+        """
+        con = conexion()
+        try:
+            paginas = paginas_mas_pedidas(con, limite=50_000)
+            reinos = [dict(fila) for fila in con.execute("SELECT slug FROM reino")]
+        finally:
+            con.close()
+
+        urls = [f"{BASE_URL}/item/{p['producto_id']}" for p in paginas]
+        urls += [f"{BASE_URL}/realm/{r['slug']}" for r in reinos]
+
+        cuerpo = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+            + "".join(f"<url><loc>{u}</loc></url>" for u in urls)
+            + "</urlset>"
+        )
+        return Response(content=cuerpo, media_type="application/xml")
 
     return app
 

@@ -166,3 +166,35 @@ def test_hay_que_decir_cuantas_paginas_se_quieren(con):
     """Sin valor por defecto: un sitemap truncado en silencio no se ve."""
     with pytest.raises(TypeError):
         paginas_mas_pedidas(con)
+
+
+from web.consultas import productos_de_reino, reino_por_slug
+
+
+def test_un_reino_por_su_slug(con):
+    r = reino_por_slug(con, "reino-3")
+    assert r["id"] == 3
+    assert r["nombre"] == "Reino 3"
+
+
+def test_un_slug_que_no_existe_no_da_reino(con):
+    assert reino_por_slug(con, "no-existe") is None
+
+
+def test_lo_mas_rebajado_de_un_reino_sale_primero(con):
+    """Ordenar por precio a secas sacaría lo más caro, que no interesa.
+
+    Lo que se busca es dónde este reino está barato respecto a la región.
+
+    La fixture `con` solo monta 10 reinos (no los 92 de producción), así que
+    aquí se baja `reinos_minimos` a 10 -- el valor por defecto de la función
+    (15) sigue siendo el de producción y no se toca.
+    """
+    filas = productos_de_reino(con, 1, limite=10, reinos_minimos=10)
+    assert filas, "el reino 1 es el más barato de los diez, algo tiene que salir"
+    assert filas[0]["minimo"] < filas[0]["mediana"]
+
+
+def test_un_reino_caro_no_tiene_rebajas(con):
+    """El reino 10 es el más caro de los diez: nada por debajo de la mediana."""
+    assert productos_de_reino(con, 10, limite=10, reinos_minimos=10) == []

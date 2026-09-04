@@ -124,6 +124,50 @@ def anotar_peticion(
         )
 
 
+def reino_por_slug(con: sqlite3.Connection, slug: str) -> Optional[dict[str, Any]]:
+    """El reino de esa URL, o None si el slug no existe (lo convierte en 404)."""
+    fila = con.execute("SELECT * FROM reino WHERE slug = ?", (slug,)).fetchone()
+    return dict(fila) if fila else None
+
+
+def productos_de_reino(
+    con: sqlite3.Connection,
+    reino_id: int,
+    limite: int,
+    reinos_minimos: int = 15,
+) -> list[dict[str, Any]]:
+    """Lo más rebajado del reino: donde más se separa del precio normal.
+
+    Ordenar por precio a secas sacaría la lista de lo más caro, que no le
+    interesa a nadie. Lo que se busca es dónde este reino está barato respecto
+    a la región.
+
+    Se exige `e.reinos >= reinos_minimos` para no llenar la página de
+    productos que solo existen en un puñado de reinos, donde la mediana no
+    significa nada. El valor por defecto (15) es el de producción, con 92
+    reinos en la región; `reinos_minimos` es un parámetro y no una constante
+    interna para que los tests con una región de juguete (10 reinos en la
+    fixture) puedan bajarlo sin tocar el criterio real.
+    """
+    return [
+        dict(fila)
+        for fila in con.execute(
+            "SELECT n.nombre, p.producto_id, p.variante, p.minimo, e.mediana "
+            "  FROM precio p "
+            "  JOIN estadistica e ON e.tipo = p.tipo "
+            "                    AND e.producto_id = p.producto_id "
+            "                    AND e.variante = p.variante "
+            "  LEFT JOIN nombre n ON n.tipo = p.tipo "
+            "                    AND n.producto_id = p.producto_id "
+            "                    AND n.idioma = ? "
+            " WHERE p.reino_id = ? AND e.reinos >= ? AND p.minimo < e.mediana "
+            " ORDER BY CAST(p.minimo AS REAL) / e.mediana "
+            " LIMIT ?",
+            (IDIOMA_POR_DEFECTO, reino_id, reinos_minimos, limite),
+        )
+    ]
+
+
 def paginas_mas_pedidas(con: sqlite3.Connection, limite: int) -> list[dict[str, Any]]:
     """Para el sitemap: solo entra lo que la gente busca de verdad.
 
