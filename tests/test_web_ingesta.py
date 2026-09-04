@@ -241,3 +241,48 @@ def test_guardar_nombres_actualiza_los_que_ya_estaban(tmp_path):
 
     filas = con.execute("SELECT nombre, icono FROM nombre").fetchall()
     assert [tuple(f) for f in filas] == [("Nuevo", "http://i/2.jpg")]
+
+
+def test_se_puede_quitar_el_icono(tmp_path):
+    con = abrir(tmp_path / "p.db")
+    guardar_nombres(con, [(TIPO_OBJETO, 1, "en", "Algo", "http://i/1.jpg")])
+    guardar_nombres(con, [(TIPO_OBJETO, 1, "en", "Algo", None)])
+
+    assert con.execute("SELECT icono FROM nombre").fetchone()[0] is None
+
+
+def test_dos_reinos_que_dan_el_mismo_slug_no_se_pisan(tmp_path):
+    """El slug es la URL: si se repite, a un reino no se llega nunca."""
+    con = abrir(tmp_path / "p.db")
+    guardar_reinos(con, {100: "Aerie Peak", 200: "Aerie-Peak"})
+
+    filas = {f["id"]: f["slug"] for f in con.execute("SELECT id, slug FROM reino")}
+    assert len(set(filas.values())) == 2, f"slugs repetidos: {filas}"
+    assert filas[100] == "aerie-peak"
+    assert filas[200] == "aerie-peak-200"
+
+
+def test_el_reparto_de_slugs_no_depende_del_orden(tmp_path):
+    """Si dependiera, dos reinos se intercambiarían la URL entre pasadas."""
+    uno = abrir(tmp_path / "uno.db")
+    otro = abrir(tmp_path / "otro.db")
+    guardar_reinos(uno, {100: "Aerie Peak", 200: "Aerie-Peak"})
+    guardar_reinos(otro, {200: "Aerie-Peak", 100: "Aerie Peak"})
+
+    def slugs(con):
+        return {f["id"]: f["slug"] for f in con.execute("SELECT id, slug FROM reino")}
+
+    assert slugs(uno) == slugs(otro)
+
+
+def test_avisa_cuando_una_url_deja_de_funcionar(tmp_path, caplog):
+    """Cambiar el slug rompe los enlaces de fuera: que al menos se vea."""
+    import logging as _logging
+
+    con = abrir(tmp_path / "p.db")
+    guardar_reinos(con, {1305: "Kazzak"})
+    with caplog.at_level(_logging.WARNING):
+        guardar_reinos(con, {1305: "Kazzak Renombrado"})
+
+    assert "kazzak" in caplog.text
+    assert "kazzak-renombrado" in caplog.text

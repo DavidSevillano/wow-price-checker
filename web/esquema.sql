@@ -27,9 +27,14 @@ CREATE TABLE IF NOT EXISTS estadistica (
     PRIMARY KEY (tipo, producto_id, variante)
 ) WITHOUT ROWID;
 
+-- `slug` es la URL de /realm/<slug>: `_slugs_unicos` en web/ingesta.py ya
+-- garantiza que no se repita, pero el UNIQUE es la red de seguridad -- si
+-- algún día ese código tuviera un bug, se ve como un IntegrityError al
+-- guardar y no como un reino que calladamente deja de tener manera de
+-- llegar a él.
 CREATE TABLE IF NOT EXISTS reino (
     id     INTEGER PRIMARY KEY,
-    slug   TEXT NOT NULL,
+    slug   TEXT NOT NULL UNIQUE,
     nombre TEXT NOT NULL
 );
 
