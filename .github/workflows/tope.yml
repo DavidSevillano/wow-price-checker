@@ -71,6 +71,10 @@ jobs:
 
       - name: Commitear config.yaml
         if: steps.aplicar.outputs.codigo == '0'
+        env:
+          # Por el entorno, como el cuerpo: el titulo tambien lo escribe quien
+          # abre la issue, y dentro del script seria inyeccion de shell.
+          TITULO: ${{ github.event.issue.title }}
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -81,7 +85,9 @@ jobs:
             echo "Ese ya era el tope, asi que no hay nada que commitear." >> comentario.md
             exit 0
           fi
-          git commit -q -m "Tope: ${{ github.event.issue.title }}"
+          # El titulo ya viene con el prefijo "Tope:" desde las plantillas y
+          # desde la app, asi que anadirlo aqui lo duplicaria.
+          git commit -q -m "$TITULO"
           git push -q
           echo "" >> comentario.md
           echo "Commit \`$(git rev-parse --short HEAD)\` en \`main\`." >> comentario.md
