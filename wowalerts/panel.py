@@ -15,6 +15,7 @@ from typing import Any, Sequence
 
 from .misubastas import MyAuction
 from .undercut import Undercut
+from .ventas import COPPER_PER_GOLD
 
 # Limite de Discord para la descripcion de un embed.
 MAX_DESCRIPCION = 4096
@@ -150,3 +151,78 @@ def _recortar(bloques: list[str]) -> tuple[str, int]:
         largo += len(bloque) + 2
 
     return "\n\n".join(dentro), len(bloques) - len(dentro)
+
+
+# Dorado, el mismo de los avisos de venta: el panel y sus avisos son lo mismo
+# visto de dos maneras, y compartir color lo dice sin explicarlo.
+COLOR_VENTAS = 0xD4AF37
+
+# Cuantos reinos se listan. Con 152 personajes repartidos la cola es larguisima
+# y no dice nada: lo que se mira es donde se vende de verdad.
+REINOS_EN_EL_PANEL = 15
+
+MEDALLAS = ("🥇", "🥈", "🥉")
+
+
+def build_panel_ventas(
+    ranking: Sequence[tuple[str, int, int, str]],
+    totales: tuple[int, int] = (0, 0),
+    actualizado: datetime | None = None,
+) -> dict[str, Any]:
+    """El panel fijado con los reinos donde mas vendes.
+
+    `ranking` viene ya ordenado de mas a menos ventas, con (reino, ventas, oro
+    neto, fecha de la ultima). Es lo que decide donde merece la pena repostear:
+    un aviso suelto dice que has vendido algo, pero solo la suma de semanas dice
+    en que reinos vendes.
+    """
+    if not ranking:
+        return {
+            "embeds": [
+                {
+                    "title": "💰 Ventas por reino",
+                    "description": (
+                        "Todavia no te he visto vender nada. En cuanto se venda "
+                        "la primera subasta, aqui saldra el recuento."
+                    ),
+                    "color": COLOR_VENTAS,
+                }
+            ]
+        }
+
+    # Dentro de la funcion, como en el panel de arriba: notifier importa de aqui
+    # y hacerlo en la cabecera cerraria el circulo.
+    from .notifier import format_gold
+
+    ventas_totales, oro_total = totales
+    lineas = []
+    for puesto, (reino, ventas, copper, _ultima) in enumerate(
+        ranking[:REINOS_EN_EL_PANEL]
+    ):
+        marca = MEDALLAS[puesto] if puesto < len(MEDALLAS) else f"`{puesto + 1:>2}.`"
+        lineas.append(
+            f"{marca} **{reino}** — {ventas} venta{'s' if ventas != 1 else ''} · "
+            f"{format_gold(copper // COPPER_PER_GOLD)} g"
+        )
+
+    if len(ranking) > REINOS_EN_EL_PANEL:
+        resto = ranking[REINOS_EN_EL_PANEL:]
+        lineas.append(
+            f"\n…y {len(resto)} reino(s) mas con "
+            f"{sum(r[1] for r in resto)} venta(s)."
+        )
+
+    pie = (
+        f"{ventas_totales} venta(s) en total · "
+        f"{format_gold(oro_total // COPPER_PER_GOLD)} g netos"
+    )
+
+    embed: dict[str, Any] = {
+        "title": "💰 Ventas por reino",
+        "description": "\n".join(lineas)[:MAX_DESCRIPCION],
+        "color": COLOR_VENTAS,
+        "footer": {"text": pie},
+    }
+    if actualizado:
+        embed["timestamp"] = actualizado.isoformat()
+    return {"embeds": [embed]}

@@ -139,3 +139,66 @@ def test_el_panel_avisa_de_los_personajes_con_datos_muertos():
 def test_sin_caducados_el_panel_no_dice_nada():
     panel = build_panel([mia()], [], caducados=[])
     assert "reload" not in panel["embeds"][0]["description"]
+
+
+# ---------------------------------------------------------------------------
+#  Panel de ventas por reino
+# ---------------------------------------------------------------------------
+#
+#  Un aviso suelto dice que has vendido algo; el panel dice DONDE vendes, que es
+#  lo que decide adonde merece la pena volver a llevar genero.
+
+from wowalerts.panel import REINOS_EN_EL_PANEL, build_panel_ventas
+
+
+def fila(reino, ventas, oro, ultima="2026-09-05"):
+    """Una fila del ranking, con el oro en cobre como lo guarda el estado."""
+    return (reino, ventas, oro * 10_000, ultima)
+
+
+def descripcion_ventas(ranking, totales=(0, 0)):
+    return build_panel_ventas(ranking, totales)["embeds"][0]["description"]
+
+
+def test_los_reinos_salen_de_mas_a_menos_ventas():
+    texto = descripcion_ventas(
+        [fila("Sanguino", 12, 450_000), fila("Dun Modr", 9, 810_000)]
+    )
+
+    assert texto.index("Sanguino") < texto.index("Dun Modr")
+
+
+def test_los_tres_primeros_llevan_medalla():
+    texto = descripcion_ventas(
+        [fila("A", 9, 1), fila("B", 8, 1), fila("C", 7, 1), fila("D", 6, 1)]
+    )
+
+    assert "🥇 **A**" in texto and "🥈 **B**" in texto and "🥉 **C**" in texto
+    assert "` 4.` **D**" in texto
+
+
+def test_el_oro_sale_en_oro_y_no_en_cobre():
+    """El estado guarda cobre para no perder decimales al sumar."""
+    texto = descripcion_ventas([fila("Sanguino", 1, 142_499)])
+
+    assert "142.499 g" in texto
+
+
+def test_la_cola_larga_se_resume():
+    """Con 152 personajes repartidos la lista entera no dice nada."""
+    ranking = [fila(f"Reino {i}", 100 - i, 1) for i in range(REINOS_EN_EL_PANEL + 5)]
+
+    texto = descripcion_ventas(ranking)
+
+    assert "y 5 reino(s) mas" in texto
+
+
+def test_sin_ventas_lo_dice_en_vez_de_salir_vacio():
+    assert "Todavia no te he visto vender nada" in descripcion_ventas([])
+
+
+def test_el_pie_lleva_los_totales():
+    panel = build_panel_ventas([fila("Sanguino", 2, 300)], (2, 300 * 10_000))
+
+    assert "2 venta(s) en total" in panel["embeds"][0]["footer"]["text"]
+    assert "300 g netos" in panel["embeds"][0]["footer"]["text"]

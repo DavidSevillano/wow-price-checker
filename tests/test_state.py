@@ -151,3 +151,43 @@ def test_los_undercuts_no_pisan_a_los_chollos(tmp_path):
     chollos.save()
 
     assert NotifiedUndercuts(path).is_new(NotifiedUndercuts(path).key(1379, 1, 99))
+
+
+# -- Recuento de ventas por reino -------------------------------------------
+
+from wowalerts.state import VentasPorReino
+
+
+def test_las_ventas_se_acumulan_entre_pasadas(tmp_path):
+    """Una hora suelta no distingue un buen reino de la casualidad."""
+    from datetime import datetime
+
+    ruta = tmp_path / "ventas.json"
+    r = VentasPorReino(ruta)
+    r.apunta("Sanguino", 100_000, datetime(2026, 9, 5))
+    r.save()
+
+    otra = VentasPorReino(ruta)
+    otra.apunta("Sanguino", 50_000, datetime(2026, 9, 5))
+    otra.save()
+
+    assert VentasPorReino(ruta).ranking()[0] == ("Sanguino", 2, 150_000, "2026-09-05")
+
+
+def test_a_igualdad_de_ventas_manda_el_oro(tmp_path):
+    """Vender tres cosas de 100.000 importa mas que tres de 500."""
+    from datetime import datetime
+
+    r = VentasPorReino(tmp_path / "v.json")
+    for _ in range(3):
+        r.apunta("Barato", 500, datetime(2026, 9, 5))
+        r.apunta("Caro", 100_000, datetime(2026, 9, 5))
+
+    assert [f[0] for f in r.ranking()] == ["Caro", "Barato"]
+
+
+def test_un_fichero_ilegible_no_rompe_el_recuento(tmp_path):
+    ruta = tmp_path / "v.json"
+    ruta.write_text("{esto no es json", encoding="utf-8")
+
+    assert VentasPorReino(ruta).ranking() == []

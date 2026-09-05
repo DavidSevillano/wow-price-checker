@@ -479,3 +479,62 @@ def _fecha(valor: Any) -> datetime | None:
     except ValueError:
         return None
     return fecha if fecha.tzinfo is not None else fecha.replace(tzinfo=timezone.utc)
+
+
+class VentasPorReino:
+    """Cuantas ventas y cuanto oro llevas en cada reino.
+
+    Se acumula entre pasadas porque una sola no dice nada: lo que interesa es en
+    que reinos vendes de verdad, y eso solo se ve sumando semanas.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        raw = (_read_json(self.path) or {}).get("reinos")
+        self._reinos: dict[str, dict[str, Any]] = {}
+        if isinstance(raw, dict):
+            for reino, datos in raw.items():
+                if not isinstance(datos, dict):
+                    continue
+                self._reinos[str(reino)] = {
+                    "ventas": int(datos.get("ventas") or 0),
+                    "oro": int(datos.get("oro") or 0),
+                    "ultima": str(datos.get("ultima") or ""),
+                }
+
+    def apunta(self, reino: str, neto_copper: int, cuando: datetime) -> None:
+        """Suma una venta. En cobre, que es la unidad exacta de la API.
+
+        Redondear a oro aqui perderia los decimales de cada venta y la suma se
+        iria desviando; se convierte solo al escribir el panel.
+        """
+        entrada = self._reinos.setdefault(
+            reino, {"ventas": 0, "oro": 0, "ultima": ""}
+        )
+        entrada["ventas"] += 1
+        entrada["oro"] += neto_copper
+        entrada["ultima"] = cuando.date().isoformat()
+
+    def ranking(self) -> list[tuple[str, int, int, str]]:
+        """Los reinos de mas a menos ventas, con su oro y la ultima."""
+        return sorted(
+            (
+                (reino, d["ventas"], d["oro"], d["ultima"])
+                for reino, d in self._reinos.items()
+            ),
+            # A igualdad de ventas manda el oro: vender tres cosas de 100.000
+            # importa mas que vender tres de 500.
+            key=lambda fila: (-fila[1], -fila[2], fila[0]),
+        )
+
+    @property
+    def totales(self) -> tuple[int, int]:
+        return (
+            sum(d["ventas"] for d in self._reinos.values()),
+            sum(d["oro"] for d in self._reinos.values()),
+        )
+
+    def save(self) -> None:
+        _write_json_atomic(
+            self.path, {"version": STATE_VERSION, "reinos": self._reinos}
+        )

@@ -44,7 +44,7 @@ from wowalerts.misubastas import (
     leer_snapshots,
     separar_por_frescura,
 )
-from wowalerts.panel import build_panel
+from wowalerts.panel import build_panel, build_panel_ventas
 from wowalerts.notifier import (
     DiscordError,
     DiscordNotifier,
@@ -74,6 +74,7 @@ from wowalerts.state import (
     NotifiedUndercuts,
     RealmIdCache,
     SeguimientoVentas,
+    VentasPorReino,
 )
 from wowalerts.undercut import find_undercuts
 from wowalerts.ventas import revisar_reino
@@ -279,6 +280,37 @@ def agrupar_por_reino(mis_subastas, realm_ids_por_reino) -> dict[int, list]:
             continue
         grupos.setdefault(realm_id, []).append(subasta)
     return grupos
+
+
+def actualizar_panel_ventas(notifier, state_dir: Path, ventas) -> None:
+    """Reescribe el mensaje fijado con los reinos donde mas vendes.
+
+    Un aviso suelto dice que has vendido algo; esto dice DONDE vendes, que es lo
+    que decide adonde merece la pena volver a llevar genero. Hace falta acumular
+    entre pasadas: una hora suelta no distingue un buen reino de la casualidad.
+    """
+    recuento = VentasPorReino(state_dir / "ventas_por_reino.json")
+    for venta in ventas:
+        recuento.apunta(
+            venta.subasta.realm, venta.neto_copper, venta.detectada_at
+        )
+
+    memoria = JsonMapCache(state_dir / "panel_ventas.json", "panel")
+    anterior = memoria.get("message_id")
+    nuevo = notifier.upsert_panel(
+        build_panel_ventas(
+            recuento.ranking(), recuento.totales, datetime.now(timezone.utc)
+        ),
+        anterior,
+    )
+
+    # El recuento se guarda pase lo que pase con Discord: perder el mensaje es
+    # cosmetico y se rehace solo, pero perder las ventas contadas no se recupera.
+    recuento.save()
+
+    if nuevo and nuevo != anterior:
+        memoria.set("message_id", nuevo)
+        memoria.save()
 
 
 def actualizar_panel(
@@ -623,6 +655,11 @@ def run_mis_subastas(
             if not dry_run:
                 enviadas = notifier_ventas.send_ventas(ventas, orden)
                 log.info("📨 Enviadas a Discord %s venta(s).", len(enviadas))
+
+    # Fuera del "else": el panel se refresca aunque esta hora no se haya vendido
+    # nada, porque lleva la hora de actualizacion y asi se ve que sigue vivo.
+    if hacer_ventas and not dry_run and notifier_ventas:
+        actualizar_panel_ventas(notifier_ventas, state_dir, ventas)
 
     if dry_run:
         log.info("🧪 --dry-run: no envio nada a Discord ni guardo el estado.")
