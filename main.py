@@ -359,16 +359,22 @@ def run_mis_subastas(
         todas, datetime.now(timezone.utc), config.settings.listing_hours
     )
     if de_volcado_viejo:
-        maquinas = sorted({s.character for s in de_volcado_viejo})
+        # Se dice "han caducado" y no "no puedo leerlas", que era lo que ponia
+        # antes, porque son cosas muy distintas y la segunda suena a averia. Si
+        # el addon exporto hace mas horas de las que dura un listado, todo lo que
+        # decia ya ha vencido: esta en el buzon, no en la casa de subastas.
+        # Refrescar el volcado no lo devuelve, hay que volver a listarlo.
+        personajes = sorted({s.character for s in de_volcado_viejo})
         log.warning(
-            "⚠️  Ignoro %s subasta(s) de %s personaje(s) cuyo volcado lleva mas "
-            "de %s h sin actualizarse (%s%s). Entra con ellos y sal al selector "
-            "para refrescarlo.",
+            "⚠️  %s subasta(s) de %s personaje(s) ya han caducado y dejo de "
+            "vigilarlas: sus datos son de hace mas de %s h, que es lo que duran "
+            "tus listados. Estaran en su buzon. Si quieres seguir vendiendo ahi, "
+            "entra y vuelve a listarlas: %s%s",
             len(de_volcado_viejo),
-            len(maquinas),
+            len(personajes),
             config.settings.listing_hours,
-            ", ".join(maquinas[:8]),
-            "..." if len(maquinas) > 8 else "",
+            ", ".join(personajes[:8]),
+            "..." if len(personajes) > 8 else "",
         )
 
     # Solo interesan los objetos que vigila config.yaml: el resto de lo que
