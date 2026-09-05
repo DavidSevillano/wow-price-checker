@@ -245,6 +245,35 @@ class BlizzardClient:
             log.debug("Sin nombre para la especie %s: %s", species_id, exc)
             return None
 
+    def pet_species_names(self, species_id: int) -> dict[str, str]:
+        """Todos los idiomas de una especie, como `item_names` con los objetos.
+
+        Hace falta para el panel de ventas: Journalator apunta el nombre que ve
+        tu cliente, y comparando contra todos los idiomas da igual en cual
+        juegues.
+        """
+        try:
+            response = self._api_get(
+                f"/data/wow/pet/{species_id}",
+                namespace=f"static-{self.region}",
+                localized=False,
+            )
+            if response.status_code != 200:
+                return {}
+            name = response.json().get("name")
+            if isinstance(name, dict):
+                return {
+                    idioma: texto
+                    for idioma, texto in name.items()
+                    if isinstance(texto, str) and texto
+                }
+            if isinstance(name, str) and name:
+                return {self.locale: name}
+            return {}
+        except BlizzardError as exc:
+            log.debug("Sin nombres para la especie %s: %s", species_id, exc)
+            return {}
+
     def item_ids_por_subclase(self, item_class_id: int, item_subclass_id: int) -> list[int]:
         """Todos los ids de objeto de una clase/subclase (p. ej. monturas).
 

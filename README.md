@@ -398,7 +398,7 @@ wowalerts/
   journalator.py       Lee el historial de ventas del addon Journalator
   snapshot.py          Si el volcado leido es el de esta hora
   precios.py           El precio a batir en cada reino, para la app
-tests/                 725 tests, sin tocar la red
+tests/                 730 tests, sin tocar la red
 ```
 
 Para pasar los tests:
@@ -925,6 +925,10 @@ Como funciona:
    reino y objeto en `mis_ventas/<maquina>.json`. Al repositorio no van las
    facturas una a una: ni tus personajes ni quien te compro cada cosa.
 3. `main.py` se queda solo con los objetos que vigilas y dibuja el panel.
+
+**Solo cuentan los objetos de `config.yaml`**, mascotas incluidas: en la casa
+de subastas todas son el mismo objeto "jaula", pero en el correo llegan con su
+propio nombre, asi que se piden aparte por `pet_species_id`.
 
 **Solo cuentan los objetos de `config.yaml`.** El resumen guarda todo lo que
 vendes, asi que si mañana añades un objeto nuevo el panel ya tiene su historial;

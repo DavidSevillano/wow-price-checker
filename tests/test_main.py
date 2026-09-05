@@ -1110,3 +1110,75 @@ def test_a_mano_no_espera_ni_mide(monkeypatch):
 
     assert not cli.es_pasada_desatendida()
     assert not cli.es_pasada_programada()
+
+
+# -- Los nombres con los que se reconocen las ventas -------------------------
+
+
+class ClienteDeNombres:
+    """Un cliente de mentira que apunta a quien le han preguntado."""
+
+    def __init__(self, objetos=None, especies=None):
+        self.objetos = objetos or {}
+        self.especies = especies or {}
+        self.preguntas = []
+
+    def item_names(self, item_id):
+        self.preguntas.append(("item", item_id))
+        return self.objetos.get(item_id, {})
+
+    def pet_species_names(self, species_id):
+        self.preguntas.append(("pet", species_id))
+        return self.especies.get(species_id, {})
+
+
+def test_los_nombres_llegan_en_todos_los_idiomas(tmp_path):
+    """Journalator apunta el nombre que ve tu cliente, no el id."""
+    cliente = ClienteDeNombres({5000: {"en_GB": "Greaves", "es_ES": "Grebas"}})
+    cache = cli.JsonMapCache(tmp_path / "n.json", "nombres")
+
+    assert cli.nombres_vigilados(cliente, cache, [5000]) == {"Greaves", "Grebas"}
+
+
+def test_las_mascotas_se_preguntan_por_especie(tmp_path):
+    """En la casa de subastas todas son la misma jaula; en el correo, no."""
+    cliente = ClienteDeNombres(especies={242: {"en_GB": "Spectral Tiger Cub"}})
+    cache = cli.JsonMapCache(tmp_path / "n.json", "nombres")
+
+    assert cli.nombres_vigilados(cliente, cache, [], [242]) == {"Spectral Tiger Cub"}
+    assert cliente.preguntas == [("pet", 242)]
+
+
+def test_un_objeto_y_una_especie_con_el_mismo_numero_no_se_pisan(tmp_path):
+    cliente = ClienteDeNombres({242: {"en_GB": "Objeto"}}, {242: {"en_GB": "Mascota"}})
+    cache = cli.JsonMapCache(tmp_path / "n.json", "nombres")
+
+    assert cli.nombres_vigilados(cliente, cache, [242], [242]) == {"Objeto", "Mascota"}
+
+
+def test_el_nombre_ya_guardado_no_se_vuelve_a_pedir(tmp_path):
+    ruta = tmp_path / "n.json"
+    cliente = ClienteDeNombres({5000: {"en_GB": "Greaves"}})
+    cache = cli.JsonMapCache(ruta, "nombres")
+    cli.nombres_vigilados(cliente, cache, [5000])
+    cache.save()
+
+    otro = ClienteDeNombres()
+    assert cli.nombres_vigilados(otro, cli.JsonMapCache(ruta, "nombres"), [5000]) == {
+        "Greaves"
+    }
+    assert otro.preguntas == []
+
+
+def test_un_nombre_que_no_llega_se_reintenta_la_proxima_vez(tmp_path):
+    """Cachear el vacio dejaria ese objeto fuera del panel para siempre."""
+    ruta = tmp_path / "n.json"
+    cache = cli.JsonMapCache(ruta, "nombres")
+
+    assert cli.nombres_vigilados(ClienteDeNombres(), cache, [5000]) == set()
+    cache.save()
+
+    cliente = ClienteDeNombres({5000: {"en_GB": "Greaves"}})
+    assert cli.nombres_vigilados(cliente, cli.JsonMapCache(ruta, "nombres"), [5000]) == {
+        "Greaves"
+    }

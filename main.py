@@ -289,34 +289,42 @@ def agrupar_por_reino(mis_subastas, realm_ids_por_reino) -> dict[int, list]:
     return grupos
 
 
-def nombres_vigilados(client, cache: JsonMapCache, item_ids) -> set[str]:
-    """Como se llama cada objeto que vigilas, en todos los idiomas.
+def nombres_vigilados(client, cache: JsonMapCache, item_ids, species_ids=()) -> set[str]:
+    """Como se llama cada cosa que vigilas, en todos los idiomas.
 
-    Journalator apunta el nombre del objeto tal y como lo ve tu cliente y no
-    guarda el id, asi que comparar nombres es la unica forma de saber si una
-    venta suya es de algo que rastreamos. Se piden todos los idiomas de una vez
-    porque cuesta lo mismo que pedir uno, y asi da igual en que idioma juegues.
+    Journalator apunta el nombre tal y como lo ve tu cliente y no guarda el id,
+    asi que comparar nombres es la unica forma de saber si una venta suya es de
+    algo que rastreamos. Se piden todos los idiomas de una vez porque cuesta lo
+    mismo que pedir uno, y asi da igual en que idioma juegues.
+
+    Las mascotas van aparte: en la casa de subastas todas son el mismo objeto
+    "jaula" y solo las distingue el id de especie, pero en el correo llegan con
+    su propio nombre, que es justo el que hay que reconocer.
     """
     nombres: set[str] = set()
 
-    for item_id in dict.fromkeys(item_ids):
-        guardados = cache.get(item_id)
+    def recoge(clave: str, pedir) -> None:
+        guardados = cache.get(clave)
         if guardados is None:
-            try:
-                guardados = sorted(set(client.item_names(item_id).values()))
-            except BlizzardError as fallo:
-                # Un objeto sin nombre solo se pierde sus ventas en el panel;
-                # no es motivo para tumbar la pasada.
-                log.warning("No he podido leer el nombre del objeto %s: %s", item_id, fallo)
-                continue
-            cache.set(item_id, guardados)
+            guardados = sorted(set(pedir().values()))
+            if not guardados:
+                # Sin nombre solo se pierden sus ventas en el panel. No se
+                # cachea el vacio: asi la pasada siguiente lo vuelve a intentar.
+                log.warning("No he podido leer el nombre de %s.", clave)
+                return
+            cache.set(clave, guardados)
         nombres.update(guardados)
+
+    for item_id in dict.fromkeys(item_ids):
+        recoge(f"item:{item_id}", lambda i=item_id: client.item_names(i))
+    for species_id in dict.fromkeys(species_ids):
+        recoge(f"pet:{species_id}", lambda s=species_id: client.pet_species_names(s))
 
     return nombres
 
 
 def actualizar_panel_ventas(
-    client, notifier, state_dir: Path, mis_ventas_path: str, item_ids
+    client, notifier, state_dir: Path, mis_ventas_path: str, item_ids, species_ids=()
 ) -> None:
     """Reescribe el mensaje fijado con los reinos donde mas vendes.
 
@@ -327,7 +335,7 @@ def actualizar_panel_ventas(
     una subasta desaparecer y hay que deducir por cuanto se fue.
     """
     cache = JsonMapCache(state_dir / "nombres_objetos.json", "nombres")
-    nombres = nombres_vigilados(client, cache, item_ids)
+    nombres = nombres_vigilados(client, cache, item_ids, species_ids)
     cache.save()
 
     filas, totales = ranking(leer_resumenes(mis_ventas_path), nombres)
@@ -458,7 +466,12 @@ def run_mis_subastas(
         # que tengas puesto ahora mismo.
         if hacer_ventas and not dry_run and notifier_ventas:
             actualizar_panel_ventas(
-                client, notifier_ventas, state_dir, mis_ventas_path, rules_by_item_id
+                client,
+                notifier_ventas,
+                state_dir,
+                mis_ventas_path,
+                rules_by_item_id,
+                reglas_por_especie(config),
             )
         return EXIT_OK
 
@@ -698,7 +711,12 @@ def run_mis_subastas(
     # sino de todo lo que Journalator lleva apuntado.
     if hacer_ventas and not dry_run and notifier_ventas:
         actualizar_panel_ventas(
-            client, notifier_ventas, state_dir, mis_ventas_path, rules_by_item_id
+            client,
+            notifier_ventas,
+            state_dir,
+            mis_ventas_path,
+            rules_by_item_id,
+            reglas_por_especie(config),
         )
 
     if dry_run:
