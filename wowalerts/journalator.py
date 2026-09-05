@@ -392,6 +392,39 @@ def ventas_de_texto(texto: str) -> list[Venta]:
     return sorted(encontradas.values(), key=lambda v: (v.cuando, v.reino, v.objeto))
 
 
+def apuntes_de_wow(wow_root: str | Path) -> dict[str, int]:
+    """Cuantas anotaciones tiene Journalator de cada clase.
+
+    Sirve para distinguir "el addon no esta" de "esta y funciona, pero todavia
+    no se te ha vendido nada": si hay publicaciones o caducidades apuntadas, el
+    addon va bien y solo falta la primera venta.
+    """
+    cuenta: dict[str, int] = {}
+
+    for fichero in encontrar_journalator(wow_root):
+        try:
+            texto = fichero.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for clave, codificado in bloques(texto):
+            try:
+                crudo = zlib.decompress(
+                    descodifica_impresion(codificado), -zlib.MAX_WBITS
+                )
+                contenido = deserializa(crudo)
+            except (JournalatorError, zlib.error, ValueError, IndexError):
+                continue
+            if not isinstance(contenido, dict):
+                continue
+            for seccion, filas in contenido.items():
+                if isinstance(filas, list) and filas:
+                    # El maximo y no la suma: los bloques del archivo se
+                    # solapan, asi que sumarlos inflaria la cifra.
+                    cuenta[str(seccion)] = max(cuenta.get(str(seccion), 0), len(filas))
+
+    return cuenta
+
+
 def _a_venta(factura: Any) -> Venta | None:
     if not isinstance(factura, Mapping):
         return None

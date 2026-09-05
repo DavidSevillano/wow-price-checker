@@ -16,6 +16,7 @@ import pytest
 
 from wowalerts.journalator import (
     ALFABETO,
+    apuntes_de_wow,
     JournalatorError,
     Venta,
     bloques,
@@ -423,3 +424,45 @@ def test_la_primera_vez_sin_ventas_si_escribe(tmp_path):
 
     assert escribir_resumen(ruta, []) is True
     assert json.loads(ruta.read_text(encoding="utf-8"))["reinos"] == {}
+
+
+# -- Saber por que no hay ventas ---------------------------------------------
+
+
+def arbol_de_wow(raiz, *, cuentas=1, contenido=None):
+    """Un _retail_ de mentira con el fichero de Journalator dentro."""
+    for n in range(1, cuentas + 1):
+        carpeta = raiz / "WTF" / "Account" / f"1234#{n}" / "SavedVariables"
+        carpeta.mkdir(parents=True)
+        if contenido is not None:
+            (carpeta / "Journalator.lua").write_text(contenido, encoding="utf-8")
+    return raiz
+
+
+def test_sin_fichero_no_hay_apuntes(tmp_path):
+    arbol_de_wow(tmp_path)
+
+    assert apuntes_de_wow(tmp_path) == {}
+
+
+def test_los_apuntes_dicen_que_secciones_lleva(tmp_path):
+    """Con esto se distingue 'el addon no va' de 'aun no has vendido'."""
+    arbol_de_wow(
+        tmp_path,
+        contenido=fichero_con({"Posting": [{"a": 1}, {"a": 2}], "Invoices": []}),
+    )
+
+    assert apuntes_de_wow(tmp_path) == {"Posting": 2}
+
+
+def test_los_bloques_solapados_no_inflan_la_cuenta(tmp_path):
+    """El archivo guarda instantaneas sucesivas del mismo registro."""
+    arbol_de_wow(
+        tmp_path,
+        contenido=fichero_con(
+            {"Posting": [{"a": 1}]},
+            {"Posting": [{"a": 1}, {"a": 2}]},
+        ),
+    )
+
+    assert apuntes_de_wow(tmp_path) == {"Posting": 2}

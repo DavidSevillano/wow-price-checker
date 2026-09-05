@@ -26,7 +26,12 @@ from datetime import datetime
 import sys
 from pathlib import Path
 
-from wowalerts.journalator import escribir_resumen, ventas_de_wow
+from wowalerts.journalator import (
+    apuntes_de_wow,
+    encontrar_journalator,
+    escribir_resumen,
+    ventas_de_wow,
+)
 from wowalerts.misubastas import (
     MisSubastasError,
     escribir_snapshot,
@@ -276,10 +281,10 @@ def _sincronizar(args: argparse.Namespace) -> int:
             ventas[0].cuando.strftime("%d/%m/%Y"),
         )
     else:
-        log.info(
-            "Journalator no tiene ventas apuntadas. Si no lo usas, el panel de "
-            "ventas por reino se quedara vacio."
-        )
+        # Cero ventas puede ser cualquiera de tres cosas muy distintas, y
+        # decirlas todas con la misma frase deja al que mira sin saber si tiene
+        # que instalar algo, entrar al juego o simplemente esperar.
+        _por_que_no_hay_ventas(wow_root)
 
     subastas = leer_de_wow(wow_root)
     if subastas is None:
@@ -346,6 +351,42 @@ def _sincronizar(args: argparse.Namespace) -> int:
 
     log.info("Actualizado: %s.", ", ".join(cambiados))
     return subir(cambiados, push=not args.no_push)
+
+
+def _por_que_no_hay_ventas(wow_root: Path) -> None:
+    """Dice cual de los cuatro motivos es, que piden cosas distintas."""
+    if not (wow_root / "Interface" / "AddOns" / "Journalator").is_dir():
+        log.info(
+            "Journalator no esta instalado. Sin el, el panel de ventas por "
+            "reino no cuenta lo que vendas en esta maquina."
+        )
+        return
+
+    ficheros = encontrar_journalator(wow_root)
+    if not ficheros:
+        log.warning(
+            "⚠️  Journalator esta instalado pero aun no ha guardado nada. WoW "
+            "solo escribe los SavedVariables al salir al selector de personajes "
+            "o cerrar el juego: entra con cada cuenta y sal al selector."
+        )
+        return
+
+    apuntes = apuntes_de_wow(wow_root)
+    if not apuntes:
+        log.warning(
+            "⚠️  Journalator ha guardado su fichero en %s cuenta(s), pero esta "
+            "vacio. Comprueba que el addon esta activado en la lista de "
+            "complementos.",
+            len(ficheros),
+        )
+        return
+
+    log.info(
+        "Journalator funciona (%s), pero todavia no ha visto ninguna venta. "
+        "Apunta la factura cuando abres el buzon, asi que saldra en cuanto "
+        "recojas el correo de la primera venta.",
+        ", ".join(f"{n} {seccion}" for seccion, n in sorted(apuntes.items())),
+    )
 
 
 def _solo_ventas(args: argparse.Namespace, ventas) -> int:
