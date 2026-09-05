@@ -405,3 +405,21 @@ def test_un_fichero_con_forma_rara_se_ignora(tmp_path):
     (tmp_path / "raro.json").write_text(json.dumps({"reinos": 5}), encoding="utf-8")
 
     assert leer_resumenes(tmp_path) == {}
+
+
+def test_leer_cero_ventas_no_borra_el_historial_ya_guardado(tmp_path):
+    """Journalator desactivado no significa que no hubiera ventas."""
+    ruta = tmp_path / "deck.json"
+    escribir_resumen(ruta, [venta()])
+    antes = ruta.read_text(encoding="utf-8")
+
+    assert escribir_resumen(ruta, []) is False
+    assert ruta.read_text(encoding="utf-8") == antes
+
+
+def test_la_primera_vez_sin_ventas_si_escribe(tmp_path):
+    """Un fichero vacio deja constancia de que la maquina esta sincronizando."""
+    ruta = tmp_path / "deck.json"
+
+    assert escribir_resumen(ruta, []) is True
+    assert json.loads(ruta.read_text(encoding="utf-8"))["reinos"] == {}

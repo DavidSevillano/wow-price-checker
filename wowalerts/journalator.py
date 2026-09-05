@@ -486,12 +486,24 @@ def escribir_resumen(path: str | Path, ventas: Iterable[Venta]) -> bool:
     iguales dan bytes iguales y el sincronizador no genera commits vacios.
     """
     path = Path(path)
+    reinos = resumir(ventas)
     contenido = json.dumps(
-        {"version": RESUMEN_VERSION, "reinos": resumir(ventas)},
+        {"version": RESUMEN_VERSION, "reinos": reinos},
         indent=2,
         ensure_ascii=False,
         sort_keys=True,
     )
+
+    if not reinos and _tiene_ventas(path):
+        # Journalator desactivado, borrado o a medio instalar: leer cero ventas
+        # no significa que no las hubiera. Machacar el fichero se llevaria por
+        # delante el historial de esta maquina, y eso no se recupera.
+        log.warning(
+            "No he leido ninguna venta, pero %s ya tenia historial. Lo dejo "
+            "como estaba. Comprueba que Journalator sigue instalado.",
+            path.name,
+        )
+        return False
 
     if path.is_file() and path.read_text(encoding="utf-8") == contenido:
         return False
@@ -499,6 +511,15 @@ def escribir_resumen(path: str | Path, ventas: Iterable[Venta]) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(contenido, encoding="utf-8")
     return True
+
+
+def _tiene_ventas(path: Path) -> bool:
+    """Si el resumen que ya hay en disco dice algo."""
+    try:
+        datos = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return bool(isinstance(datos, dict) and datos.get("reinos"))
 
 
 def ranking(

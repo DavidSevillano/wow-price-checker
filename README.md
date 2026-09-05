@@ -398,7 +398,7 @@ wowalerts/
   journalator.py       Lee el historial de ventas del addon Journalator
   snapshot.py          Si el volcado leido es el de esta hora
   precios.py           El precio a batir en cada reino, para la app
-tests/                 730 tests, sin tocar la red
+tests/                 732 tests, sin tocar la red
 ```
 
 Para pasar los tests:
