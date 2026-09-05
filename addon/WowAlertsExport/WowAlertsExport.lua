@@ -7,7 +7,7 @@
 
 local FORMAT_VERSION = 1
 -- Version del addon, para saber que codigo se esta ejecutando de verdad.
-local ADDON_VERSION = "1.13"
+local ADDON_VERSION = "1.14"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 
@@ -198,18 +198,35 @@ local function pedirSubastas()
     pcall(C_AuctionHouse.QueryOwnedAuctions, {})
 end
 
--- Igual, pero agrupando las peticiones seguidas en una sola. Al postear una
--- tanda de veinte objetos llegan veinte eventos, y la casa de subastas limita
--- cuantas consultas admite seguidas.
+-- Igual, pero agrupando las peticiones seguidas. Al postear una tanda de veinte
+-- objetos llegan veinte eventos, y la casa de subastas limita cuantas consultas
+-- admite seguidas.
+--
+-- El agrupado pregunta en el PRIMER evento, no al final del segundo de espera.
+-- Antes esperaba siempre, y eso penalizaba el caso normal --postear una cosa y
+-- cerrar-- por culpa del caso de la tanda: si cerrabas antes de que venciera la
+-- espera, la subasta recien puesta no se recogia hasta la visita siguiente.
+-- Asi el primero entra al momento y el resto de la tanda se agrupa igual.
+local SEGUNDOS_ENTRE_CONSULTAS = 1
 local refrescoPendiente = false
+local ultimaConsulta = nil
 
 local function pedirSubastasPronto()
     if refrescoPendiente then
         return
     end
+
+    local ahora = GetTime()
+    if not ultimaConsulta or (ahora - ultimaConsulta) >= SEGUNDOS_ENTRE_CONSULTAS then
+        ultimaConsulta = ahora
+        pedirSubastas()
+        return
+    end
+
     refrescoPendiente = true
-    C_Timer.After(1, function()
+    C_Timer.After(SEGUNDOS_ENTRE_CONSULTAS, function()
         refrescoPendiente = false
+        ultimaConsulta = GetTime()
         pedirSubastas()
     end)
 end

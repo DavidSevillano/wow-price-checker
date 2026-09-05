@@ -591,3 +591,42 @@ def test_cuando_cargan_los_datos_se_guarda_entera():
     lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
 
     assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
+
+
+def test_al_postear_se_pregunta_al_momento():
+    """Postear uno y cerrar es el caso normal, y antes pagaba la espera.
+
+    El agrupado esperaba un segundo SIEMPRE, asi que si cerrabas la casa de
+    subastas antes de que venciera, la subasta recien puesta no se recogia hasta
+    la visita siguiente.
+    """
+    lua = runtime(subastas=[subasta()])
+    lua.execute("""
+        CONSULTAS = 0
+        C_AuctionHouse.QueryOwnedAuctions = function() CONSULTAS = CONSULTAS + 1 end
+        C_Timer = { After = function() end, NewTicker = function() return { Cancel = function() end } end }
+    """)
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_AUCTION_CREATED")
+
+    assert lua.globals().CONSULTAS == 1
+
+
+def test_una_tanda_seguida_sigue_agrupandose():
+    """Y el motivo de agrupar no desaparece: la casa limita las consultas."""
+    lua = runtime(subastas=[subasta()])
+    lua.execute("""
+        CONSULTAS = 0
+        PENDIENTES = 0
+        C_AuctionHouse.QueryOwnedAuctions = function() CONSULTAS = CONSULTAS + 1 end
+        C_Timer = { After = function() PENDIENTES = PENDIENTES + 1 end,
+                    NewTicker = function() return { Cancel = function() end } end }
+    """)
+
+    for _ in range(20):
+        lua.globals().DISPARAR("AUCTION_HOUSE_AUCTION_CREATED")
+
+    # Veinte posteos: una consulta al momento y un unico temporizador para el
+    # resto, no veinte consultas.
+    assert lua.globals().CONSULTAS == 1
+    assert lua.globals().PENDIENTES == 1
