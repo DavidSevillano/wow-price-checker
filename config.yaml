@@ -83,7 +83,7 @@ items:
 
   - name: "Pattern: Luxurious Silvermoon Lounge Cushion"
     item_id: 258131
-    max_price: 60000
+    max_price: 40000
     avisar_undercut: false
 
   # --------------------------------------------------------------------------
