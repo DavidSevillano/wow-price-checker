@@ -38,6 +38,7 @@ from wowalerts.items import (
     reglas_por_especie,
     resolve_item_ids,
 )
+from wowalerts.journalator import leer_resumenes, ranking
 from wowalerts.misubastas import (
     MisSubastasError,
     leer_canceladas,
@@ -74,7 +75,6 @@ from wowalerts.state import (
     NotifiedUndercuts,
     RealmIdCache,
     SeguimientoVentas,
-    VentasPorReino,
 )
 from wowalerts.undercut import find_undercuts
 from wowalerts.ventas import revisar_reino
@@ -156,6 +156,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="mis_subastas",
         help="Carpeta con el volcado de tus subastas, un fichero por maquina "
         "(por defecto: mis_subastas).",
+    )
+    parser.add_argument(
+        "--mis-ventas",
+        default="mis_ventas",
+        help="Carpeta con el resumen de lo que has vendido, un fichero por "
+        "maquina (por defecto: mis_ventas). Lo genera sync_subastas.py leyendo "
+        "el addon Journalator, y es lo que alimenta el panel de ventas.",
     )
     parser.add_argument(
         "-v",
@@ -282,31 +289,55 @@ def agrupar_por_reino(mis_subastas, realm_ids_por_reino) -> dict[int, list]:
     return grupos
 
 
-def actualizar_panel_ventas(notifier, state_dir: Path, ventas) -> None:
+def nombres_vigilados(client, cache: JsonMapCache, item_ids) -> set[str]:
+    """Como se llama cada objeto que vigilas, en todos los idiomas.
+
+    Journalator apunta el nombre del objeto tal y como lo ve tu cliente y no
+    guarda el id, asi que comparar nombres es la unica forma de saber si una
+    venta suya es de algo que rastreamos. Se piden todos los idiomas de una vez
+    porque cuesta lo mismo que pedir uno, y asi da igual en que idioma juegues.
+    """
+    nombres: set[str] = set()
+
+    for item_id in dict.fromkeys(item_ids):
+        guardados = cache.get(item_id)
+        if guardados is None:
+            try:
+                guardados = sorted(set(client.item_names(item_id).values()))
+            except BlizzardError as fallo:
+                # Un objeto sin nombre solo se pierde sus ventas en el panel;
+                # no es motivo para tumbar la pasada.
+                log.warning("No he podido leer el nombre del objeto %s: %s", item_id, fallo)
+                continue
+            cache.set(item_id, guardados)
+        nombres.update(guardados)
+
+    return nombres
+
+
+def actualizar_panel_ventas(
+    client, notifier, state_dir: Path, mis_ventas_path: str, item_ids
+) -> None:
     """Reescribe el mensaje fijado con los reinos donde mas vendes.
 
     Un aviso suelto dice que has vendido algo; esto dice DONDE vendes, que es lo
-    que decide adonde merece la pena volver a llevar genero. Hace falta acumular
-    entre pasadas: una hora suelta no distingue un buen reino de la casualidad.
+    que decide adonde merece la pena volver a llevar genero. Las cifras salen de
+    Journalator, no de lo que detecta el vigilante: el addon apunta la factura
+    exacta del correo y lleva meses de historial, mientras que aqui solo se ve
+    una subasta desaparecer y hay que deducir por cuanto se fue.
     """
-    recuento = VentasPorReino(state_dir / "ventas_por_reino.json")
-    for venta in ventas:
-        recuento.apunta(
-            venta.subasta.realm, venta.neto_copper, venta.detectada_at
-        )
+    cache = JsonMapCache(state_dir / "nombres_objetos.json", "nombres")
+    nombres = nombres_vigilados(client, cache, item_ids)
+    cache.save()
+
+    filas, totales = ranking(leer_resumenes(mis_ventas_path), nombres)
 
     memoria = JsonMapCache(state_dir / "panel_ventas.json", "panel")
     anterior = memoria.get("message_id")
     nuevo = notifier.upsert_panel(
-        build_panel_ventas(
-            recuento.ranking(), recuento.totales, datetime.now(timezone.utc)
-        ),
+        build_panel_ventas(filas, totales, datetime.now(timezone.utc)),
         anterior,
     )
-
-    # El recuento se guarda pase lo que pase con Discord: perder el mensaje es
-    # cosmetico y se rehace solo, pero perder las ventas contadas no se recupera.
-    recuento.save()
 
     if nuevo and nuevo != anterior:
         memoria.set("message_id", nuevo)
@@ -367,6 +398,7 @@ def run_mis_subastas(
     state_dir: Path,
     mis_subastas_path: str,
     roster_path: str,
+    mis_ventas_path: str,
     *,
     hacer_undercut: bool,
     hacer_ventas: bool,
@@ -422,6 +454,12 @@ def run_mis_subastas(
             "Nada que comprobar.",
             len(todas),
         )
+        # El panel se refresca igual: lo que cuenta es lo que ya vendiste, no lo
+        # que tengas puesto ahora mismo.
+        if hacer_ventas and not dry_run and notifier_ventas:
+            actualizar_panel_ventas(
+                client, notifier_ventas, state_dir, mis_ventas_path, rules_by_item_id
+            )
         return EXIT_OK
 
     log.info(
@@ -656,10 +694,12 @@ def run_mis_subastas(
                 enviadas = notifier_ventas.send_ventas(ventas, orden)
                 log.info("📨 Enviadas a Discord %s venta(s).", len(enviadas))
 
-    # Fuera del "else": el panel se refresca aunque esta hora no se haya vendido
-    # nada, porque lleva la hora de actualizacion y asi se ve que sigue vivo.
+    # Fuera del "else": el panel no depende de lo que se haya vendido esta hora,
+    # sino de todo lo que Journalator lleva apuntado.
     if hacer_ventas and not dry_run and notifier_ventas:
-        actualizar_panel_ventas(notifier_ventas, state_dir, ventas)
+        actualizar_panel_ventas(
+            client, notifier_ventas, state_dir, mis_ventas_path, rules_by_item_id
+        )
 
     if dry_run:
         log.info("🧪 --dry-run: no envio nada a Discord ni guardo el estado.")
@@ -979,6 +1019,7 @@ def run(args: argparse.Namespace) -> int:
             state_dir,
             args.mis_subastas,
             args.personajes,
+            args.mis_ventas,
             hacer_undercut=args.undercut,
             hacer_ventas=args.ventas,
             dry_run=args.dry_run,

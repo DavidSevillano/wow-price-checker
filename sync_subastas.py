@@ -26,6 +26,7 @@ from datetime import datetime
 import sys
 from pathlib import Path
 
+from wowalerts.journalator import escribir_resumen, ventas_de_wow
 from wowalerts.misubastas import (
     MisSubastasError,
     escribir_snapshot,
@@ -98,6 +99,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="mis_personajes",
         help="Carpeta con la lista de tus personajes, para que los avisos de "
         "chollo digan con quien entrar a comprarlos.",
+    )
+    parser.add_argument(
+        "--ventas",
+        default="mis_ventas",
+        help="Carpeta con el resumen de lo que has vendido, sacado del addon "
+        "Journalator. Es lo que alimenta el panel de ventas por reino.",
     )
     parser.add_argument(
         "--maquina",
@@ -259,10 +266,25 @@ def _sincronizar(args: argparse.Namespace) -> int:
         )
         return EXIT_ERROR
 
+    # Journalator va por su cuenta: lo lleva otro addon y tiene historial aunque
+    # el nuestro no haya volcado nada todavia.
+    ventas = ventas_de_wow(wow_root)
+    if ventas:
+        log.info(
+            "%s venta(s) apuntadas por Journalator, desde el %s.",
+            len(ventas),
+            ventas[0].cuando.strftime("%d/%m/%Y"),
+        )
+    else:
+        log.info(
+            "Journalator no tiene ventas apuntadas. Si no lo usas, el panel de "
+            "ventas por reino se quedara vacio."
+        )
+
     subastas = leer_de_wow(wow_root)
     if subastas is None:
         # Nada que sincronizar todavia, pero la maquina esta bien configurada.
-        return EXIT_OK
+        return _solo_ventas(args, ventas)
     log.info("%s subasta(s) tuyas leidas de %s.", len(subastas), wow_root)
 
     # Sin esto, cada vez que cancelas para repostear el vigilante lo cantaria
@@ -303,6 +325,7 @@ def _sincronizar(args: argparse.Namespace) -> int:
     maquina = args.maquina or nombre_de_maquina()
     fichero_subastas = str(Path(args.salida) / f"{maquina}.json")
     fichero_personajes = str(Path(args.personajes) / f"{maquina}.json")
+    fichero_ventas = str(Path(args.ventas) / f"{maquina}.json")
     log.info("Escribiendo como maquina %r.", maquina)
 
     if args.dry_run:
@@ -314,6 +337,8 @@ def _sincronizar(args: argparse.Namespace) -> int:
         cambiados.append(fichero_subastas)
     if escribir_personajes(fichero_personajes, personajes):
         cambiados.append(fichero_personajes)
+    if escribir_resumen(fichero_ventas, ventas):
+        cambiados.append(fichero_ventas)
 
     if not cambiados:
         log.info("Sin cambios respecto a lo ya subido.")
@@ -321,6 +346,25 @@ def _sincronizar(args: argparse.Namespace) -> int:
 
     log.info("Actualizado: %s.", ", ".join(cambiados))
     return subir(cambiados, push=not args.no_push)
+
+
+def _solo_ventas(args: argparse.Namespace, ventas) -> int:
+    """Sube las ventas cuando el addon de subastas aun no ha volcado nada.
+
+    Son dos addons distintos: que el nuestro este recien instalado no es motivo
+    para dejar el panel de ventas sin los meses que Journalator ya lleva
+    apuntados.
+    """
+    if not ventas or args.dry_run:
+        return EXIT_OK
+
+    maquina = args.maquina or nombre_de_maquina()
+    fichero = str(Path(args.ventas) / f"{maquina}.json")
+    if not escribir_resumen(fichero, ventas):
+        return EXIT_OK
+
+    log.info("Actualizado: %s.", fichero)
+    return subir([fichero], push=not args.no_push)
 
 
 def firma_de_los_volcados(wow_root: Path) -> tuple:

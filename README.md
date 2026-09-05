@@ -368,6 +368,7 @@ gh run list --workflow="WoW Price Monitor" --limit 10
 | `--test-discord` | Manda un mensaje de prueba al webhook y termina. |
 | `--ignore-state` | Avisa tambien de chollos ya notificados antes. |
 | `--ventas` | Avisa de tus subastas vendidas, en su propio canal. |
+| `--mis-ventas ruta` | Carpeta con el resumen de lo vendido (por defecto `mis_ventas/`). |
 | `--config otro.yaml` | Usa otro fichero de configuracion. |
 | `--state-dir ruta` | Cambia donde se guarda la memoria (por defecto `.state/`). |
 | `-v` | Muestra cada subasta vista, con sus bonus ids. |
@@ -394,9 +395,10 @@ wowalerts/
   state.py             Memoria entre ejecuciones
   notifier.py          Embeds y envio a Discord
   ventas.py            Que cuenta como venta y que como caducidad
+  journalator.py       Lee el historial de ventas del addon Journalator
   snapshot.py          Si el volcado leido es el de esta hora
   precios.py           El precio a batir en cada reino, para la app
-tests/                 347 tests, sin tocar la red
+tests/                 725 tests, sin tocar la red
 ```
 
 Para pasar los tests:
@@ -900,6 +902,46 @@ ajusta en `config.yaml` con `ah_cut_pct`.
 El aviso lleva el **ilvl** entre parentesis. Con el mismo objeto puesto a 292,
 295, 298 y 305 a la vez, sin eso no se sabe cual se ha ido, y al mirar la casa
 de subastas ves otro del mismo nombre y crees que no se ha vendido nada.
+
+### 6.8 El panel de ventas por reino
+
+En el canal de ventas hay un mensaje fijado que ordena los reinos por numero de
+ventas. Un aviso suelto dice que has vendido algo; el panel dice **donde**
+vendes, que es lo que decide adonde merece la pena volver a llevar genero. A
+igualdad de ventas manda el oro: vender tres cosas de 100.000 no es lo mismo que
+tres de 500.
+
+Las cifras **no salen del vigilante**, salen del addon
+[Journalator](https://www.curseforge.com/wow/addons/journalator). El vigilante
+solo ve una subasta desaparecer y tiene que deducir por cuanto se fue; Journalator
+apunta la factura exacta que te llega al buzon, y ademas lleva meses de historial
+de antes de que existiera este panel.
+
+Como funciona:
+
+1. Journalator guarda su historial comprimido dentro de `SavedVariables`
+   (LibSerialize + LibDeflate + una codificacion a 6 bits).
+2. `sync_subastas.py` lo descomprime en cada maquina y escribe un resumen por
+   reino y objeto en `mis_ventas/<maquina>.json`. Al repositorio no van las
+   facturas una a una: ni tus personajes ni quien te compro cada cosa.
+3. `main.py` se queda solo con los objetos que vigilas y dibuja el panel.
+
+**Solo cuentan los objetos de `config.yaml`.** El resumen guarda todo lo que
+vendes, asi que si mañana añades un objeto nuevo el panel ya tiene su historial;
+pero lo que se enseña es solo el negocio que vigilas, no el material de
+artesania.
+
+Dos cosas que conviene saber:
+
+- **El panel va por detras de los avisos.** Journalator apunta la venta cuando
+  abres el correo, y el fichero no se escribe hasta que sales al selector de
+  personajes. Los avisos siguen llegando al minuto; el panel se pone al dia en
+  la siguiente sincronizacion.
+- **El PC y la Deck se suman sin repetir.** Una factura se lee del buzon una
+  sola vez, en la maquina donde estabas jugando, asi que las dos nunca ven la
+  misma venta.
+
+Si no usas Journalator, el panel se queda vacio y el resto sigue igual.
 
 
 ---

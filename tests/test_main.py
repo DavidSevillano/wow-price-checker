@@ -14,6 +14,7 @@ import pytest
 import main as cli
 
 WEBHOOK = "https://discord.com/api/webhooks/1/abc"
+VENTAS_WEBHOOK = "https://discord.com/api/webhooks/3/ventas"
 TOKEN_URL = "https://oauth.battle.net/token"
 BASE = "https://eu.api.blizzard.com/data/wow"
 ICON_URL = "https://render.worldofwarcraft.com/eu/icons/56/7705643.jpg"
@@ -64,7 +65,13 @@ def entorno(tmp_path, monkeypatch, requests_mock):
         f"{BASE}/media/item/5000",
         json={"assets": [{"key": "icon", "value": ICON_URL}]},
     )
+    requests_mock.get(
+        f"{BASE}/item/5000",
+        json={"name": {"en_GB": "Greaves", "es_ES": "Grebas"}},
+    )
     requests_mock.post(WEBHOOK, status_code=204)
+    # El panel de ventas se reescribe en su propio canal.
+    requests_mock.post(VENTAS_WEBHOOK, json={"id": "1"})
 
     return {
         "config": str(config_path),
@@ -842,6 +849,7 @@ def test_la_pasada_de_mis_subastas_arranca(entorno, tmp_path, monkeypatch):
     )
     (tmp_path / "subastas").mkdir()
     (tmp_path / "roster").mkdir()
+    (tmp_path / "ventas").mkdir()
 
     assert (
         ejecutar(
@@ -852,6 +860,8 @@ def test_la_pasada_de_mis_subastas_arranca(entorno, tmp_path, monkeypatch):
             str(tmp_path / "subastas"),
             "--personajes",
             str(tmp_path / "roster"),
+            "--mis-ventas",
+            str(tmp_path / "ventas"),
         )
         == cli.EXIT_OK
     )
@@ -876,6 +886,7 @@ def test_la_firma_de_run_mis_subastas_acepta_la_llamada_de_run():
         "state_dir",
         "mis_subastas_path",
         "roster_path",
+        "mis_ventas_path",
     ]
 
 
