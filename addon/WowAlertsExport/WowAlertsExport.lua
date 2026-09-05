@@ -7,7 +7,7 @@
 
 local FORMAT_VERSION = 1
 -- Version del addon, para saber que codigo se esta ejecutando de verdad.
-local ADDON_VERSION = "1.12"
+local ADDON_VERSION = "1.13"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 
@@ -117,12 +117,23 @@ local function bonusIDsFromLink(link)
     return ids
 end
 
+-- Devuelve la lista y cuantas no se han podido leer todavia.
+--
+-- Lo segundo importa mas de lo que parece. El juego entrega los datos de cada
+-- objeto de forma perezosa: recien abierta la casa, o nada mas postear, el
+-- itemLink puede no tener ilvl aun. Antes esas subastas se saltaban en silencio
+-- y se guardaba la lista incompleta encima de la buena, asi que si posteabas y
+-- salias rapido perdias subastas sin enterarte.
 local function recogerSubastas()
     local subastas = {}
+    local incompletas = 0
     local total = C_AuctionHouse.GetNumOwnedAuctions()
 
     for index = 1, total do
         local info = C_AuctionHouse.GetOwnedAuctionInfo(index)
+        if not info then
+            incompletas = incompletas + 1
+        end
         -- Sin compra directa no hay nada que comparar: una subasta que solo
         -- admite pujas no compite en precio con las demas.
         if info and info.buyoutAmount and info.buyoutAmount > 0 then
@@ -139,7 +150,11 @@ local function recogerSubastas()
                 nombre = link:match("%[(.-)%]")
             end
 
-            if itemKey.itemID and ilvl then
+            if not (itemKey.itemID and ilvl) then
+                -- El juego la conoce pero aun no ha cargado sus datos. No es
+                -- una subasta menos: es una lectura a medias.
+                incompletas = incompletas + 1
+            else
                 subastas[#subastas + 1] = {
                     auctionID = info.auctionID,
                     itemID = itemKey.itemID,
@@ -153,7 +168,7 @@ local function recogerSubastas()
         end
     end
 
-    return subastas
+    return subastas, incompletas
 end
 
 -- ---------------------------------------------------------------------------
@@ -271,14 +286,41 @@ local function huellaDe(datos)
     return encode(limpio)
 end
 
+-- Si cada subasta que ha dejado de aparecer es una que cancelaste tu.
+--
+-- Es lo que separa "has cancelado" de "la lista viene a medias", que desde
+-- fuera se ven igual: en los dos casos hay menos que antes.
+local function todoLoQueFaltaLoCancelasteTu(antes, ahora)
+    local canceladas = WowAlertsExportDB.canceladas or {}
+    local siguen = {}
+    for _, s in ipairs(ahora) do
+        siguen[s.auctionID] = true
+    end
+
+    for _, s in ipairs(antes or {}) do
+        if not siguen[s.auctionID] and not canceladas[tostring(s.auctionID)] then
+            return false
+        end
+    end
+    return true
+end
+
+
 local function guardar()
     -- Se parte de lo ya guardado para no borrar las subastas de los demas
     -- personajes: cada uno actualiza solo su propia entrada.
     local datos = WowAlertsExportDB.personajes or {}
 
     local clave, nombre, reino = claveDePersonaje()
-    local recogidas = recogerSubastas()
+    local recogidas, incompletas = recogerSubastas()
     local previo = datos[clave]
+
+    -- Una lectura a medias no se guarda nunca: machacaria la lista buena con
+    -- uno menos. Se reintenta sola, porque el repaso periodico y el siguiente
+    -- OWNED_AUCTIONS_UPDATED vuelven a pasar por aqui.
+    if incompletas > 0 then
+        return nil
+    end
 
     -- Leer cero no significa que las hayas cancelado: puede significar que
     -- ahora mismo no se pueden leer. Con la casa cerrada nunca es fiable, y
@@ -286,10 +328,20 @@ local function guardar()
     -- momento y el primer evento llega vacio. Pasados unos segundos con la casa
     -- abierta, un cero si es un cero: hay que guardarlo, o un personaje al que
     -- se le acaban las subastas se quedaria con el recuento viejo para siempre.
-    if #recogidas == 0 and previo and #(previo.auctions or {}) > 0 then
-        local segundos = abiertaDesde and (GetTime() - abiertaDesde) or 0
-        if not casaAbierta() or segundos < SEGUNDOS_PARA_FIARSE_DE_UN_CERO then
-            return nil
+    -- Ojo: la comparacion es "menos que", no "cero". Que el servidor entregue
+    -- la lista a trozos es normal, y con "cero" solo se protegia el caso
+    -- extremo: leer 3 de tus 13 pasaba el filtro y se perdian 10.
+    --
+    -- Pero bajar tambien es legitimo: si acabas de cancelar una, tiene que
+    -- reflejarse ya. Eso no se adivina por tiempo, se sabe: el addon apunta el
+    -- id en cuanto cancelas. Si todo lo que falta lo cancelaste tu, la lectura
+    -- es de fiar; si falta algo que nadie ha cancelado, es una lectura a medias.
+    if previo and #recogidas < #(previo.auctions or {}) then
+        if not todoLoQueFaltaLoCancelasteTu(previo.auctions, recogidas) then
+            local segundos = abiertaDesde and (GetTime() - abiertaDesde) or 0
+            if not casaAbierta() or segundos < SEGUNDOS_PARA_FIARSE_DE_UN_CERO then
+                return nil
+            end
         end
     end
 

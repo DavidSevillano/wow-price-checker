@@ -327,7 +327,10 @@ def test_cancelar_sin_cerrar_la_casa_actualiza():
     recoger(lua)
 
     lua.globals().SUBASTAS = lua.table_from([subasta(auction_id=2)])
-    lua.globals().DISPARAR("AUCTION_CANCELED")
+    # Con el id, que es como llega en el juego: es lo que distingue "la has
+    # cancelado tu" de "la lista viene a medias", porque las dos cosas se ven
+    # igual desde fuera (hay menos que antes).
+    lua.globals().DISPARAR("AUCTION_CANCELED", 1)
 
     subastas = volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]
     assert [s["auctionID"] for s in subastas] == [2]
@@ -520,3 +523,71 @@ def test_el_codificador_no_usa_el_formato_de_32_bits():
     """
     fuente = ADDON.read_text(encoding="utf-8")
     assert 'string.format("%d"' not in fuente
+
+
+# ---------------------------------------------------------------------------
+#  Lecturas a medias
+# ---------------------------------------------------------------------------
+#
+#  El juego entrega los datos de forma perezosa, y guardar() reemplaza la lista
+#  entera. Si posteas y sales rapido, una lectura incompleta se guardaba encima
+#  de la buena y perdias subastas sin enterarte.
+
+
+def test_leer_menos_de_las_que_habia_no_borra_el_resto():
+    """El caso que se escapaba: leer 1 de 3 pasaba el filtro del cero."""
+    lua = runtime(subastas=[subasta(), subasta(auction_id=2), subasta(auction_id=3)])
+    recoger(lua)
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 3
+
+    # El servidor entrega solo una parte en el siguiente evento.
+    lua.globals().SUBASTAS = lua.table_from([subasta()])
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 3
+
+
+def test_con_la_casa_abierta_un_rato_si_se_guardan_menos():
+    """Vender o cancelar reduce el numero de verdad, y hay que reflejarlo."""
+    lua = runtime(subastas=[subasta(), subasta(auction_id=2), subasta(auction_id=3)])
+    recoger(lua)
+
+    lua.globals().SUBASTAS = lua.table_from([subasta()])
+    lua.globals().AVANZAR(10)
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 1
+
+
+def test_una_subasta_sin_ilvl_todavia_no_se_guarda_a_medias():
+    """Sin los datos del objeto cargados no se puede leer su ilvl.
+
+    Antes esa subasta se saltaba en silencio y se guardaba la lista sin ella,
+    que es una subasta perdida. Ahora la lectura entera se descarta y se
+    reintenta en el siguiente evento.
+    """
+    a_medias = subasta(auction_id=2)
+    a_medias["itemKey"] = {"itemID": 200000, "itemLevel": None}  # aun sin ilvl
+    a_medias["itemLink"] = None  # y sin enlace del que sacarlo
+
+    lua = runtime(subastas=[subasta(), a_medias])
+    recoger(lua)
+
+    # No se guarda nada: mejor sin datos que con una subasta de menos, porque
+    # una lista incompleta se toma por buena y la que falta se da por vendida.
+    assert lua.globals().WowAlertsExportDB.payload is None
+
+
+def test_cuando_cargan_los_datos_se_guarda_entera():
+    """Y el reintento llega solo: el siguiente evento ya la trae completa."""
+    a_medias = subasta(auction_id=2)
+    a_medias["itemKey"] = {"itemID": 200000, "itemLevel": None}
+    a_medias["itemLink"] = None
+
+    lua = runtime(subastas=[subasta(), a_medias])
+    recoger(lua)
+
+    lua.globals().SUBASTAS = lua.table_from([subasta(), subasta(auction_id=2)])
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+    assert len(volcado(lua)["personajes"]["Sanguino-Pepe"]["auctions"]) == 2
