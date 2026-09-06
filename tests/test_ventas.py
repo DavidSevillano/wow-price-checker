@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from wowalerts.misubastas import MyAuction
 from wowalerts.ventas import (
+    ESPERA_TRAS_UN_ADELANTAMIENTO,
     SubastaVigilada,
     UltimoVolcado,
     Venta,
@@ -74,8 +75,9 @@ def test_sin_comision_el_neto_es_el_precio():
 # -- Seguimiento de las vivas -----------------------------------------------
 
 
-def mia(auction_id=1, oro=9000):
+def mia(auction_id=1, oro=9000, exportado=0):
     return MyAuction(
+        exported_at=exportado,
         auction_id=auction_id,
         item_id=ITEM,
         item_name="Greaves of the Noxious Depths",
@@ -394,19 +396,23 @@ def test_un_reino_ya_resuelto_deja_de_mirarse(tmp_path):
 # -- Reposteos tras un aviso de undercut ------------------------------------
 
 
-def test_una_subasta_adelantada_que_desaparece_es_un_reposteo():
-    """El aviso de undercut existe para que vayas a repostear.
+def test_una_adelantada_que_desaparece_se_espera_pero_no_se_descarta():
+    """Que te adelanten no prueba que hayas ido a repostear.
 
-    Si te aviso de que te han adelantado y la subasta desaparece justo despues,
-    la has cancelado tu para reponerla, no se ha vendido.
+    El aviso te manda a repostear, pero puedes no haber ido --de madrugada,
+    sin ir mas lejos-- y una subasta adelantada se vende igual. Descartarla
+    para siempre se comia ventas de verdad: el 2026-09-06 se trago las 38.002 g
+    de un Yelmo mistico que Journalator tenia apuntado como vendido.
     """
-    previa = vigilada(caduca=T0 + timedelta(hours=2), adelantada=True)
+    previa = vigilada(
+        caduca=T0 + timedelta(hours=5), adelantada=True, desaparecida_at=T0
+    )
     ventas, seguidas, _ = revisar_reino(
         {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
     )
     assert ventas == []
-    # Cancelada al fin y al cabo: ya no existe, sale del seguimiento.
-    assert seguidas == {}
+    # Lo importante: sigue en seguimiento, no se ha tirado.
+    assert seguidas[1].desaparecida_at == T0
 
 
 def test_la_marca_de_adelantada_se_pone_al_verla_viva():
@@ -461,15 +467,17 @@ def test_la_marca_sobrevive_al_disco(tmp_path):
     assert SeguimientoVentas(path).del_reino(1)[1].adelantada is True
 
 
-def test_un_reposteo_suprimido_se_deja_por_escrito(caplog):
-    """Sin esta linea no se distingue 'no has vendido' de 'he tapado seis'."""
+def test_la_espera_por_un_adelantamiento_se_deja_por_escrito(caplog):
+    """Sin esta linea no se distingue 'no has vendido' de 'estoy esperando'."""
     import logging
 
-    previa = vigilada(caduca=T0 + timedelta(hours=2), adelantada=True)
+    previa = vigilada(
+        caduca=T0 + timedelta(hours=5), adelantada=True, desaparecida_at=T0
+    )
     with caplog.at_level(logging.INFO, logger="wowalerts.ventas"):
         revisar_reino({1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5)
 
-    assert "reposteada" in caplog.text
+    assert "adelantando" in caplog.text
     assert "Pepe" in caplog.text
 
 
@@ -554,10 +562,44 @@ def test_una_pendiente_que_reaparece_deja_de_estarlo():
     assert vuelta[1].desaparecida_at is None
 
 
-def test_una_adelantada_no_espera_ni_una_pasada():
-    previa = vigilada(caduca=T0 + timedelta(hours=5), adelantada=True)
+def test_una_adelantada_se_canta_cuando_vence_la_espera():
+    """Cancelarla exige jugar, y jugar acaba escribiendo los SavedVariables.
+
+    Si en dos horas el addon no ha vuelto a hablar, es que no has jugado, y
+    entonces no la has podido cancelar: se vendio.
+    """
+    previa = vigilada(
+        caduca=T0 + timedelta(hours=5), adelantada=True, desaparecida_at=T0
+    )
+    ventas, _, _ = revisar_reino(
+        {1: previa}, [], [], 1, T0 + ESPERA_TRAS_UN_ADELANTAMIENTO, None, 12, 5
+    )
+    assert len(ventas) == 1
+
+
+def test_una_adelantada_se_canta_en_cuanto_el_addon_vuelve_a_hablar():
+    """No hace falta agotar la espera si ya hay respuesta.
+
+    Un volcado del addon posterior a la desaparicion que no la lista como
+    cancelada es todo lo que se necesita saber.
+    """
+    previa = vigilada(
+        caduca=T0 + timedelta(hours=5), adelantada=True, desaparecida_at=T0
+    )
+    despues = mia(auction_id=2, exportado=int((T0 + timedelta(minutes=30)).timestamp()))
+    ventas, _, _ = revisar_reino(
+        {1: previa}, [despues], [], 1, UNA_HORA_DESPUES, None, 12, 5
+    )
+    assert len(ventas) == 1
+
+
+def test_si_el_addon_dice_que_la_cancelaste_no_es_venta_aunque_venza_la_espera():
+    previa = vigilada(
+        caduca=T0 + timedelta(hours=5), adelantada=True, desaparecida_at=T0
+    )
     ventas, quedan, _ = revisar_reino(
-        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5
+        {1: previa}, [], [], 1, T0 + ESPERA_TRAS_UN_ADELANTAMIENTO, None, 12, 5,
+        canceladas={1},
     )
     assert ventas == []
     assert quedan == {}

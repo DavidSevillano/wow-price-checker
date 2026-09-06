@@ -398,7 +398,7 @@ wowalerts/
   journalator.py       Lee el historial de ventas del addon Journalator
   snapshot.py          Si el volcado leido es el de esta hora
   precios.py           El precio a batir en cada reino, para la app
-tests/                 735 tests, sin tocar la red
+tests/                 737 tests, sin tocar la red
 ```
 
 Para pasar los tests:
@@ -682,8 +682,7 @@ convertiria su caducacion en una venta falsa.
   producen exactamente el mismo dato, y avisar de todas seria peor: **toda
   subasta que no se vende acaba desapareciendo justo ahi**, asi que el canal se
   llenaria de falsas alarmas.
-- **Las ventas de una subasta que te estaban adelantando**, ni las de una que
-  hayas cancelado. Ver mas abajo.
+- **Las ventas de una subasta que hayas cancelado.** Ver mas abajo.
 - **Objetos que no esten en `config.yaml`.**
 
 ### 6.3 Los reposteos no cuentan como ventas
@@ -722,9 +721,29 @@ La fecha de caducidad se sigue juzgando por **cuando desaparecio la subasta**,
 no por cuando se toma la decision. Si no, la espera empujaria a la subasta mas
 alla de su plazo y se perderian ventas buenas.
 
-Como tercera red queda la marca de undercut: si la ultima vez que se vio viva le
-estaban adelantando, se da por reposteada sin esperar. Cubre el caso en que
-reposteas por mi aviso, que es el unico que puedo anticipar.
+**La espera larga cuando te estaban adelantando.** El aviso de undercut te manda
+a repostear, asi que una subasta adelantada que desaparece es sospechosa: puede
+que hayas ido a reponerla y el addon no lo haya contado todavia. Se le dan dos
+pasadas mas en vez de una.
+
+No mas que eso, y aqui esta el porque: **que te adelanten no prueba que hayas
+reposteado**. Puedes no haber ido, y una subasta adelantada se vende igual.
+Durante un tiempo esto la descartaba para siempre, y se comia ventas de verdad:
+el 2026-09-06, a las 04:24 --con el dueño durmiendo, asi que reposteo ninguno--
+se trago las 38.002 g de un Yelmo mistico que Journalator tenia apuntado como
+vendido.
+
+La espera se corta en cuanto hay respuesta, por cualquiera de los dos lados:
+
+- **El addon vuelve a volcar** despues de que la subasta desapareciera y no la
+  lista como cancelada. Ya ha dicho todo lo que tenia que decir: es una venta.
+- **Se agotan las dos horas sin que vuelva a volcar.** Cancelarla exige estar
+  jugando, y jugar acaba en un `/reload` o en salir del juego, que es cuando WoW
+  escribe los SavedVariables y el sync se entera. Si en dos horas no ha escrito
+  nada, no has jugado; y si no has jugado, no la has cancelado.
+
+Dos horas caben de sobra antes de que el volcado del addon se pase de las horas
+que dura un listado, que es cuando la subasta se soltaria sin veredicto.
 
 Todo lo que se tapa queda escrito en el log de la pasada:
 

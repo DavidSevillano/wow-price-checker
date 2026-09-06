@@ -34,6 +34,18 @@ TIEMPO_MINIMO_RESTANTE = {
 }
 
 
+# Cuanto se le da al addon para contar que cancelaste una subasta que te
+# estaban adelantando. Cancelarla exige estar jugando, y jugar acaba en un
+# /reload o en salir del juego, que es cuando WoW escribe los SavedVariables y
+# el vigilante se entera. Si en todo ese rato el addon no ha vuelto a hablar, es
+# que no has jugado, y entonces no has podido cancelarla: se vendio.
+#
+# Dos horas son dos pasadas mas. Caben de sobra antes de que el volcado del
+# addon se pase de las horas que dura un listado, que es cuando la subasta se
+# soltaria sin veredicto.
+ESPERA_TRAS_UN_ADELANTAMIENTO = timedelta(hours=2)
+
+
 @dataclass(frozen=True)
 class UltimoVolcado:
     """La foto anterior de un reino: cuando se leyo y hasta que id llegaba.
@@ -177,6 +189,14 @@ def revisar_reino(
 
     mias_por_id = {m.auction_id: m for m in mis_subastas}
 
+    # Cuando volco el addon por ultima vez lo de cada personaje. Es lo que dice
+    # si ha tenido ocasion de contar una cancelacion tuya.
+    exportado_por_pj: dict[str, int] = {}
+    for mia in mis_subastas:
+        exportado_por_pj[mia.character] = max(
+            exportado_por_pj.get(mia.character, 0), mia.exported_at
+        )
+
     # Una sola pasada por el volcado: de las 30.000 subastas del reino solo
     # interesan las tuyas, pero el id maximo se calcula sobre todas, que es lo
     # que hace fiable la cota de nacimiento.
@@ -238,19 +258,6 @@ def revisar_reino(
             )
             continue
 
-        if vigilada.adelantada:
-            # El aviso de undercut te manda a repostear, asi que una subasta
-            # adelantada que desaparece la has cancelado tu. Sin esta guarda,
-            # cada aviso de undercut fabricaba una venta falsa a la hora
-            # siguiente.
-            log.info(
-                "↩️  %s de %s: ha desaparecido, pero te la estaban adelantando. "
-                "La doy por reposteada, no por vendida.",
-                vigilada.character,
-                vigilada.item_name,
-            )
-            continue
-
         if not decidir:
             # En silencio no se cierra nada: se anota la desaparicion si es la
             # primera vez y se deja para cuando toque avisar.
@@ -279,6 +286,26 @@ def revisar_reino(
             )
             continue
 
+        if vigilada.adelantada and _falta_por_hablar_el_addon(
+            vigilada, dump_at, exportado_por_pj
+        ):
+            # Que te esten adelantando NO prueba que la hayas reposteado: el
+            # aviso te manda a repostear, pero puedes no haber ido, y una
+            # subasta adelantada se vende igual. Antes esto la descartaba para
+            # siempre y se comia ventas de verdad. Ahora solo espera a que el
+            # addon tenga ocasion de decir si la cancelaste tu.
+            log.info(
+                "⏳ %s de %s: te la estaban adelantando y el addon aun no ha "
+                "vuelto a hablar. Le doy hasta las %s antes de decidir.",
+                vigilada.character,
+                vigilada.item_name,
+                (vigilada.desaparecida_at + ESPERA_TRAS_UN_ADELANTAMIENTO).strftime(
+                    "%H:%M"
+                ),
+            )
+            nuevas[auction_id] = vigilada
+            continue
+
         # Segunda pasada seguida sin aparecer y sin noticia de cancelacion.
         # Se juzga con la hora en que se fue, no con la de ahora: si no, la
         # espera empujaria la subasta mas alla de su fecha de caducidad y se
@@ -303,3 +330,31 @@ def revisar_reino(
 
     ventas.sort(key=lambda v: v.neto_copper, reverse=True)
     return ventas, nuevas, UltimoVolcado(dump_at, max_auction_id)
+
+
+def _falta_por_hablar_el_addon(
+    vigilada: SubastaVigilada,
+    dump_at: datetime,
+    exportado_por_pj: Mapping[str, int],
+) -> bool:
+    """Si todavia merece la pena esperar antes de juzgar una adelantada.
+
+    Se deja de esperar por cualquiera de los dos lados: porque el addon ya ha
+    vuelto a volcar despues de que la subasta desapareciera --y entonces ya ha
+    dicho todo lo que tenia que decir sobre tus cancelaciones-- o porque ha
+    pasado tanto rato sin volcar que esta claro que no has estado jugando.
+    """
+    if vigilada.desaparecida_at is None:
+        return False
+
+    if dump_at - vigilada.desaparecida_at >= ESPERA_TRAS_UN_ADELANTAMIENTO:
+        return False
+
+    exportado = exportado_por_pj.get(vigilada.character)
+    if exportado is None:
+        # Sin subastas suyas en el volcado no hay forma de saber cuando hablo el
+        # addon por ultima vez; solo queda esperar a que venza el plazo.
+        return True
+
+    volcado_at = datetime.fromtimestamp(exportado, tz=vigilada.desaparecida_at.tzinfo)
+    return volcado_at <= vigilada.desaparecida_at
