@@ -438,10 +438,11 @@ def run_mis_subastas(
         # Refrescar el volcado no lo devuelve, hay que volver a listarlo.
         personajes = sorted({s.character for s in de_volcado_viejo})
         log.warning(
-            "⚠️  %s subasta(s) de %s personaje(s) ya han caducado y dejo de "
-            "vigilarlas: sus datos son de hace mas de %s h, que es lo que duran "
-            "tus listados. Estaran en su buzon. Si quieres seguir vendiendo ahi, "
-            "entra y vuelve a listarlas: %s%s",
+            "⚠️  %s subasta(s) de %s personaje(s) tienen datos de hace mas de "
+            "%s h, que es lo que duran tus listados. Las que Blizzard siga "
+            "listando se vigilan igual; el resto ya habran caducado y estaran "
+            "en su buzon. Si quieres seguir vendiendo ahi, entra y vuelve a "
+            "listarlas: %s%s",
             len(de_volcado_viejo),
             len(personajes),
             config.settings.listing_hours,

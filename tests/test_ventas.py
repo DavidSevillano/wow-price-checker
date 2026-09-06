@@ -697,3 +697,70 @@ def test_olvidar_solo_afecta_a_las_senaladas():
     )
 
     assert [v.subasta.auction_id for v in ventas] == [2]
+
+
+def test_una_de_volcado_viejo_que_blizzard_sigue_viendo_no_se_suelta():
+    """El volcado del addon envejece; que Blizzard la liste, no.
+
+    Su fecha de caducidad se mantiene con el time_left que manda Blizzard, que
+    no depende del addon para nada. Soltarla igual tiraba la unica prueba buena
+    que hay: el 2026-09-06 se llevo por delante un Yelmo mistico de Ebardan
+    de 190.000 g, vendido de verdad y jamas anunciado.
+    """
+    previa = vigilada(caduca=T0 + timedelta(hours=2))
+
+    _, seguidas, _ = revisar_reino(
+        {1: previa}, [], [viva()], 1, UNA_HORA_DESPUES, None, 12, 5, olvidar={1}
+    )
+
+    assert 1 in seguidas
+
+
+def test_y_si_luego_desaparece_se_canta_como_venta():
+    """Seguirla sirve de poco si al irse no se decide nada."""
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+    _, seguidas, foto = revisar_reino(
+        {1: previa}, [], [viva()], 1, UNA_HORA_DESPUES, None, 12, 5, olvidar={1}
+    )
+
+    # Se va, y con el volcado del addon igual de viejo que antes.
+    _, seguidas, foto = revisar_reino(
+        seguidas, [], [], 1, DOS_HORAS_DESPUES, foto, 12, 5, olvidar={1}
+    )
+    ventas, _, _ = revisar_reino(
+        seguidas, [], [], 1, T0 + timedelta(hours=3), foto, 12, 5, olvidar={1}
+    )
+
+    assert len(ventas) == 1
+
+
+def test_un_id_zombi_de_volcado_viejo_se_sigue_soltando():
+    """La guarda original: lo peligroso es lo que el addon canta y Blizzard no.
+
+    Es lo que el 2026-09-02 invento dos ventas de Dbardan.
+    """
+    previa = vigilada(caduca=T0 + timedelta(hours=2))
+
+    ventas, seguidas, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5, olvidar={1}
+    )
+
+    assert ventas == []
+    assert seguidas == {}
+
+
+def test_un_zombi_que_lleva_dos_pasadas_sin_aparecer_se_suelta():
+    """La guarda tiene que aguantar aunque haya foto anterior.
+
+    Visto vivo por ultima vez hace mas de una pasada y con el volcado del addon
+    caducado: de eso no se puede afirmar nada, y afirmar de mas inventa ventas.
+    """
+    previa = vigilada(caduca=T0 + timedelta(hours=5), visto=T0)
+    foto_anterior = UltimoVolcado(UNA_HORA_DESPUES, 900)
+
+    ventas, seguidas, _ = revisar_reino(
+        {1: previa}, [], [], 1, DOS_HORAS_DESPUES, foto_anterior, 12, 5, olvidar={1}
+    )
+
+    assert ventas == []
+    assert seguidas == {}

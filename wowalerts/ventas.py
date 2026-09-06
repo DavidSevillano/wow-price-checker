@@ -179,14 +179,12 @@ def revisar_reino(
     pero no se cierra ningun caso: lo que falte se queda pendiente y se resuelve
     al despertar, con la hora en la que desaparecio de verdad.
 
-    `olvidar` son subastas que se dejan de seguir SIN veredicto, porque la
-    maquina que decia que eran tuyas lleva tanto sin exportar que ya no se puede
-    afirmar nada de ellas. Callarse pierde como mucho el aviso de una venta de
-    verdad; no callarse se inventa ventas que no han pasado, que es peor.
+    `olvidar` son subastas cuya maquina lleva tanto sin exportar que ya no se
+    puede afirmar nada de ellas. Se sueltan SIN veredicto, pero solo las que
+    Blizzard tampoco lista: si sigue viva en el volcado, es real y se sigue
+    vigilando. Lo que hay que evitar son los ids zombis --los que el addon aun
+    canta y Blizzard ya no tiene--, porque son los que se inventan ventas.
     """
-    if olvidar:
-        seguidas = {k: v for k, v in seguidas.items() if k not in olvidar}
-
     mias_por_id = {m.auction_id: m for m in mis_subastas}
 
     # Cuando volco el addon por ultima vez lo de cada personaje. Es lo que dice
@@ -209,6 +207,15 @@ def revisar_reino(
         max_auction_id = max(max_auction_id, auction_id)
         if auction_id in mias_por_id or auction_id in seguidas:
             vivas[auction_id] = str(auction.get("time_left", ""))
+
+    # Se sueltan las de volcado viejo, pero solo las que unicamente sostiene el
+    # addon. Lo que Blizzard avala se sigue vigilando: ver _la_avala_blizzard.
+    if olvidar:
+        seguidas = {
+            k: v
+            for k, v in seguidas.items()
+            if k not in olvidar or _la_avala_blizzard(v, k in vivas, anterior)
+        }
 
     nuevas: dict[int, SubastaVigilada] = {}
     for auction_id, time_left in vivas.items():
@@ -358,3 +365,30 @@ def _falta_por_hablar_el_addon(
 
     volcado_at = datetime.fromtimestamp(exportado, tz=vigilada.desaparecida_at.tzinfo)
     return volcado_at <= vigilada.desaparecida_at
+
+
+def _la_avala_blizzard(
+    vigilada: SubastaVigilada, viva_ahora: bool, anterior: UltimoVolcado | None
+) -> bool:
+    """Si de esta subasta hay algo mas que la palabra de un volcado viejo.
+
+    Lo que hay que soltar cuando el addon se queda atras son los ids zombis: los
+    que el sigue cantando y Blizzard ya no tiene. Con esos no se puede afirmar
+    nada, y afirmar de mas se inventa ventas.
+
+    Pero una subasta que Blizzard lista es real por mucho que el addon lleve
+    horas sin volcar, y su fecha de caducidad se mantiene con el time_left que
+    manda Blizzard, sin depender del addon para nada. Igual de real es la que
+    estaba viva en la pasada anterior y ahora falta: esa desaparicion es la
+    prueba que hace falta para juzgarla, y soltarla es tirarla justo cuando
+    acaba de llegar.
+
+    Sin esto, el 2026-09-06 se perdio un Yelmo mistico de Ebardan de
+    190.000 g: se vendio de verdad y nunca llego a haber veredicto.
+    """
+    if viva_ahora or vigilada.desaparecida_at is not None:
+        return True
+
+    # Sin foto anterior no se sabe si estaba viva hace una pasada, y en la duda
+    # se suelta: perder un aviso es mejor que inventarse una venta.
+    return anterior is not None and vigilada.visto_at >= anterior.dump_at

@@ -398,7 +398,7 @@ wowalerts/
   journalator.py       Lee el historial de ventas del addon Journalator
   snapshot.py          Si el volcado leido es el de esta hora
   precios.py           El precio a batir en cada reino, para la app
-tests/                 737 tests, sin tocar la red
+tests/                 741 tests, sin tocar la red
 ```
 
 Para pasar los tests:
@@ -683,6 +683,10 @@ convertiria su caducacion en una venta falsa.
   subasta que no se vende acaba desapareciendo justo ahi**, asi que el canal se
   llenaria de falsas alarmas.
 - **Las ventas de una subasta que hayas cancelado.** Ver mas abajo.
+- **Las de un personaje cuyo volcado del addon lleve mas horas sin refrescarse
+  que las que dura un listado, si ademas Blizzard ya no la lista.** De esas no
+  se puede afirmar nada. Las que Blizzard si lista se siguen vigilando: ver
+  6.4.
 - **Objetos que no esten en `config.yaml`.**
 
 ### 6.3 Los reposteos no cuentan como ventas
@@ -744,6 +748,31 @@ La espera se corta en cuanto hay respuesta, por cualquiera de los dos lados:
 
 Dos horas caben de sobra antes de que el volcado del addon se pase de las horas
 que dura un listado, que es cuando la subasta se soltaria sin veredicto.
+
+### El volcado viejo del addon no manda sobre Blizzard
+
+Si una maquina lleva sin exportar mas horas de las que dura un listado, lo que
+diga su volcado ya no vale: sus ids pueden llevar horas muertos. Eso es lo que
+el 2026-09-02 invento dos ventas de Dbardan, con la Steam Deck 16 h sin
+exportar.
+
+Pero soltar **todo** lo de esa maquina era pasarse, y costaba ventas de verdad:
+el 2026-09-06 se perdio un Yelmo mistico de Ebardan de 190.000 g, vendido y
+jamas anunciado, porque su volcado tenia 16 h y media.
+
+La antiguedad del addon no hace menos real una subasta que Blizzard sigue
+listando, y su fecha de caducidad se mantiene con el `time_left` que manda
+Blizzard, sin depender del addon para nada. Asi que se salva lo que Blizzard
+avala:
+
+- **La que sigue viva** en el volcado de Blizzard.
+- **La que estaba viva en la pasada anterior y ahora falta.** Esa desaparicion
+  es justo la prueba que hace falta para juzgarla; soltarla seria tirarla cuando
+  acaba de llegar.
+- **La que ya esta a medio juzgar**, esperando su segunda pasada.
+
+Se suelta lo que solo sostiene el addon: ids que el sigue cantando y Blizzard no
+tiene desde hace mas de una pasada. Esos son los zombis.
 
 Todo lo que se tapa queda escrito en el log de la pasada:
 
