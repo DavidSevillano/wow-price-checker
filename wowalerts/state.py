@@ -364,8 +364,15 @@ class SeguimientoVentas:
             self._seguimiento[f"{prefijo}{auction_id}"] = vigilada
         self._realms[str(realm_id)] = ultimo
 
-    def save(self) -> None:
-        corte = datetime.now(timezone.utc) - timedelta(days=self.MAX_DIAS)
+    def save(self, ahora: datetime | None = None) -> None:
+        """Vuelca el seguimiento y de paso tira lo mas viejo que MAX_DIAS.
+
+        `ahora` es desde cuando se cuentan esos dias. En produccion es la hora
+        de verdad; los tests la pasan para que el corte no dependa del dia en
+        que se ejecuten, que es lo que tumbo la suite siete dias despues de
+        fijar sus fechas.
+        """
+        corte = (ahora or datetime.now(timezone.utc)) - timedelta(days=self.MAX_DIAS)
         vivas = {
             clave: vigilada
             for clave, vigilada in self._seguimiento.items()

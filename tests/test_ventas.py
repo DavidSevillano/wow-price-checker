@@ -319,7 +319,7 @@ def test_el_seguimiento_sobrevive_a_una_ida_y_vuelta(tmp_path):
     memoria.actualizar_reino(
         1305, {1: vigilada()}, UltimoVolcado(dump_at=T0, max_auction_id=900)
     )
-    memoria.save()
+    memoria.save(ahora=T0)
 
     otra = SeguimientoVentas(path)
     assert otra.anterior(1305) == UltimoVolcado(dump_at=T0, max_auction_id=900)
@@ -333,7 +333,7 @@ def test_cada_reino_guarda_lo_suyo(tmp_path):
     memoria = SeguimientoVentas(path)
     memoria.actualizar_reino(1, {1: vigilada()}, UltimoVolcado(T0, 900))
     memoria.actualizar_reino(2, {2: vigilada(auction_id=2)}, UltimoVolcado(T0, 800))
-    memoria.save()
+    memoria.save(ahora=T0)
 
     otra = SeguimientoVentas(path)
     assert set(otra.del_reino(1)) == {1}
@@ -349,7 +349,7 @@ def test_se_olvidan_las_entradas_de_hace_mas_de_una_semana(tmp_path):
         {1: vigilada(visto=viejo), 2: vigilada(auction_id=2)},
         UltimoVolcado(T0, 900),
     )
-    memoria.save()
+    memoria.save(ahora=T0)
 
     assert set(SeguimientoVentas(path).del_reino(1)) == {2}
 
@@ -377,7 +377,7 @@ def test_los_reinos_con_seguimiento_se_saben(tmp_path):
     memoria = SeguimientoVentas(path)
     memoria.actualizar_reino(1305, {1: vigilada()}, UltimoVolcado(T0, 900))
     memoria.actualizar_reino(1378, {2: vigilada(auction_id=2)}, UltimoVolcado(T0, 800))
-    memoria.save()
+    memoria.save(ahora=T0)
 
     assert SeguimientoVentas(path).reinos_con_seguimiento() == {1305, 1378}
 
@@ -388,7 +388,7 @@ def test_un_reino_ya_resuelto_deja_de_mirarse(tmp_path):
     memoria = SeguimientoVentas(path)
     memoria.actualizar_reino(1305, {1: vigilada()}, UltimoVolcado(T0, 900))
     memoria.actualizar_reino(1305, {}, UltimoVolcado(T0, 900))
-    memoria.save()
+    memoria.save(ahora=T0)
 
     assert SeguimientoVentas(path).reinos_con_seguimiento() == set()
 
@@ -463,7 +463,7 @@ def test_la_marca_sobrevive_al_disco(tmp_path):
     memoria.actualizar_reino(
         1, {1: vigilada(adelantada=True)}, UltimoVolcado(T0, 900)
     )
-    memoria.save()
+    memoria.save(ahora=T0)
     assert SeguimientoVentas(path).del_reino(1)[1].adelantada is True
 
 
@@ -611,7 +611,7 @@ def test_la_marca_de_desaparicion_sobrevive_al_disco(tmp_path):
     memoria.actualizar_reino(
         1, {1: vigilada(desaparecida_at=T0)}, UltimoVolcado(T0, 900)
     )
-    memoria.save()
+    memoria.save(ahora=T0)
     assert SeguimientoVentas(path).del_reino(1)[1].desaparecida_at == T0
 
 
@@ -631,7 +631,7 @@ def test_el_ilvl_sobrevive_al_disco(tmp_path):
     path = tmp_path / "ventas.json"
     memoria = SeguimientoVentas(path)
     memoria.actualizar_reino(1, {1: vigilada(ilvl=298)}, UltimoVolcado(T0, 900))
-    memoria.save()
+    memoria.save(ahora=T0)
     assert SeguimientoVentas(path).del_reino(1)[1].ilvl == 298
 
 
