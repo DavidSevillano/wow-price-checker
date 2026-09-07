@@ -45,6 +45,13 @@ jobs:
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v7
+        with:
+          # Sin esto, checkout se planta en el SHA que llevaba el evento, que es
+          # la punta de main de CUANDO SE ABRIO la issue. Cuatro topes seguidos
+          # desde el movil hacen que el segundo commitee sobre una copia vieja y
+          # el push salga rechazado, aunque el grupo de concurrencia los haya
+          # puesto en fila.
+          ref: main
 
       - name: Instalar Python
         uses: actions/setup-python@v7
@@ -70,6 +77,7 @@ jobs:
           cat comentario.md
 
       - name: Commitear config.yaml
+        id: commit
         if: steps.aplicar.outputs.codigo == '0'
         env:
           # Por el entorno, como el cuerpo: el titulo tambien lo escribe quien
@@ -88,6 +96,14 @@ jobs:
           # El titulo ya viene con el prefijo "Tope:" desde las plantillas y
           # desde la app, asi que anadirlo aqui lo duplicaria.
           git commit -q -m "$TITULO"
+          # El volcado de subastas empuja a main por su cuenta y puede colarse
+          # entre el checkout y esto. Rebasar y reintentar: el cambio de tope es
+          # una linea de config.yaml, no choca con nada de lo que sube el volcado.
+          for intento in 1 2 3; do
+            git push -q && break
+            echo "Push rechazado (intento $intento). Rebaso y lo repito."
+            git pull -q --rebase origin main
+          done
           git push -q
           echo "" >> comentario.md
           echo "Commit \`$(git rev-parse --short HEAD)\` en \`main\`." >> comentario.md
@@ -103,7 +119,10 @@ jobs:
           gh issue comment "$NUMERO" --body-file comentario.md
           # Si ha ido mal, la issue se queda ABIERTA: es lo que te deja corregir
           # sin volver a empezar.
-          if [ "${{ steps.aplicar.outputs.codigo }}" = "0" ]; then
+          # Tambien se queda abierta si el cambio se aplico pero no se pudo
+          # subir: cerrarla ahi te dice que esta hecho cuando en realidad el
+          # tope se ha perdido.
+          if [ "${{ steps.aplicar.outputs.codigo }}" = "0" ] && [ "${{ steps.commit.outcome }}" = "success" ]; then
             gh issue close "$NUMERO"
           fi
 
