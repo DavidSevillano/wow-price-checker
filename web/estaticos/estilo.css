@@ -1,136 +1,278 @@
+/* ---------------------------------------------------------------------------
+   Auction Sentinel
+
+   Dos ideas mandan aqui:
+
+   1. Los colores de calidad de WoW (gris, blanco, verde, azul, morado,
+      naranja) son el codigo visual mas reconocible del juego. Sin ellos una
+      lista de objetos parece una hoja de calculo; con ellos se lee de un
+      vistazo. Se usan en el nombre y en el borde del icono, igual que en la
+      interfaz del juego.
+
+   2. El resto se aparta. Fondo tranquilo, una sola fuente, un solo acento
+      dorado, y todo el contraste reservado para los datos: el nombre del
+      objeto y el precio.
+   --------------------------------------------------------------------------- */
+
 :root {
   --ground: #EBEEF2; --surface: #FFF; --ink: #171A21;
   --muted: #5B6472; --line: #D5DAE1; --gold: #8A6410; --barato: #2C6647;
+  --fila: #F6F8FA;      /* el zebra de las tablas, apenas perceptible */
+  --sombra: 0 1px 2px rgba(23, 26, 33, .06), 0 1px 3px rgba(23, 26, 33, .04);
+
+  /* Calidad. En claro los tonos del juego se oscurecen: el verde #1eff00 y el
+     blanco son ilegibles sobre fondo claro, y el objetivo es que se distingan,
+     no clavar el hex. */
+  --q-poor: #6B7280; --q-common: #171A21; --q-uncommon: #16803C;
+  --q-rare: #0059AD; --q-epic: #7B1FA2; --q-legendary: #B45309;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --ground: #101317; --surface: #181C22; --ink: #E7EAF0;
     --muted: #99A2B1; --line: #262C35; --gold: #DFB349; --barato: #74C295;
+    --fila: #1C2129;
+    --sombra: none;
+
+    /* En oscuro si son los del juego, que es donde se disenaron. */
+    --q-poor: #9D9D9D; --q-common: #FFFFFF; --q-uncommon: #1EFF00;
+    --q-rare: #3FA0FF; --q-epic: #C77DFF; --q-legendary: #FF8000;
   }
 }
+
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--ground); color: var(--ink);
-  font: 15px/1.55 system-ui, sans-serif;
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
-/* La cabecera lleva marca, buscador y "Browse". En movil se envuelve y el
-   buscador ocupa la linea entera, que es donde se usa. */
+
+/* -- Cabecera -------------------------------------------------------------- */
+
 .nav {
   padding: 12px 24px; border-bottom: 1px solid var(--line);
+  background: var(--surface);
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  position: sticky; top: 0; z-index: 10;
 }
-.buscar { flex: 1 1 220px; margin: 0; display: flex; }
+.marca {
+  color: var(--gold); font-weight: 700; letter-spacing: .06em;
+  text-decoration: none; font-size: 13px; white-space: nowrap;
+}
+.buscar { flex: 1 1 240px; margin: 0; display: flex; max-width: 480px; }
 .buscar input {
-  width: 100%; padding: 7px 12px; border-radius: 6px; font: inherit;
-  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  width: 100%; padding: 8px 13px; border-radius: 8px; font: inherit;
+  border: 1px solid var(--line); background: var(--ground); color: var(--ink);
 }
-.buscar input:focus { outline: 2px solid var(--gold); outline-offset: -1px; }
-.nav-enlace { color: var(--muted); text-decoration: none; white-space: nowrap; }
+.buscar input::placeholder { color: var(--muted); }
+.buscar input:focus {
+  outline: none; border-color: var(--gold); background: var(--surface);
+}
+.nav-enlace {
+  color: var(--muted); text-decoration: none; white-space: nowrap;
+  font-weight: 500;
+}
 .nav-enlace:hover { color: var(--gold); }
-.marca { color: var(--gold); font-weight: 600; letter-spacing: .04em; text-decoration: none; }
-.ficha { max-width: 900px; margin: 0 auto; padding: 24px; }
-h1 { font-size: 26px; margin: 0 0 12px; }
-/* Las mismas pastillas para dos listas de enlaces cortos: los ilvl de una
-   ficha y los reinos y objetos de la portada. Comparten regla en vez de
-   copiarla porque son el mismo control, no dos que se parecen. */
-.ilvls, .pastillas { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
-.ilvl, .pastilla {
-  padding: 5px 12px; border: 1px solid var(--line); border-radius: 6px;
-  color: var(--muted); text-decoration: none; background: var(--surface);
+
+/* -- Estructura ------------------------------------------------------------ */
+
+.ficha { max-width: 940px; margin: 0 auto; padding: 28px 24px 48px; }
+h1 { font-size: 28px; line-height: 1.2; margin: 0 0 14px; letter-spacing: -.01em; }
+.miga {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  font-size: 13px; color: var(--muted); margin-bottom: 12px;
 }
-.ilvl.activo, .pastilla.activo { border-color: var(--gold); color: var(--gold); font-weight: 600; }
-.baldosas { display: flex; gap: 1px; background: var(--line); border: 1px solid var(--line); margin-bottom: 20px; flex-wrap: wrap; }
-.baldosa .et { margin: 0 0 2px; }
-.baldosa { background: var(--surface); padding: 12px 18px; flex: 1 1 140px; display: flex; flex-direction: column; }
-.et { display: block; margin: 22px 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-.val { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.val.barato { color: var(--barato); }
-/* La tabla scrollea dentro de su caja en vez de estirar la pagina: en un
-   movil de 360px las cinco columnas de la portada no caben de ninguna manera,
-   y sin esto lo que se desplazaba en horizontal era el documento entero,
-   cabecera y pie incluidos. */
-.tabla { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; background: var(--surface); }
-th, td { padding: 9px 14px; border-top: 1px solid var(--line); text-align: right; }
-th:first-child, td:first-child { text-align: left; }
-th { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-td { font-variant-numeric: tabular-nums; }
-/* Columnas de texto dentro de una tabla que por lo demas es de numeros: el
-   `text-align: right` de arriba es el correcto para precios y deja los
-   nombres pegados al borde equivocado. */
-th.txt, td.txt { text-align: left; }
-/* Los enlaces de una tabla salian con el azul y el subrayado por defecto del
-   navegador. Sobre este fondo se leen mal y no se parecen a nada mas de la
-   pagina; el subrayado se guarda para el hover, que es cuando hace falta
-   saber que eso se puede pulsar. */
-td a { color: inherit; text-decoration: none; }
-td a:hover { color: var(--gold); text-decoration: underline; }
-/* El de "See all realms" si es una llamada a la accion, y va como tal. */
-.muro a { color: var(--gold); }
-/* El porcentaje de rebaja de la portada: es la columna que se busca con la
-   vista, asi que va del mismo verde que "cheapest right now" en la ficha. */
-.pct { color: var(--barato); font-weight: 600; }
-/* El ilvl junto al nombre del objeto en la tabla de rebajas. Sin el, el mismo
-   objeto sale repetido varias veces sin que se vea que son ilvl distintos. */
+.miga a { color: var(--muted); text-decoration: none; }
+.miga a:hover { color: var(--gold); }
+.miga strong { color: var(--ink); font-weight: 600; }
+
+/* Rotulo de seccion. `display:block` con aire arriba porque la portada
+   encadena varios; dentro de una baldosa se le quita. */
+.et {
+  display: block; margin: 26px 0 9px; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .09em; color: var(--muted); font-weight: 600;
+}
+.aviso { margin: -4px 0 20px; color: var(--muted); max-width: 64ch; }
+.conteo { margin: 18px 0 10px; color: var(--muted); font-size: 13.5px; }
+.conteo strong { color: var(--ink); }
+.vacio {
+  color: var(--muted); padding: 18px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 10px; margin: 0;
+}
+
+/* -- Calidad --------------------------------------------------------------- */
+
+.q-poor      { --q: var(--q-poor); }
+.q-common    { --q: var(--q-common); }
+.q-uncommon  { --q: var(--q-uncommon); }
+.q-rare      { --q: var(--q-rare); }
+.q-epic      { --q: var(--q-epic); }
+.q-legendary { --q: var(--q-legendary); }
+
+/* -- Objeto: icono + nombre ------------------------------------------------ */
+
+.objeto {
+  display: inline-flex; align-items: center; gap: 10px;
+  color: var(--q, inherit); text-decoration: none; font-weight: 500;
+  vertical-align: middle;
+}
+.objeto:hover .objeto-n { text-decoration: underline; }
+.icono {
+  width: 32px; height: 32px; border-radius: 5px; flex: none; object-fit: cover;
+  /* El borde del color de la calidad, como los marcos del juego. */
+  border: 1px solid var(--q, var(--line));
+  background: var(--ground);
+}
+/* Hueco del mismo tamano cuando Blizzard no tiene icono, para que la columna
+   no baile de fila en fila. Va del color del borde y no del de la calidad: un
+   recuadro vacio en morado epico pesa mas que el objeto que representa. */
+.icono-vacio {
+  display: inline-block; border-color: var(--line); border-style: dashed;
+}
+.icono.grande { width: 48px; height: 48px; border-radius: 8px; border-width: 2px; }
+.titulo { display: flex; align-items: center; gap: 14px; }
+/* El nombre del objeto va del color de su calidad tambien aqui; el icono
+   hereda el mismo en su borde por la variable --q. */
+.titulo-n { color: var(--q, inherit); }
+
+/* -- Pastillas: ilvl, subcategorias, calidades, paginas -------------------- */
+
+.ilvls, .pastillas {
+  display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.ilvl, .pastilla {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--q, var(--muted)); text-decoration: none; background: var(--surface);
+  font-size: 13.5px; font-weight: 500; white-space: nowrap;
+}
+.ilvl:hover, .pastilla:hover { border-color: var(--gold); }
+.ilvl.activo, .pastilla.activo {
+  border-color: var(--gold); color: var(--gold); font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--gold);
+}
+.cuenta {
+  font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.pastilla.activo .cuenta { color: var(--gold); }
 .ilvl-et {
   color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums;
   border: 1px solid var(--line); border-radius: 4px; padding: 0 5px;
-  margin-left: 6px; white-space: nowrap;
-}
-.muro { padding: 14px; background: var(--surface); border: 1px solid var(--line); border-top: none; margin: 0; }
-/* El aviso de que no hay precio normal: se lee, pero no compite con los datos. */
-.aviso { margin: -8px 0 20px; color: var(--muted); font-size: 13px; max-width: 62ch; }
-.vacio { color: var(--muted); padding: 14px; background: var(--surface); border: 1px solid var(--line); margin: 0; }
-.pie { max-width: 900px; margin: 32px auto; padding: 0 24px; color: var(--muted); font-size: 12.5px; }
-
-/* En pantalla estrecha se cae la columna del precio normal. Es la unica
-   prescindible: el porcentaje de rebaja ya dice lo mismo en una cifra, y
-   quitarla deja que las otras cuatro entren sin scroll lateral. */
-/* En pantalla ancha el reino tiene su columna y no hace falta repetirlo. */
-.reino-movil { display: none; }
-
-@media (max-width: 560px) {
-  th.opcional, td.opcional { display: none; }
-  /* Y la del reino tambien: con el icono delante del nombre y nombres de
-     reino conectado como "Echsenkessel / Blackhand / Mal'Ganis / Taerar", las
-     cuatro columnas dejaban el % de rebaja fuera de la pantalla. El reino
-     pasa a una linea debajo del nombre, que ademas se lee mejor. */
-  th.reino-col, td.reino-col { display: none; }
-  .reino-movil {
-    display: block; color: var(--muted); font-size: 12px; margin-top: 2px;
-  }
-  .objeto { align-items: flex-start; }
-  .ficha { padding: 16px; }
-  th, td { padding: 9px 10px; }
+  margin-left: 7px; white-space: nowrap;
 }
 
-/* Los iconos de objeto, que vienen del CDN de Blizzard. El borde y el radio
-   son los de la propia interfaz del juego, y el fondo tapa el hueco mientras
-   la imagen no ha llegado: cien filas cargando a la vez daban un parpadeo de
-   agujeros blancos. */
-.icono {
-  border-radius: 4px; border: 1px solid var(--line);
-  background: var(--ground); flex: none; object-fit: cover;
-}
-.icono.grande { border-radius: 6px; }
-/* Nombre e icono van juntos y se alinean por el centro; si el nombre parte en
-   dos lineas, el icono se queda arriba y no en mitad del hueco. */
-.objeto { display: inline-flex; align-items: center; gap: 9px; vertical-align: middle; }
-.pastilla { display: inline-flex; align-items: center; gap: 7px; }
-.titulo { display: flex; align-items: center; gap: 12px; }
+/* -- El panel de filtros --------------------------------------------------- */
+/* Antes eran pastillas sueltas colgando bajo el titulo y no se leian como un
+   control: nadie las pulsaba porque nada decia que fueran filtros. Ahora es
+   una caja con su rotulo, una fila por criterio y un "Clear all". */
 
-/* El indice de categorias: rejilla de tarjetas que se adapta sola, sin media
-   queries, porque el numero de categorias lo decide Blizzard y no yo. */
+.filtros {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px 16px 4px; margin-bottom: 6px;
+  box-shadow: var(--sombra);
+}
+.filtros-cab {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px;
+}
+.filtros-t {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
+  color: var(--muted); font-weight: 700;
+}
+.limpiar { font-size: 13px; color: var(--gold); text-decoration: none; }
+.limpiar:hover { text-decoration: underline; }
+.filtro-fila {
+  display: flex; gap: 14px; align-items: baseline; margin-bottom: 10px;
+}
+.filtro-et {
+  flex: none; width: 58px; font-size: 12.5px; color: var(--muted);
+  font-weight: 600; padding-top: 6px;
+}
+.filtro-fila .pastillas { margin-bottom: 0; }
+
+/* -- Baldosas de cifras ---------------------------------------------------- */
+
+.baldosas {
+  display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px;
+}
+.baldosa {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 18px; flex: 1 1 150px; display: flex; flex-direction: column;
+  gap: 3px; box-shadow: var(--sombra);
+}
+.baldosa .et { margin: 0; }
+.val { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.val.barato { color: var(--barato); }
+
+/* -- Tablas ---------------------------------------------------------------- */
+
+.tabla {
+  overflow-x: auto; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); box-shadow: var(--sombra);
+}
+table { width: 100%; border-collapse: collapse; background: transparent; }
+th, td { padding: 10px 16px; text-align: right; }
+th:first-child, td:first-child { text-align: left; }
+th.txt, td.txt { text-align: left; }
+th {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
+  color: var(--muted); font-weight: 700; border-bottom: 1px solid var(--line);
+  background: var(--fila);
+}
+td { font-variant-numeric: tabular-nums; border-top: 1px solid var(--line); }
+tbody tr:first-child td { border-top: none; }
+tbody tr:hover { background: var(--fila); }
+.oro { font-weight: 600; }
+.pct { color: var(--barato); font-weight: 700; }
+/* Los enlaces de una tabla que no son objetos (el reino) van del color del
+   texto: el subrayado se guarda para el hover. */
+td a { color: inherit; text-decoration: none; }
+td a:hover { color: var(--gold); text-decoration: underline; }
+.muro {
+  padding: 14px 16px; color: var(--muted); margin: 0;
+  border-top: 1px solid var(--line);
+}
+.muro a { color: var(--gold); }
+
+/* -- Rejilla de categorias ------------------------------------------------- */
+
 .tarjetas {
-  display: grid; gap: 10px; margin-top: 8px;
+  display: grid; gap: 10px; margin-top: 10px;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
 }
 .tarjeta {
-  display: flex; flex-direction: column; gap: 2px; padding: 14px 16px;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
-  text-decoration: none; color: inherit;
+  display: flex; flex-direction: column; gap: 3px; padding: 15px 17px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  text-decoration: none; color: inherit; box-shadow: var(--sombra);
 }
 .tarjeta:hover { border-color: var(--gold); }
 .tarjeta-n { font-size: 16px; font-weight: 600; }
 .tarjeta .et { margin: 0; }
-.paginacion { margin-top: 18px; }
+.paginacion { margin-top: 20px; }
+
+/* -- Pie ------------------------------------------------------------------- */
+
+.pie {
+  max-width: 940px; margin: 40px auto; padding: 0 24px;
+  color: var(--muted); font-size: 12.5px;
+}
+
+/* -- Estrecho -------------------------------------------------------------- */
+
+.reino-movil { display: none; }
+
+@media (max-width: 560px) {
+  /* Se cae la columna del precio normal y la del reino: con el icono delante
+     del nombre y nombres de reino conectado como "Echsenkessel / Blackhand /
+     Mal'Ganis / Taerar", las cuatro columnas dejaban el % de rebaja fuera de
+     la pantalla. El reino pasa debajo del nombre, que se lee mejor. */
+  th.opcional, td.opcional, th.reino-col, td.reino-col { display: none; }
+  .reino-movil {
+    display: block; color: var(--muted); font-size: 12px; margin-top: 2px;
+  }
+  .objeto { align-items: flex-start; }
+  .ficha { padding: 20px 14px 36px; }
+  h1 { font-size: 23px; }
+  th, td { padding: 10px 11px; }
+  .filtro-fila { flex-direction: column; gap: 6px; }
+  .filtro-et { width: auto; padding-top: 0; }
+}

@@ -8,6 +8,7 @@ from web.consultas import (
     TOPE_CDS,
     anotar_peticion,
     buscar,
+    calidades_de,
     categorias,
     contar_categoria,
     ficha,
@@ -848,3 +849,71 @@ def test_el_buscador_solo_devuelve_lo_que_esta_en_venta(con_catalogo):
     assert "Mail Fantasma" not in {
         f["nombre"] for f in buscar(con_catalogo, "mail", limite=10)
     }
+
+
+# -- La calidad viaja con cada objeto ----------------------------------------
+#
+# En WoW el nombre de un objeto va SIEMPRE del color de su calidad: gris, blanco,
+# verde, azul, morado, naranja. Es el codigo visual mas reconocible del juego y
+# sin el una tabla de objetos parece una hoja de calculo. El dato ya estaba en
+# `atributo`; lo que faltaba era que llegara a las plantillas.
+
+
+def test_las_rebajas_traen_la_calidad(con_region):
+    fila = mejores_rebajas(con_region, 10, reinos_minimos=15)[0]
+    assert "calidad" in fila
+
+
+def test_lo_rebajado_de_un_reino_trae_la_calidad(con_catalogo):
+    fila = productos_de_reino(con_catalogo, 1, 10, 15)[0]
+    assert fila["calidad"] in {"EPIC", "RARE", "COMMON"}
+
+
+def test_un_objeto_sin_clasificar_no_desaparece_por_no_tener_calidad(tmp_path):
+    """El JOIN con `atributo` tiene que ser LEFT: un objeto recien visto todavia
+    no esta clasificado y aun asi tiene precio que ensenar.
+    """
+    c = abrir(tmp_path / "sc.db")
+    guardar_reinos(c, {i: f"Reino {i}" for i in range(1, 21)})
+    guardar_nombres(c, [(TIPO_OBJETO, 1, "en", "Sin clasificar", None)])
+    volcar(
+        c,
+        {Clave(TIPO_OBJETO, 1, 305): {
+            1: resumen(10_000), **{i: resumen(100_000) for i in range(2, 21)}
+        }},
+        generado_en=1,
+    )
+    recalcular_estadisticas(c)
+
+    filas = mejores_rebajas(c, 10, reinos_minimos=15)
+    assert [f["nombre"] for f in filas] == ["Sin clasificar"]
+    assert filas[0]["calidad"] is None
+
+
+def test_se_puede_filtrar_una_categoria_por_calidad(con_catalogo):
+    filas = productos_de_categoria(con_catalogo, "armor", calidad="RARE", limite=10)
+    assert [f["nombre"] for f in filas] == ["Mail Helm"]
+
+
+def test_las_calidades_de_una_categoria_se_saben(con_catalogo):
+    """Para pintar el filtro hace falta saber que calidades HAY, no las seis
+    posibles: una categoria sin nada epico no debe ofrecer ese boton."""
+    cals = calidades_de(con_catalogo, "armor")
+    assert [c["calidad"] for c in cals] == ["EPIC", "RARE"]
+    assert cals[0]["objetos"] == 2
+
+
+def test_las_calidades_salen_de_mejor_a_peor(con_catalogo):
+    """Como en el juego: primero lo bueno."""
+    cals = [c["calidad"] for c in calidades_de(con_catalogo, "weapon")]
+    assert cals == ["EPIC"]
+
+
+def test_la_ficha_trae_la_calidad(con_catalogo):
+    """El titulo de la ficha va del color de su calidad, como en el juego."""
+    assert ficha(con_catalogo, TIPO_OBJETO, 1)["calidad"] == "EPIC"
+
+
+def test_una_ficha_sin_clasificar_no_revienta(con):
+    """El fixture `con` no tiene tabla `atributo` poblada."""
+    assert ficha(con, TIPO_OBJETO, 271440)["calidad"] is None

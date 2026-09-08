@@ -6,11 +6,11 @@ EU realms. Updated hourly.{% endblock %}
 
 {% block contenido %}
 <main class="ficha">
-  <h1 class="titulo">
+  <h1 class="titulo{% if ficha.calidad %} q-{{ ficha.calidad | lower }}{% endif %}">
     {%- if ficha.icono %}
-    <img class="icono grande" src="{{ ficha.icono }}" alt="" width="44" height="44">
+    <img class="icono grande" src="{{ ficha.icono }}" alt="" width="48" height="48">
     {%- endif %}
-    {{ ficha.nombre }}
+    <span class="titulo-n">{{ ficha.nombre }}</span>
   </h1>
 
   <nav class="ilvls">

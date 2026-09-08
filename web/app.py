@@ -20,6 +20,7 @@ from web.consultas import (
     REINOS_GRATIS,
     anotar_peticion,
     buscar,
+    calidades_de,
     categorias,
     contar_categoria,
     ficha,
@@ -79,6 +80,21 @@ def _fecha(epoch: Optional[int]) -> Optional[str]:
         return None
     d = datetime.fromtimestamp(epoch, timezone.utc)
     return f"{d.day} {_MESES[d.month - 1]} {d.year}, {d:%H:%M} UTC"
+
+
+def _query(pagina: int, cola: str) -> str:
+    """El `?p=...&quality=...` de un enlace, con solo lo que haga falta.
+
+    La pagina 1 no lleva `p`: si lo llevara, la misma lista tendria dos URLs
+    (`/items/armor` y `/items/armor?p=1`) y volveriamos a tener duplicados,
+    que es lo que el canonical acaba de arreglar.
+    """
+    partes = []
+    if pagina > 1:
+        partes.append(f"p={pagina}")
+    if cola:
+        partes.append(cola)
+    return "?" + "&".join(partes) if partes else ""
 
 
 def _ventana(pagina: int, paginas: int, ancho: int = 7) -> list[int]:
@@ -313,7 +329,11 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
     @app.get("/items/{clase}", response_class=HTMLResponse)
     @app.get("/items/{clase}/{subclase}", response_class=HTMLResponse)
     def pagina_categoria(
-        request: Request, clase: str, subclase: Optional[str] = None, p: int = 1
+        request: Request,
+        clase: str,
+        subclase: Optional[str] = None,
+        p: int = 1,
+        quality: Optional[str] = None,
     ):
         con = conexion()
         try:
@@ -323,7 +343,14 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
             if subclase and subclase not in {s["subclase_slug"] for s in subs}:
                 raise HTTPException(status_code=404, detail="Subcategory not found")
 
-            total = contar_categoria(con, clase, subclase)
+            cals = calidades_de(con, clase, subclase)
+            # Una calidad que no existe aqui es 404 y no una lista vacia: por
+            # el mismo motivo que una pagina fuera de rango, y porque
+            # `?quality=` es una URL que se puede teclear y compartir.
+            if quality and quality not in {c["calidad"] for c in cals}:
+                raise HTTPException(status_code=404, detail="Quality not found")
+
+            total = contar_categoria(con, clase, subclase, quality)
             paginas = max(1, -(-total // POR_PAGINA))
             # Una pagina fuera de rango es un 404 y no una tabla vacia: si no,
             # hay infinitas URLs que un rastreador se dedica a pedir.
@@ -331,7 +358,8 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
                 raise HTTPException(status_code=404, detail="Page not found")
 
             productos = productos_de_categoria(
-                con, clase, subclase, limite=POR_PAGINA, desde=(p - 1) * POR_PAGINA
+                con, clase, subclase, quality,
+                limite=POR_PAGINA, desde=(p - 1) * POR_PAGINA,
             )
             nombre_clase = next(
                 (s["subclase"] for s in subs if s["subclase_slug"] == subclase), None
@@ -340,6 +368,9 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
             con.close()
 
         base_url = f"/items/{clase}" + (f"/{subclase}" if subclase else "")
+        # La calidad viaja en todos los enlaces de paginacion: pasar de pagina
+        # no puede perder el filtro que el visitante acaba de poner.
+        cola = f"quality={quality}" if quality else ""
         return plantillas.TemplateResponse(
             request=request,
             name="categoria.html",
@@ -348,7 +379,12 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
                 # son objetos distintos, no duplicados. Si apuntara a la 1,
                 # Google descartaria su contenido y el catalogo volveria a
                 # quedarse sin enlazar, que es justo lo que esto arregla.
-                "canonical": base_url + (f"?p={p}" if p > 1 else ""),
+                "canonical": base_url + _query(p, cola),
+                # Una funcion y no una lista de URLs ya hechas: la plantilla
+                # pinta hasta siete enlaces de pagina y cada uno necesita
+                # arrastrar el filtro que haya puesto.
+                "enlace": lambda n: _query(n, cola),
+                "clase_nombre": clase.replace("-", " ").title(),
                 "titulo": nombre_clase or clase.replace("-", " ").title(),
                 "clase_slug": clase,
                 "subclase": subclase,
@@ -359,6 +395,9 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
                 "paginas": paginas,
                 "ventana": _ventana(p, paginas),
                 "base_url": base_url,
+                "cola": cola,
+                "calidades": cals,
+                "calidad": quality,
             },
         )
 

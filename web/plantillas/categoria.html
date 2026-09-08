@@ -1,31 +1,69 @@
 {% extends "base.html" %}
 
-{% block titulo %}{{ titulo }} — EU auction house prices{% endblock %}
+{% block titulo %}{{ titulo }}{% if calidad %} — {{ calidad | capitalize }}{% endif %} — EU auction house prices{% endblock %}
 {% block descripcion %}Every {{ titulo }} item on the EU auction house and what
 it costs across all 92 realms. Updated hourly.{% endblock %}
 
 {% block contenido %}
 <main class="ficha">
-  <h1>{{ titulo }}</h1>
-  <p class="aviso">
-    {{ "{:,}".format(total) }} items.
-    {%- if paginas > 1 %} Page {{ pagina }} of {{ paginas }}.{% endif %}
-  </p>
+  <nav class="miga">
+    <a href="/items">All items</a>
+    <span>/</span>
+    {% if subclase %}<a href="/items/{{ clase_slug }}">{{ clase_nombre }}</a>
+    <span>/</span>{% endif %}
+    <strong>{{ titulo }}</strong>
+  </nav>
 
-  {# Las subcategorias son los mismos desplegables de la casa de subastas, pero
-     como enlaces: un desplegable no lo abre ningun rastreador. #}
-  {% if subcategorias %}
-  <div class="pastillas">
-    <a class="pastilla {% if not subclase %}activo{% endif %}"
-       href="/items/{{ clase_slug }}">All</a>
-    {% for s in subcategorias %}
-    <a class="pastilla {% if s.subclase_slug == subclase %}activo{% endif %}"
-       href="/items/{{ clase_slug }}/{{ s.subclase_slug }}">
-      {{ s.subclase }} <span class="ilvl-et">{{ s.objetos }}</span>
-    </a>
-    {% endfor %}
-  </div>
-  {% endif %}
+  <h1>{{ titulo }}</h1>
+
+  {# Un panel con su titulo y sus dos filas etiquetadas. Antes eran pastillas
+     sueltas colgando bajo el h1 y no se leian como un control: nadie las
+     pulsaba porque nada decia que fueran filtros. #}
+  <section class="filtros" aria-label="Filters">
+    <div class="filtros-cab">
+      <span class="filtros-t">Filters</span>
+      {% if subclase or calidad %}
+      <a class="limpiar" href="/items/{{ clase_slug }}">Clear all</a>
+      {% endif %}
+    </div>
+
+    {% if subcategorias %}
+    <div class="filtro-fila">
+      <span class="filtro-et">Type</span>
+      <div class="pastillas">
+        <a class="pastilla {% if not subclase %}activo{% endif %}"
+           href="/items/{{ clase_slug }}{{ '?' ~ cola if cola }}">All</a>
+        {% for s in subcategorias %}
+        <a class="pastilla {% if s.subclase_slug == subclase %}activo{% endif %}"
+           href="/items/{{ clase_slug }}/{{ s.subclase_slug }}{{ '?' ~ cola if cola }}">
+          {{ s.subclase }} <span class="cuenta">{{ "{:,}".format(s.objetos) }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if calidades %}
+    <div class="filtro-fila">
+      <span class="filtro-et">Quality</span>
+      <div class="pastillas">
+        <a class="pastilla {% if not calidad %}activo{% endif %}"
+           href="{{ base_url }}">All</a>
+        {% for c in calidades %}
+        <a class="pastilla q-{{ c.calidad | lower }} {% if c.calidad == calidad %}activo{% endif %}"
+           href="{{ base_url }}?quality={{ c.calidad }}">
+          {{ c.calidad | capitalize }} <span class="cuenta">{{ "{:,}".format(c.objetos) }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </section>
+
+  <p class="conteo">
+    <strong>{{ "{:,}".format(total) }}</strong> item{{ "" if total == 1 else "s" }}
+    {%- if paginas > 1 %} · page {{ pagina }} of {{ paginas }}{% endif %}
+  </p>
 
   <div class="tabla">
   <table>
@@ -36,11 +74,12 @@ it costs across all 92 realms. Updated hourly.{% endblock %}
       {% for p in productos %}
       <tr>
         <td class="txt">
-          {% set producto_id, nombre, icono, variante, reino = p.producto_id, p.nombre, p.icono, -1, None %}
+          {% set producto_id, nombre, icono, variante, reino, calidad_obj = p.producto_id, p.nombre, p.icono, -1, None, p.calidad %}
+          {% set calidad = calidad_obj %}
           {% include "_objeto.html" with context %}
         </td>
         <td class="txt opcional">{{ p.subclase }}</td>
-        <td>{{ p.desde | oro }}g</td>
+        <td class="oro">{{ p.desde | oro }}g</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -50,12 +89,12 @@ it costs across all 92 realms. Updated hourly.{% endblock %}
   {# La paginacion es lo que de verdad enlaza el catalogo: sin estos enlaces
      Google solo ve los primeros cien objetos de cada categoria. #}
   {% if paginas > 1 %}
-  <nav class="pastillas paginacion">
+  <nav class="pastillas paginacion" aria-label="Pages">
     {% for n in ventana %}
       {% if n == pagina %}
       <span class="pastilla activo">{{ n }}</span>
       {% else %}
-      <a class="pastilla" href="{{ base_url }}{% if n > 1 %}?p={{ n }}{% endif %}">{{ n }}</a>
+      <a class="pastilla" href="{{ base_url }}{{ enlace(n) }}">{{ n }}</a>
       {% endif %}
     {% endfor %}
   </nav>

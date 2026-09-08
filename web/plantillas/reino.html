@@ -18,7 +18,7 @@ compared with the rest of the EU realms. Updated hourly.{% endblock %}
       {% for p in productos %}
       <tr>
         <td class="txt">
-          {% set producto_id, nombre, icono, variante, reino = p.producto_id, p.nombre, p.icono, p.variante, None %}
+          {% set producto_id, nombre, icono, variante, reino, calidad = p.producto_id, p.nombre, p.icono, p.variante, None, p.calidad %}
           {% include "_objeto.html" with context %}
         </td>
         <td class="opcional">{{ p.mediana | oro }}g</td>

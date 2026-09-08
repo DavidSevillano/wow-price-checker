@@ -45,7 +45,7 @@ hourly.{% endblock %}
     </thead>
     <tbody>
       {% for r in rebajas %}
-      {% set producto_id, nombre, icono, variante, reino = r.producto_id, r.nombre, r.icono, r.variante, r.reino %}
+      {% set producto_id, nombre, icono, variante, reino, calidad = r.producto_id, r.nombre, r.icono, r.variante, r.reino, r.calidad %}
       <tr>
         <td class="txt">
           {% include "_objeto.html" with context %}

@@ -16,7 +16,7 @@
       {% for p in productos %}
       <tr>
         <td class="txt">
-          {% set producto_id, nombre, icono, variante, reino = p.producto_id, p.nombre, p.icono, -1, None %}
+          {% set producto_id, nombre, icono, variante, reino, calidad = p.producto_id, p.nombre, p.icono, -1, None, p.calidad %}
           {% include "_objeto.html" with context %}
         </td>
         <td>{{ p.desde | oro }}g</td>

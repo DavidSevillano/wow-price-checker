@@ -110,11 +110,21 @@ def ficha(
     # transacción): mejor una ficha sin fecha que un 500 para quien la ve.
     volcado = con.execute("SELECT generado_en FROM volcado").fetchone()
 
+    # La calidad va aparte de `nombre` porque no es del idioma: sale de
+    # `atributo`, que tiene una fila por producto. Puede no estar todavia (un
+    # objeto recien visto se clasifica en una pasada posterior), y entonces el
+    # titulo va del color del texto normal.
+    clasificacion = con.execute(
+        "SELECT calidad FROM atributo WHERE tipo = ? AND producto_id = ?",
+        (tipo, producto_id),
+    ).fetchone()
+
     return {
         "tipo": tipo,
         "producto_id": producto_id,
         "nombre": fila["nombre"] if fila else f"#{producto_id}",
         "icono": fila["icono"] if fila else None,
+        "calidad": clasificacion["calidad"] if clasificacion else None,
         "variantes": variantes,
         "generado_en": volcado[0] if volcado else None,
     }
@@ -227,8 +237,8 @@ def productos_de_reino(
     return [
         dict(fila)
         for fila in con.execute(
-            "SELECT n.nombre, n.icono, p.producto_id, p.variante, p.minimo, "
-            "       e.mediana "
+            "SELECT n.nombre, n.icono, a.calidad, p.producto_id, p.variante, "
+            "       p.minimo, e.mediana "
             "  FROM precio p "
             "  JOIN estadistica e ON e.tipo = p.tipo "
             "                    AND e.producto_id = p.producto_id "
@@ -236,6 +246,8 @@ def productos_de_reino(
             "  JOIN nombre n ON n.tipo = p.tipo "
             "                AND n.producto_id = p.producto_id "
             "                AND n.idioma = ? "
+            "  LEFT JOIN atributo a ON a.tipo = p.tipo "
+            "                     AND a.producto_id = p.producto_id "
             " WHERE p.reino_id = ? AND e.reinos >= ? AND p.minimo < e.mediana "
             "   AND e.mediana < ? "
             "   AND CAST(p.minimo AS REAL) / e.mediana >= ? "
@@ -381,8 +393,8 @@ def mejores_rebajas(
     vistos: set[int] = set()
     filas: list[dict[str, Any]] = []
     for fila in con.execute(
-        "SELECT n.nombre, n.icono, p.producto_id, p.variante, p.minimo, "
-        "       e.mediana, r.nombre AS reino, r.slug "
+        "SELECT n.nombre, n.icono, a.calidad, p.producto_id, p.variante, "
+        "       p.minimo, e.mediana, r.nombre AS reino, r.slug "
         "  FROM precio p "
         "  JOIN estadistica e ON e.tipo = p.tipo "
         "                    AND e.producto_id = p.producto_id "
@@ -391,6 +403,8 @@ def mejores_rebajas(
         "  JOIN nombre n ON n.tipo = p.tipo "
         "                AND n.producto_id = p.producto_id "
         "                AND n.idioma = ? "
+        "  LEFT JOIN atributo a ON a.tipo = p.tipo "
+        "                     AND a.producto_id = p.producto_id "
         " WHERE e.reinos >= ? "
         "   AND p.minimo < e.mediana "
         "   AND e.mediana < ? "
@@ -601,15 +615,51 @@ def buscar(
     return [
         dict(fila)
         for fila in con.execute(
-            "SELECT n.producto_id, n.nombre, n.icono, "
+            "SELECT n.producto_id, n.nombre, n.icono, a.calidad, "
             "       MIN(e.minimo) AS desde "
             "  FROM nombre n "
             "  JOIN estadistica e ON e.tipo = n.tipo "
             "                    AND e.producto_id = n.producto_id "
+            "  LEFT JOIN atributo a ON a.tipo = n.tipo "
+            "                     AND a.producto_id = n.producto_id "
             " WHERE n.idioma = ? AND n.nombre LIKE ? ESCAPE '!' "
-            " GROUP BY n.producto_id, n.nombre, n.icono "
+            " GROUP BY n.producto_id, n.nombre, n.icono, a.calidad "
             " ORDER BY length(n.nombre), n.nombre "
             " LIMIT ?",
             (idioma, patron, limite),
         )
     ]
+
+
+# El orden del juego: primero lo bueno. Un ORDER BY alfabetico pondria COMMON
+# antes que EPIC, que no es como lo lee nadie que juegue.
+ORDEN_CALIDAD = ("LEGENDARY", "EPIC", "RARE", "UNCOMMON", "COMMON", "POOR")
+
+
+def calidades_de(
+    con: sqlite3.Connection,
+    clase_slug: str,
+    subclase_slug: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Que calidades hay en esta categoria y cuantos objetos de cada una.
+
+    Las que HAY y no las seis posibles: un filtro que ofrece "Epic" en una
+    categoria sin nada epico lleva a una lista vacia, y eso se siente como un
+    fallo de la web y no como un dato del mercado.
+    """
+    where, args = _filtro_categoria(clase_slug, subclase_slug, None)
+    filas = [
+        dict(fila)
+        for fila in con.execute(
+            "SELECT a.calidad, count(DISTINCT a.producto_id) AS objetos "
+            "  FROM atributo a "
+            "  JOIN estadistica e ON e.tipo = a.tipo "
+            "                    AND e.producto_id = a.producto_id "
+            + where
+            + "   AND a.calidad IS NOT NULL "
+            " GROUP BY a.calidad",
+            args,
+        )
+    ]
+    orden = {c: i for i, c in enumerate(ORDEN_CALIDAD)}
+    return sorted(filas, key=lambda f: orden.get(f["calidad"], 99))

@@ -286,6 +286,15 @@ def ruta_grande(tmp_path):
             (TIPO_OBJETO, 100, "en", "Cosa a su precio", None),
         ],
     )
+    guardar_atributos(
+        con,
+        [
+            {"tipo": TIPO_OBJETO, "producto_id": 271440, "clase_id": 4,
+             "clase": "Armor", "subclase_id": 3, "subclase": "Mail",
+             "calidad": "EPIC", "hueco": "FEET", "nivel": 219,
+             "nivel_requerido": 90},
+        ],
+    )
     volcar(
         con,
         {
@@ -703,3 +712,75 @@ def test_una_ficha_sin_icono_no_deja_una_tarjeta_con_imagen_vacia(cliente_catalo
 
 def test_hay_tarjeta_de_twitter(cliente_grande):
     assert 'name="twitter:card"' in cliente_grande.get("/item/271440").text
+
+
+# -- Los filtros, visibles ---------------------------------------------------
+
+
+def test_una_categoria_se_puede_filtrar_por_calidad(cliente_catalogo):
+    texto = cliente_catalogo.get("/items/armor?quality=RARE").text
+    assert "Mail Helm" in texto
+    assert "Mail Boots" not in texto
+
+
+def test_el_filtro_de_calidad_se_ofrece_con_lo_que_hay(cliente_catalogo):
+    """Ofrecer "Legendary" donde no hay ninguno lleva a una lista vacia, y eso
+    se siente como un fallo de la web, no como un dato del mercado."""
+    texto = cliente_catalogo.get("/items/armor").text
+    assert "Epic" in texto and "Rare" in texto
+    assert "Legendary" not in texto
+
+
+def test_una_calidad_que_no_existe_ahi_da_404(cliente_catalogo):
+    assert cliente_catalogo.get("/items/armor?quality=LEGENDARY").status_code == 404
+    assert cliente_catalogo.get("/items/armor?quality=INVENTADA").status_code == 404
+
+
+def test_el_filtro_de_calidad_sobrevive_a_la_paginacion(cliente_catalogo, monkeypatch):
+    """Pasar de pagina no puede perder el filtro puesto."""
+    import web.app
+
+    monkeypatch.setattr(web.app, "POR_PAGINA", 1)
+    texto = cliente_catalogo.get("/items/armor?quality=EPIC").text
+    # `&amp;` y no `&`: Jinja escapa el enlace, que es lo correcto en HTML.
+    assert "?p=2&amp;quality=EPIC" in texto
+
+
+def test_filtrar_por_calidad_es_su_propia_canonical(cliente_catalogo):
+    html = cliente_catalogo.get("/items/armor?quality=EPIC").text
+    assert 'canonical" href="https://auctionsentinel.example/items/armor?quality=EPIC"' in html
+
+
+def test_se_ve_que_los_filtros_son_filtros(cliente_catalogo):
+    """Antes eran pastillas sueltas sin etiqueta: no se leian como un control."""
+    texto = cliente_catalogo.get("/items/armor").text
+    assert "filtros" in texto or "Type" in texto
+    assert "Quality" in texto
+
+
+def test_hay_como_quitar_los_filtros(cliente_catalogo):
+    texto = cliente_catalogo.get("/items/armor/mail?quality=EPIC").text
+    assert 'href="/items/armor"' in texto
+
+
+# -- La calidad se ve en el color -------------------------------------------
+
+
+def test_el_nombre_va_de_la_clase_de_su_calidad(cliente_catalogo):
+    texto = cliente_catalogo.get("/items/armor").text
+    assert "q-epic" in texto and "q-rare" in texto
+
+
+def test_la_portada_tambien_colorea(cliente_grande):
+    """Consistencia: el mismo objeto no puede ir de un color en una pagina y
+    de otro en la siguiente."""
+    assert "q-" in cliente_grande.get("/").text
+
+
+def test_un_objeto_sin_calidad_no_deja_una_clase_rota(cliente_grande):
+    assert 'class="objeto q-None"' not in cliente_grande.get("/").text
+    assert 'q-"' not in cliente_grande.get("/").text
+
+
+def test_la_ficha_colorea_su_titulo(cliente_catalogo):
+    assert 'class="titulo q-epic"' in cliente_catalogo.get("/item/1").text
