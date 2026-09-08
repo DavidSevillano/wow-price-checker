@@ -9,20 +9,22 @@ compared with the rest of the EU realms. Updated hourly.{% endblock %}
   <h1>{{ reino.nombre }}</h1>
   <p class="et">Going for less here than they normally do</p>
   {% if productos %}
+  <div class="tabla">
   <table>
     <thead>
-      <tr><th>Item</th><th>Normally</th><th>Here</th></tr>
+      <tr><th class="txt">Item</th><th class="opcional">Normally</th><th>Here</th></tr>
     </thead>
     <tbody>
       {% for p in productos %}
       <tr>
         <td><a href="/item/{{ p.producto_id }}">{{ p.nombre or "#" ~ p.producto_id }}</a></td>
-        <td>{{ p.mediana | oro }}g</td>
+        <td class="opcional">{{ p.mediana | oro }}g</td>
         <td>{{ p.minimo | oro }}g</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <!-- Estado vacío: sin esto la tabla salía con cabeceras y cero filas bajo
        un titular que promete rebajas, y esta página va en el sitemap, así

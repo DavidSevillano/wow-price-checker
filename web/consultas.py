@@ -29,6 +29,17 @@ REINOS_GRATIS = 5
 # y por la misma razón: no comparar contra una mediana que no significa nada.
 REINOS_PARA_MEDIANA = 5
 
+# Cuántos reinos hacen falta para que "está rebajado respecto a lo normal"
+# signifique algo. Es un listón más alto que `REINOS_PARA_MEDIANA` porque aquí
+# la mediana no se enseña, se usa para ordenar: una mediana floja no confunde
+# a nadie, pero sí llena la portada y la página de reino de productos que solo
+# existen en cuatro sitios y cuya "rebaja" es ruido.
+#
+# El valor es el de producción, con 92 reinos en la región. Se pasa como
+# parámetro y no se lee dentro de las consultas para que los tests con una
+# región de juguete puedan bajarlo sin tocar el criterio real.
+REINOS_PARA_COMPARAR = 15
+
 IDIOMA_POR_DEFECTO = "en"
 
 
@@ -151,7 +162,7 @@ def productos_de_reino(
     con: sqlite3.Connection,
     reino_id: int,
     limite: int,
-    reinos_minimos: int = 15,
+    reinos_minimos: int = REINOS_PARA_COMPARAR,
 ) -> list[dict[str, Any]]:
     """Lo más rebajado del reino: donde más se separa del precio normal.
 
@@ -161,10 +172,8 @@ def productos_de_reino(
 
     Se exige `e.reinos >= reinos_minimos` para no llenar la página de
     productos que solo existen en un puñado de reinos, donde la mediana no
-    significa nada. El valor por defecto (15) es el de producción, con 92
-    reinos en la región; `reinos_minimos` es un parámetro y no una constante
-    interna para que los tests con una región de juguete (10 reinos en la
-    fixture) puedan bajarlo sin tocar el criterio real.
+    significa nada: ver `REINOS_PARA_COMPARAR`, que es el mismo listón que
+    usa `mejores_rebajas` para la portada.
 
     Coste medido en producción (92 reinos, 20.144 productos, 787.880 filas en
     `precio`): ~27 ms por vista de página de reino, frente a ~0,028 ms de las
@@ -212,3 +221,130 @@ def paginas_mas_pedidas(con: sqlite3.Connection, limite: int) -> list[dict[str, 
             (limite,),
         )
     ]
+
+
+def reinos_publicados(con: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Los reinos que cubre el sitio, en orden alfabético.
+
+    La usan la portada, para enseñarlos, y el sitemap, para anunciarlos. Es la
+    misma lista y sale de un solo sitio: dos SELECT parecidos en dos ficheros
+    se separan en cuanto uno de los dos aprenda a filtrar algo.
+
+    Alfabético y no por id porque la portada es una lista para buscar el reino
+    propio, no un ranking: el id de reino conectado no significa nada para
+    quien lee.
+    """
+    return [
+        dict(fila)
+        for fila in con.execute("SELECT nombre, slug FROM reino ORDER BY nombre")
+    ]
+
+
+def productos_mas_vistos(
+    con: sqlite3.Connection, limite: int, idioma: str = IDIOMA_POR_DEFECTO
+) -> list[dict[str, Any]]:
+    """Los productos más pedidos, con su nombre, para enlazar desde la portada.
+
+    Es `paginas_mas_pedidas` con el nombre puesto y con un filtro más: al
+    sitemap le basta el id, pero una lista de enlaces necesita algo que leer y,
+    sobre todo, no puede llevar a un 404.
+
+    Ese es el `EXISTS`: `pagina` es un histórico y no se poda nunca --es de
+    donde sale qué páginas existen de verdad--, mientras que `estadistica` se
+    reescribe entera en cada pasada. Un objeto que Blizzard retire, o que
+    simplemente deje de tener subastas en toda la región, se queda en `pagina`
+    con sus peticiones intactas mientras su ficha ya responde 404. Enlazarlo
+    desde la portada sería mandar a los rastreadores justo a donde no hay nada.
+
+    El `EXISTS` y no un JOIN contra `estadistica` porque ahí hay una fila por
+    ilvl: las Grebas tienen ocho variantes y saldrían ocho veces en la lista.
+
+    `limite` es obligatorio, igual que en `paginas_mas_pedidas` y por lo mismo.
+    """
+    return [
+        dict(fila)
+        for fila in con.execute(
+            "SELECT g.tipo, g.producto_id, n.nombre, g.peticiones "
+            "  FROM pagina g "
+            "  LEFT JOIN nombre n ON n.tipo = g.tipo "
+            "                    AND n.producto_id = g.producto_id "
+            "                    AND n.idioma = ? "
+            " WHERE EXISTS (SELECT 1 FROM estadistica e "
+            "                WHERE e.tipo = g.tipo "
+            "                  AND e.producto_id = g.producto_id) "
+            " ORDER BY g.peticiones DESC, g.producto_id "
+            " LIMIT ?",
+            (idioma, limite),
+        )
+    ]
+
+
+def mejores_rebajas(
+    con: sqlite3.Connection,
+    limite: int,
+    reinos_minimos: int = REINOS_PARA_COMPARAR,
+    idioma: str = IDIOMA_POR_DEFECTO,
+) -> list[dict[str, Any]]:
+    """Lo más rebajado de toda la región, venga del reino que venga.
+
+    Es la hermana de `productos_de_reino` con la pregunta al revés: allí es
+    "qué está barato en MI reino" y aquí "dónde hay una ganga ahora mismo".
+    Por eso cada fila trae su reino y su slug: sin eso la cifra no sirve de
+    nada, porque no dice adónde ir a comprarlo.
+
+    El corte es `<` y no `<=`: un reino que clava el precio normal no está
+    rebajado, y con noventa y dos reinos los empates en la mediana son
+    muchos.
+
+    **Es cara: 271 ms medidos sobre 932.000 filas de `precio`**, contra los
+    ~23 ms de la página de reino, porque aquí no hay un `reino_id` que recorte
+    el escaneo y el `ORDER BY` se resuelve con un b-tree temporal sobre todo
+    lo que pasa el filtro. Quien la llame en una ruta tiene que cachearla; la
+    portada lo hace contra `volcado.generado_en`.
+    """
+    filas = []
+    for fila in con.execute(
+        "SELECT n.nombre, p.producto_id, p.variante, p.minimo, e.mediana, "
+        "       r.nombre AS reino, r.slug "
+        "  FROM precio p "
+        "  JOIN estadistica e ON e.tipo = p.tipo "
+        "                    AND e.producto_id = p.producto_id "
+        "                    AND e.variante = p.variante "
+        "  JOIN reino r ON r.id = p.reino_id "
+        "  LEFT JOIN nombre n ON n.tipo = p.tipo "
+        "                    AND n.producto_id = p.producto_id "
+        "                    AND n.idioma = ? "
+        " WHERE e.reinos >= ? AND p.minimo < e.mediana "
+        " ORDER BY CAST(p.minimo AS REAL) / e.mediana "
+        " LIMIT ?",
+        (idioma, reinos_minimos, limite),
+    ):
+        rebaja = dict(fila)
+        # El porcentaje se calcula aquí y no en la plantilla por lo mismo que
+        # `mediana_fiable`: una cuenta escrita en Jinja no la cubre un test.
+        rebaja["descuento"] = round((1 - rebaja["minimo"] / rebaja["mediana"]) * 100)
+        filas.append(rebaja)
+    return filas
+
+
+def resumen_del_catalogo(con: sqlite3.Connection) -> dict[str, Any]:
+    """Cuánto cubre el sitio y de cuándo son los datos, para la portada.
+
+    `COUNT(DISTINCT producto_id)` y no `COUNT(*)`: en `estadistica` hay una
+    fila por ilvl, así que las Grebas con sus ocho variantes contarían como
+    ocho objetos. Son uno.
+
+    `generado_en` sale a None con la base recién creada, que es el estado
+    normal hasta que termina la primera pasada; la portada lo dibuja como
+    "todavía no hay datos" en vez de inventarse una fecha.
+    """
+    productos = con.execute(
+        "SELECT count(DISTINCT producto_id) FROM estadistica"
+    ).fetchone()[0]
+    reinos = con.execute("SELECT count(*) FROM reino").fetchone()[0]
+    volcado = con.execute("SELECT generado_en FROM volcado").fetchone()
+    return {
+        "productos": productos,
+        "reinos": reinos,
+        "generado_en": volcado[0] if volcado else None,
+    }

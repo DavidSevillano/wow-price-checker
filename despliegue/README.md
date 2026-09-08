@@ -178,7 +178,7 @@ systemctl list-timers publicar-web.timer
 La web ya deberia responder en local:
 
 ```bash
-curl -I http://127.0.0.1:8000/realm/tarren-mill   # cambia el slug por uno real de tu base
+curl -I http://127.0.0.1:8000/                    # la portada, que no depende de tu base
 ```
 
 ## 6. nginx y certbot
@@ -238,11 +238,12 @@ curl -I https://tudominio.example/sitemap.xml
 ```
 
 `Active: active (running)` y un `200` quieren decir que uvicorn esta arriba
-—`/sitemap.xml` es la unica ruta que siempre existe sin depender de que
-sepas el slug de un reino o el id de un producto de tu base; deberia venir
-ademas con `Cache-Control: public, max-age=3600`, que es la que pone
-`web/app.py`. (La raiz `/` no esta definida en la app y da 404 aunque todo
-vaya bien: no es la ruta a comprobar.)
+—`/`, `/robots.txt` y `/sitemap.xml` son las tres rutas que existen siempre,
+sin depender de que sepas el slug de un reino o el id de un producto de tu
+base. Las dos de los rastreadores (`/robots.txt` y `/sitemap.xml`) deberian
+venir ademas con `Cache-Control: public, max-age=3600`, que es la que pone
+`web/app.py`; la portada no lleva cabecera de cache, igual que el resto de
+paginas HTML.
 Si `systemctl status` muestra reinicios recientes, mira por que con
 `journalctl -u auction-sentinel.service -n 50 --no-pager`: con `Restart=always`
 el servicio se levanta solo, pero un reinicio en bucle es sintoma de algo
@@ -313,7 +314,8 @@ problemas (compruebalo en <https://status.battle.net>).
 total: sin filas en `precio` no hay ficha de producto ni pagina de reino que
 mostrar, y tanto `/item/<id>` como `/realm/<slug>` devuelven 404 (mira
 `web/app.py`, ambas rutas lanzan `HTTPException(404)` cuando la consulta
-vuelve vacia). Comprueba:
+vuelve vacia). La portada sigue dando 200, pero con la lista de reinos
+vacia, que es justo la senal de esto. Comprueba:
 
 ```bash
 sqlite3 /opt/auction-sentinel/web.db "SELECT COUNT(*) FROM precio;"
@@ -362,5 +364,5 @@ como propietario.
 
 **nginx da 502.** uvicorn no esta escuchando en `127.0.0.1:8000`. Comprueba
 `systemctl status auction-sentinel.service` primero; si esta activo,
-`curl -I http://127.0.0.1:8000/sitemap.xml` en el propio VPS para descartar que sea un
+`curl -I http://127.0.0.1:8000/` en el propio VPS para descartar que sea un
 problema de nginx y no de la app.

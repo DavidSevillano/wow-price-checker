@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -19,10 +20,14 @@ from web.consultas import (
     REINOS_GRATIS,
     anotar_peticion,
     ficha,
+    mejores_rebajas,
     paginas_mas_pedidas,
     productos_de_reino,
+    productos_mas_vistos,
     reino_por_slug,
     reinos_de,
+    reinos_publicados,
+    resumen_del_catalogo,
 )
 from web.db import VARIABLE_DB, abrir, ruta_de_entorno
 
@@ -34,6 +39,32 @@ AQUI = Path(__file__).parent
 # dominio real solo se conoce en el servidor -- aquí, en desarrollo y en los
 # tests, se usa uno de mentira.
 BASE_URL = os.environ.get("BASE_URL", "https://auctionsentinel.example")
+
+
+# El centinela de la caché de la portada. No vale `None`: con la base recién
+# creada `generado_en` ES None, y entonces "todavía no lo he calculado" y "lo
+# calculé cuando no había volcado" serían el mismo estado.
+_SIN_CALCULAR = object()
+
+# Los meses a mano en vez de `%B`, que saca el nombre en la locale del
+# sistema: la página está en inglés y el VPS no tiene por qué estarlo, así que
+# un servidor en español pondría "septiembre" en mitad de una frase inglesa.
+_MESES = (
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
+
+def _fecha(epoch: Optional[int]) -> Optional[str]:
+    """La hora del volcado, en UTC y legible. None si todavía no hay ninguno.
+
+    UTC y dicho en voz alta: los reinos de EU van en varias zonas horarias y
+    la alternativa --la del servidor-- no significa nada para quien lee.
+    """
+    if not epoch:
+        return None
+    d = datetime.fromtimestamp(epoch, timezone.utc)
+    return f"{d.day} {_MESES[d.month - 1]} {d.year}, {d:%H:%M} UTC"
 
 
 def _oro(cobre: int) -> str:
@@ -91,6 +122,77 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
         # ~1,07 ms totales, más que la propia consulta de la página.
         return abrir(ruta_db, esquema=False)
 
+    # Las rebajas de la portada cuestan 271 ms sobre una base del tamaño de
+    # producción (932.000 filas de `precio`), contra los ~23 ms de la página
+    # de reino: no hay un `reino_id` que recorte el escaneo y el ORDER BY se
+    # resuelve con un b-tree temporal. Eso no puede correr en cada visita, y
+    # menos en la página que más se pide y por la que entran los rastreadores.
+    #
+    # Se guardan contra el `generado_en` del volcado, que solo cambia cuando
+    # la pasada horaria escribe precios nuevos: mientras ese número sea el
+    # mismo, el resultado es literalmente el mismo. No es un TTL a ojo, no
+    # sirve nada caducado y no hay nada que afinar.
+    #
+    # Vive en el proceso y no en una tabla: con `--workers 2` se calcula dos
+    # veces por hora, una por worker, y eso sale más barato que una tabla
+    # precalculada que haya que escribir e invalidar en la pasada.
+    cache_rebajas: dict[str, Any] = {"generado_en": _SIN_CALCULAR, "filas": []}
+
+    @app.get("/", response_class=HTMLResponse)
+    def portada(request: Request):
+        """La entrada al sitio, y el destino del enlace de la marca.
+
+        Ese enlace lo pinta `base.html` en la cabecera de TODAS las páginas, y
+        hasta que existió esta ruta cada visita que pulsaba el logotipo se
+        comía un 404.
+
+        No se llama a `anotar_peticion`: lo que cuenta esa tabla es qué fichas
+        pide la gente, y de ahí sale el sitemap. Contar la portada metería una
+        página que no es de producto en el índice de páginas de producto.
+        """
+        con = conexion()
+        try:
+            resumen = resumen_del_catalogo(con)
+            if cache_rebajas["generado_en"] != resumen["generado_en"]:
+                # Doce filas: las que caben sin que la portada se convierta en
+                # una lista interminable. Lo demás está en la página de cada
+                # reino, que es donde se busca a propósito.
+                cache_rebajas["filas"] = mejores_rebajas(con, limite=12)
+                cache_rebajas["generado_en"] = resumen["generado_en"]
+            reinos = reinos_publicados(con)
+            # Veinte y no cincuenta: es una lista para ojear, y las que más se
+            # piden son las que de verdad interesan. Las demás llegan por
+            # búsqueda, que es para lo que está el sitemap.
+            vistos = productos_mas_vistos(con, limite=20)
+        finally:
+            con.close()
+
+        return plantillas.TemplateResponse(
+            request=request,
+            name="portada.html",
+            context={
+                "resumen": resumen,
+                "generado": _fecha(resumen["generado_en"]),
+                "rebajas": cache_rebajas["filas"],
+                "reinos": reinos,
+                "vistos": vistos,
+            },
+        )
+
+    @app.get("/robots.txt", response_class=PlainTextResponse)
+    def robots():
+        """Sin esto el sitemap no se anuncia en ningún sitio.
+
+        Un rastreador que llegue por un enlace no tiene forma de saber que
+        `/sitemap.xml` existe: la línea `Sitemap:` de aquí es la única pista
+        estándar, y por eso lleva el dominio de `BASE_URL` --absoluto, igual
+        que las URLs del propio sitemap.
+        """
+        return PlainTextResponse(
+            f"User-agent: *\nAllow: /\nSitemap: {BASE_URL}/sitemap.xml\n",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
     @app.get("/item/{producto_id}", response_class=HTMLResponse)
     def pagina_producto(
         request: Request, producto_id: int, ilvl: Optional[str] = None
@@ -146,11 +248,14 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
         con = conexion()
         try:
             paginas = paginas_mas_pedidas(con, limite=50_000)
-            reinos = [dict(fila) for fila in con.execute("SELECT slug FROM reino")]
+            reinos = reinos_publicados(con)
         finally:
             con.close()
 
-        urls = [f"{BASE_URL}/item/{p['producto_id']}" for p in paginas]
+        # La portada primero: es la que más enlaces internos tiene y la raíz
+        # del mapa. Luego lo pedido y, al final, los reinos.
+        urls = [f"{BASE_URL}/"]
+        urls += [f"{BASE_URL}/item/{p['producto_id']}" for p in paginas]
         urls += [f"{BASE_URL}/realm/{r['slug']}" for r in reinos]
 
         cuerpo = (

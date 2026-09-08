@@ -180,3 +180,207 @@ def test_sin_variable_de_entorno_usa_la_de_por_defecto(tmp_path, monkeypatch):
     monkeypatch.delenv("AUCTION_DB", raising=False)
     monkeypatch.chdir(tmp_path)
     assert TestClient(crear_app()).get("/item/271440").status_code == 404
+
+
+# -- Portada y robots -------------------------------------------------------
+#
+# `/` daba 404. No es una página que faltara por escribir: es el destino del
+# enlace de la marca, que `base.html` pinta en la cabecera de todas las
+# páginas, así que cada visita que pulsaba el logotipo se comía un 404. Y el
+# sitemap no se anunciaba en ningún sitio, que es lo que hace un robots.txt.
+
+
+def test_la_portada_responde(cliente):
+    r = cliente.get("/")
+    assert r.status_code == 200
+
+
+def test_la_portada_enlaza_los_reinos(cliente):
+    texto = cliente.get("/").text
+    assert '/realm/reino-1"' in texto
+    assert "Reino 1" in texto
+
+
+def test_la_portada_enlaza_lo_mas_visto(cliente):
+    cliente.get("/item/271440")
+    texto = cliente.get("/").text
+    assert '/item/271440"' in texto
+    assert "Greaves of the Noxious Depths" in texto
+
+
+def test_la_portada_sin_visitas_no_saca_la_lista_vacia(cliente):
+    """Recién instalada nadie ha pedido nada: mejor no sacar la sección."""
+    texto = cliente.get("/").text
+    assert "Greaves of the Noxious Depths" not in texto
+
+
+def test_visitar_la_portada_no_cuenta_como_pedir_una_ficha(cliente, ruta_db):
+    cliente.get("/")
+    con = abrir(ruta_db)
+    assert con.execute("SELECT count(*) FROM pagina").fetchone()[0] == 0
+
+
+def test_la_portada_aguanta_una_base_vacia(tmp_path):
+    """La primera pasada tarda una hora en llegar y hasta entonces no hay nada."""
+    cliente = TestClient(crear_app(tmp_path / "vacia.db"))
+    assert cliente.get("/").status_code == 200
+
+
+def test_el_nombre_del_reino_sale_escapado(tmp_path):
+    ruta = tmp_path / "x.db"
+    con = abrir(ruta)
+    guardar_reinos(con, {1: "<script>alert(1)</script>"})
+    con.close()
+
+    texto = TestClient(crear_app(ruta)).get("/").text
+    assert "<script>alert(1)</script>" not in texto
+    assert "&lt;script&gt;" in texto
+
+
+def test_hay_robots(cliente):
+    r = cliente.get("/robots.txt")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+
+
+def test_el_robots_anuncia_el_sitemap(cliente):
+    """Es la única pista que tiene un rastreador de que el sitemap existe."""
+    assert "Sitemap: https://auctionsentinel.example/sitemap.xml" in (
+        cliente.get("/robots.txt").text
+    )
+
+
+def test_el_sitemap_lleva_la_portada(cliente):
+    """Es la página con más enlaces internos: dejarla fuera es dejar el mapa
+    del sitio sin su raíz."""
+    assert "<loc>https://auctionsentinel.example/</loc>" in (
+        cliente.get("/sitemap.xml").text
+    )
+
+
+# -- La portada con datos ---------------------------------------------------
+#
+# El fixture `cliente` tiene diez reinos, por debajo del umbral de produccion
+# (15), asi que con el no sale ni una rebaja. Este trae veinte justo para
+# ejercitar la portada con el umbral de verdad, sin pasarselo a mano: si el
+# dia de manana alguien sube ese numero en `mejores_rebajas`, este test lo
+# nota en vez de seguir verde con un valor de juguete.
+
+
+@pytest.fixture
+def ruta_grande(tmp_path):
+    ruta = tmp_path / "g.db"
+    con = abrir(ruta)
+    guardar_reinos(con, {i: f"Reino {i}" for i in range(1, 21)})
+    guardar_nombres(
+        con,
+        [
+            (TIPO_OBJETO, 271440, "en", "Greaves of the Noxious Depths", None),
+            (TIPO_OBJETO, 100, "en", "Cosa a su precio", None),
+        ],
+    )
+    volcar(
+        con,
+        {
+            # Mediana 1100 y el reino 1 a 110: un 90% de rebaja.
+            Clave(TIPO_OBJETO, 271440, 305): {
+                1: resumen(110), **{i: resumen(i * 100) for i in range(2, 21)}
+            },
+            Clave(TIPO_OBJETO, 100, 305): {i: resumen(500) for i in range(1, 21)},
+        },
+        generado_en=1788451184,
+    )
+    recalcular_estadisticas(con)
+    con.close()
+    return ruta
+
+
+@pytest.fixture
+def cliente_grande(ruta_grande):
+    return TestClient(crear_app(ruta_grande))
+
+
+def test_la_portada_lista_las_rebajas(cliente_grande):
+    texto = cliente_grande.get("/").text
+    assert "Greaves of the Noxious Depths" in texto
+    assert "90%" in texto
+
+
+def test_cada_rebaja_enlaza_su_objeto_y_su_reino(cliente_grande):
+    texto = cliente_grande.get("/").text
+    assert '/item/271440"' in texto
+    assert '/realm/reino-1"' in texto
+
+
+def test_lo_que_esta_a_su_precio_normal_no_sale_como_rebaja(cliente_grande):
+    assert "Cosa a su precio" not in cliente_grande.get("/").text
+
+
+def test_la_portada_dice_cuantos_objetos_y_reinos_cubre(cliente_grande):
+    texto = cliente_grande.get("/").text
+    assert "Items tracked" in texto and ">2<" in texto
+    assert "Realms covered" in texto and ">20<" in texto
+
+
+def test_la_portada_dice_de_cuando_son_los_datos(cliente_grande):
+    """1788451184 es el 2026-09-03 a las 15:59 UTC."""
+    texto = cliente_grande.get("/").text
+    assert "3 September 2026" in texto
+    assert "15:59 UTC" in texto
+
+
+def test_el_mes_sale_en_ingles_aunque_el_servidor_este_en_espanol(cliente_grande):
+    """La pagina esta en ingles y el VPS no tiene por que estarlo.
+
+    `%B` de strftime saca el mes en la locale del sistema: en una maquina en
+    espanol pondria "septiembre" en mitad de una frase en ingles.
+    """
+    assert "September" in cliente_grande.get("/").text
+
+
+def test_sin_datos_la_portada_no_inventa_una_fecha(cliente):
+    """El fixture pequeño no llega al umbral: hay reinos pero no rebajas."""
+    r = cliente.get("/")
+    assert r.status_code == 200
+    assert "Reino 1" in r.text
+
+
+def test_las_rebajas_no_se_recalculan_en_cada_visita(cliente_grande, monkeypatch):
+    """271 ms medidos con 932.000 filas: eso no puede correr por visita.
+
+    Se cachean contra `volcado.generado_en`, que solo cambia cuando la pasada
+    horaria escribe un volcado nuevo. No es un TTL a ojo: mientras ese numero
+    sea el mismo, el resultado es literalmente el mismo.
+    """
+    import web.app
+
+    veces = []
+    original = web.app.mejores_rebajas
+
+    def contando(*args, **kwargs):
+        veces.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(web.app, "mejores_rebajas", contando)
+
+    cliente_grande.get("/")
+    cliente_grande.get("/")
+    cliente_grande.get("/")
+
+    assert len(veces) == 1
+
+
+def test_un_volcado_nuevo_invalida_la_cache(cliente_grande, ruta_grande):
+    """Si no, la portada se quedaria con las rebajas de la hora pasada."""
+    assert "Greaves of the Noxious Depths" in cliente_grande.get("/").text
+
+    con = abrir(ruta_grande)
+    volcar(
+        con,
+        {Clave(TIPO_OBJETO, 100, 305): {i: resumen(500) for i in range(1, 21)}},
+        generado_en=1788451184 + 3600,
+    )
+    recalcular_estadisticas(con)
+    con.close()
+
+    assert "Greaves of the Noxious Depths" not in cliente_grande.get("/").text

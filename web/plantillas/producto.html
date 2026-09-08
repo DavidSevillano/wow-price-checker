@@ -59,20 +59,22 @@ EU realms. Updated hourly.{% endblock %}
   </p>
   {% endif %}
 
+  <div class="tabla">
   <table>
     <thead>
-      <tr><th>Realm</th><th>Listings</th><th>Cheapest</th></tr>
+      <tr><th class="txt">Realm</th><th>Listings</th><th>Cheapest</th></tr>
     </thead>
     <tbody>
       {% for r in reinos %}
       <tr>
-        <td>{{ r.nombre }}</td>
+        <td class="txt">{{ r.nombre }}</td>
         <td>{{ r.listados }}</td>
         <td>{{ r.minimo | oro }}g</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
 
   {% if actual.reinos > reinos|length %}
   <p class="muro">

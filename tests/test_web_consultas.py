@@ -7,10 +7,14 @@ from web.consultas import (
     REINOS_PARA_MEDIANA,
     anotar_peticion,
     ficha,
+    mejores_rebajas,
     paginas_mas_pedidas,
     productos_de_reino,
+    productos_mas_vistos,
     reino_por_slug,
     reinos_de,
+    reinos_publicados,
+    resumen_del_catalogo,
 )
 from web.ingesta import guardar_nombres, guardar_reinos, recalcular_estadisticas, volcar
 
@@ -301,3 +305,153 @@ def test_el_umbral_es_el_de_la_constante(tmp_path):
     assert justo_debajo["mediana_fiable"] is False
     assert justo_encima["reinos"] == REINOS_PARA_MEDIANA
     assert justo_encima["mediana_fiable"] is True
+
+
+# -- La portada -------------------------------------------------------------
+#
+# `/` daba 404 mientras el enlace de la marca, que sale en TODAS las páginas,
+# apuntaba ahí. La portada necesita dos listas: los reinos que se cubren y los
+# productos que ya se piden, que es por donde se entra al resto del sitio.
+
+
+def test_los_reinos_publicados_traen_nombre_y_slug(con):
+    reinos = reinos_publicados(con)
+    assert len(reinos) == 10
+    assert {"nombre": "Reino 1", "slug": "reino-1"} in reinos
+
+
+def test_los_reinos_publicados_salen_ordenados(con):
+    """Alfabético: la portada es una lista para leer, no un ranking."""
+    nombres = [r["nombre"] for r in reinos_publicados(con)]
+    assert nombres == sorted(nombres)
+
+
+def test_sin_reinos_la_lista_esta_vacia(tmp_path):
+    assert reinos_publicados(abrir(tmp_path / "vacia.db")) == []
+
+
+def test_los_productos_mas_vistos_salen_por_peticiones(con):
+    guardar_nombres(con, [(TIPO_OBJETO, 999, "en", "Otra cosa", None)])
+    volcar(
+        con,
+        {
+            Clave(TIPO_OBJETO, 271440, 305): {1: resumen(100)},
+            Clave(TIPO_OBJETO, 999, 305): {1: resumen(100)},
+        },
+        generado_en=1788451184,
+    )
+    recalcular_estadisticas(con)
+    anotar_peticion(con, TIPO_OBJETO, 999)
+    anotar_peticion(con, TIPO_OBJETO, 999)
+    anotar_peticion(con, TIPO_OBJETO, 271440)
+
+    vistos = productos_mas_vistos(con, limite=10)
+    assert [p["producto_id"] for p in vistos] == [999, 271440]
+
+
+def test_los_productos_mas_vistos_traen_su_nombre(con):
+    anotar_peticion(con, TIPO_OBJETO, 271440)
+    assert productos_mas_vistos(con, limite=10)[0]["nombre"] == (
+        "Greaves of the Noxious Depths"
+    )
+
+
+def test_el_limite_de_los_mas_vistos_recorta(con):
+    guardar_nombres(con, [(TIPO_OBJETO, 999, "en", "Otra cosa", None)])
+    volcar(
+        con,
+        {
+            Clave(TIPO_OBJETO, 271440, 305): {1: resumen(100)},
+            Clave(TIPO_OBJETO, 999, 305): {1: resumen(100)},
+        },
+        generado_en=1788451184,
+    )
+    recalcular_estadisticas(con)
+    anotar_peticion(con, TIPO_OBJETO, 271440)
+    anotar_peticion(con, TIPO_OBJETO, 999)
+
+    assert len(productos_mas_vistos(con, limite=1)) == 1
+
+
+def test_un_producto_que_ya_no_esta_en_el_volcado_no_sale_en_la_portada(con):
+    """Enlazar desde la portada algo que da 404 es peor que no enlazarlo.
+
+    `pagina` es un histórico y no se poda: un objeto que Blizzard retire sigue
+    ahí con sus peticiones, pero su ficha ya responde 404 porque `ficha()` la
+    busca en `estadistica`, que sí se reescribe en cada pasada.
+    """
+    anotar_peticion(con, TIPO_OBJETO, 271440)
+    anotar_peticion(con, TIPO_OBJETO, 424242)
+
+    assert [p["producto_id"] for p in productos_mas_vistos(con, limite=10)] == [271440]
+
+
+def test_una_variante_por_producto_aunque_tenga_varios_ilvl(con):
+    """El 271440 está a 305 y a 318: la portada lo enseña una vez, no dos."""
+    anotar_peticion(con, TIPO_OBJETO, 271440)
+    assert len(productos_mas_vistos(con, limite=10)) == 1
+
+
+# -- Lo más rebajado de toda la región --------------------------------------
+#
+# Es lo que llena la portada. Misma idea que `productos_de_reino` pero sin
+# fijar el reino: ahí la pregunta es "qué está barato AQUÍ" y aquí es "dónde
+# hay una ganga ahora mismo", así que cada fila tiene que decir de qué reino
+# viene o no sirve de nada.
+
+
+def test_la_region_saca_el_mas_rebajado_primero(con_rebajas):
+    filas = mejores_rebajas(con_rebajas, limite=10, reinos_minimos=10)
+    assert [f["producto_id"] for f in filas] == [200, 100]
+
+
+def test_cada_rebaja_dice_de_que_reino_es(con_rebajas):
+    """Sin el reino la fila no sirve: no sabes adónde ir a comprarlo."""
+    fila = mejores_rebajas(con_rebajas, limite=1, reinos_minimos=10)[0]
+    assert fila["reino"] == "Reino 1"
+    assert fila["slug"] == "reino-1"
+
+
+def test_la_rebaja_viene_en_porcentaje(con_rebajas):
+    """8000 sobre una mediana de 10000 es un 20% menos."""
+    fila = mejores_rebajas(con_rebajas, limite=1, reinos_minimos=10)[0]
+    assert fila["descuento"] == 20
+
+
+def test_el_limite_de_las_rebajas_recorta(con_rebajas):
+    assert len(mejores_rebajas(con_rebajas, limite=1, reinos_minimos=10)) == 1
+
+
+def test_sin_reinos_de_sobra_no_hay_rebajas_que_ensenar(con_rebajas):
+    """Diez reinos no bastan para el umbral de produccion."""
+    assert mejores_rebajas(con_rebajas, limite=10, reinos_minimos=15) == []
+
+
+def test_estar_justo_en_la_mediana_no_es_una_rebaja(con):
+    """El fixture va de 100 a 1000 con mediana 600: el reino 6 no esta rebajado.
+
+    El corte es `<` y no `<=` a proposito. Un reino que clava el precio normal
+    no tiene nada que ofrecer, y con noventa y dos reinos hay muchos empates.
+    """
+    reinos = {f["reino"] for f in mejores_rebajas(con, limite=50, reinos_minimos=10)}
+    assert "Reino 5" in reinos
+    assert "Reino 6" not in reinos
+
+
+def test_el_resumen_cuenta_productos_distintos_no_variantes(con):
+    """El 271440 esta a 305 y a 318: es un producto, no dos."""
+    assert resumen_del_catalogo(con)["productos"] == 1
+
+
+def test_el_resumen_cuenta_los_reinos(con):
+    assert resumen_del_catalogo(con)["reinos"] == 10
+
+
+def test_el_resumen_trae_cuando_se_genero(con):
+    assert resumen_del_catalogo(con)["generado_en"] == 1788451184
+
+
+def test_el_resumen_de_una_base_vacia_no_revienta(tmp_path):
+    """Recien instalada, antes de la primera pasada."""
+    vacio = resumen_del_catalogo(abrir(tmp_path / "v.db"))
+    assert vacio == {"productos": 0, "reinos": 0, "generado_en": None}

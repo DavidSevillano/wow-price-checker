@@ -1266,10 +1266,25 @@ no cuadre con `config.yaml`.
 ## 8. La web publica de precios
 
 Ademas del vigilante privado, el repositorio incluye una web publica de solo
-lectura con los precios de la region: pagina de producto, pagina de reino y
-`sitemap.xml`. Vive en `web/` (FastAPI + Jinja2, base SQLite propia,
+lectura con los precios de la region: portada, pagina de producto, pagina
+de reino, `robots.txt` y `sitemap.xml`. Vive en `web/` (FastAPI + Jinja2, base SQLite propia,
 `web.db`) y no comparte nada con el vigilante salvo el codigo de
 `wowalerts/` que habla con la API de Blizzard.
+
+La portada lleva cuanto cubre el sitio, de cuando son los datos y las doce
+rebajas mas grandes de toda la region. Esa ultima consulta
+(`mejores_rebajas`) es la mas cara de la app —271 ms sobre 932.000 filas de
+`precio`, contra los ~23 ms de la pagina de reino— porque no hay un
+`reino_id` que recorte el escaneo. Por eso `web/app.py` la cachea contra
+`volcado.generado_en`: ese numero solo cambia cuando la pasada horaria
+escribe precios nuevos, asi que mientras sea el mismo el resultado tambien
+lo es. La primera visita de cada hora paga 310 ms y las demas 6 ms.
+
+**Con pocos reinos la portada sale sin rebajas, y es correcto.** Hace falta
+que un objeto este en al menos 15 reinos (`REINOS_PARA_COMPARAR`) para que
+su mediana signifique algo, asi que un `web.db` hecho con
+`--realms 1305,1329` para probar nunca va a llenar esa tabla. La pasada de
+produccion no lleva `--realms` y baja los 92 reinos de la region.
 
 La llena `publicar_web.py`, que se ejecuta aparte de `main.py` a proposito
 —no conviene tocar el vigilante para esto— y hace una pasada por toda la
