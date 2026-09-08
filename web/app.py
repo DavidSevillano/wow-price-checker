@@ -120,6 +120,10 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
     app = FastAPI(title="Auction Sentinel")
     plantillas = Jinja2Templates(directory=str(AQUI / "plantillas"))
     plantillas.env.filters["oro"] = _oro
+    # Global y no variable de contexto: lo necesita `base.html` en TODAS
+    # las paginas para las URLs absolutas de canonical y Open Graph, y
+    # pasarlo a mano en cada ruta es una que se olvida.
+    plantillas.env.globals["BASE_URL"] = BASE_URL
     app.mount(
         "/estaticos", StaticFiles(directory=str(AQUI / "estaticos")), name="estaticos"
     )
@@ -205,6 +209,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
             request=request,
             name="portada.html",
             context={
+                "canonical": "/",
                 "resumen": resumen,
                 "generado": _fecha(resumen["generado_en"]),
                 "rebajas": cache_rebajas["filas"],
@@ -249,7 +254,15 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
         return plantillas.TemplateResponse(
             request=request,
             name="producto.html",
-            context={"ficha": datos, "actual": actual, "reinos": filas},
+            context={
+                # Sin el `?ilvl=`: las 13 URLs de un objeto con 12 ilvl son
+                # una sola pagina, y sin esto competian entre ellas.
+                "canonical": f"/item/{producto_id}",
+                "og_imagen": datos["icono"],
+                "ficha": datos,
+                "actual": actual,
+                "reinos": filas,
+            },
         )
 
     @app.get("/realm/{slug}", response_class=HTMLResponse)
@@ -266,7 +279,11 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
         return plantillas.TemplateResponse(
             request=request,
             name="reino.html",
-            context={"reino": reino, "productos": filas},
+            context={
+                "canonical": f"/realm/{slug}",
+                "reino": reino,
+                "productos": filas,
+            },
         )
 
     @app.get("/items", response_class=HTMLResponse)
@@ -286,7 +303,11 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
         return plantillas.TemplateResponse(
             request=request,
             name="categorias.html",
-            context={"categorias": cats, "total": sum(c["objetos"] for c in cats)},
+            context={
+                "canonical": "/items",
+                "categorias": cats,
+                "total": sum(c["objetos"] for c in cats),
+            },
         )
 
     @app.get("/items/{clase}", response_class=HTMLResponse)
@@ -323,6 +344,11 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
             request=request,
             name="categoria.html",
             context={
+                # La pagina 2 es su propia canonical y NO apunta a la 1:
+                # son objetos distintos, no duplicados. Si apuntara a la 1,
+                # Google descartaria su contenido y el catalogo volveria a
+                # quedarse sin enlazar, que es justo lo que esto arregla.
+                "canonical": base_url + (f"?p={p}" if p > 1 else ""),
                 "titulo": nombre_clase or clase.replace("-", " ").title(),
                 "clase_slug": clase,
                 "subclase": subclase,
@@ -348,7 +374,14 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
         return plantillas.TemplateResponse(
             request=request,
             name="busqueda.html",
-            context={"q": q, "productos": productos},
+            context={
+                # Resultados de busqueda interna: Google los trata como
+                # contenido fino y penaliza el sitio entero por ellos.
+                # `follow` porque los enlaces a las fichas si valen.
+                "noindex": True,
+                "q": q,
+                "productos": productos,
+            },
         )
 
     @app.get("/sitemap.xml")

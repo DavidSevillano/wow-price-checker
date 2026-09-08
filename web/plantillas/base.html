@@ -5,6 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block titulo %}Auction Sentinel{% endblock %}</title>
   <meta name="description" content="{% block descripcion %}{% endblock %}">
+
+  {% if canonical %}
+  <link rel="canonical" href="{{ BASE_URL }}{{ canonical }}">
+  {% endif %}
+  {% if noindex %}
+  <meta name="robots" content="noindex,follow">
+  {% endif %}
+
+  <meta property="og:site_name" content="Auction Sentinel">
+  <meta property="og:type" content="website">
+  {# `self.titulo()` vuelve a pintar el bloque de arriba: asi el titulo de la
+     pestana y el de la tarjeta no pueden discrepar, se escriben una vez. #}
+  <meta property="og:title" content="{{ self.titulo() }}">
+  <meta property="og:description" content="{{ self.descripcion() }}">
+  {% if canonical %}
+  <meta property="og:url" content="{{ BASE_URL }}{{ canonical }}">
+  {% endif %}
+  {# Sin imagen no se pinta la etiqueta: un `og:image` vacio hace que algunos
+     clientes enseñen un hueco roto en vez de una tarjeta solo de texto. #}
+  {# Sin imagen no se pinta la etiqueta: un `og:image` vacio hace que algunos
+     clientes ensenen un hueco roto en vez de una tarjeta solo de texto. #}
+  {% if og_imagen %}
+  <meta property="og:image" content="{{ og_imagen }}">
+  {% endif %}
+  {# "summary" y no "summary_large_image": los iconos de Blizzard son de 56px y
+     una tarjeta grande los estiraria hasta el borron. #}
+  <meta name="twitter:card" content="summary">
+
   <link rel="stylesheet" href="/estaticos/estilo.css">
 </head>
 <body>

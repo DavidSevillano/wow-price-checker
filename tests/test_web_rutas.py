@@ -624,3 +624,82 @@ def test_la_subcategoria_abierta_se_ve_marcada(cliente_catalogo):
     """
     texto = cliente_catalogo.get("/items/armor/mail").text
     assert 'class="pastilla activo"' in texto
+
+
+# -- Canonical y tarjetas sociales -------------------------------------------
+#
+# Dos agujeros medidos: 773 URLs `?ilvl=` con titulo y descripcion identicos y
+# sin canonical (el 4% del sitio, pero cae justo en las 589 fichas de equipo,
+# que son las de busqueda con mas intencion), y cero etiquetas Open Graph, o
+# sea que cada enlace pegado en Discord salia como una URL pelada. Para un
+# producto cuyo publico vive en Discord, eso es tirar la distribucion gratis.
+
+
+def test_la_ficha_declara_su_canonical(cliente_grande):
+    html = cliente_grande.get("/item/271440").text
+    assert '<link rel="canonical" href="https://auctionsentinel.example/item/271440">' in html
+
+
+def test_las_variantes_de_ilvl_apuntan_a_la_misma_canonical(cliente_grande):
+    """Las 13 URLs de un objeto con 12 ilvl son una sola pagina para Google."""
+    html = cliente_grande.get("/item/271440?ilvl=305").text
+    assert 'href="https://auctionsentinel.example/item/271440">' in html
+    assert "?ilvl=" not in html.split("canonical")[1].split(">")[0]
+
+
+def test_la_portada_y_los_reinos_tambien_la_declaran(cliente_grande):
+    assert 'canonical" href="https://auctionsentinel.example/">' in (
+        cliente_grande.get("/").text
+    )
+    assert 'canonical" href="https://auctionsentinel.example/realm/reino-1">' in (
+        cliente_grande.get("/realm/reino-1").text
+    )
+
+
+def test_la_pagina_dos_de_una_categoria_es_su_propia_canonical(
+    cliente_catalogo, monkeypatch
+):
+    """Aqui NO se apunta a la pagina 1: son objetos distintos, no duplicados.
+
+    Si la 2 dijera que su canonical es la 1, Google descartaria el contenido de
+    la 2 y volveriamos a tener el catalogo sin enlazar.
+    """
+    import web.app
+
+    monkeypatch.setattr(web.app, "POR_PAGINA", 2)
+    html = cliente_catalogo.get("/items/armor?p=2").text
+    assert 'canonical" href="https://auctionsentinel.example/items/armor?p=2">' in html
+
+
+def test_el_buscador_no_se_indexa(cliente_catalogo):
+    """Paginas de resultados internos: Google las trata como contenido fino y
+    penaliza el sitio entero por ellas."""
+    html = cliente_catalogo.get("/search?q=mail").text
+    assert '<meta name="robots" content="noindex,follow">' in html
+
+
+def test_las_paginas_de_verdad_si_se_indexan(cliente_grande):
+    for ruta in ("/", "/item/271440", "/realm/reino-1"):
+        assert "noindex" not in cliente_grande.get(ruta).text, ruta
+
+
+def test_la_tarjeta_social_repite_titulo_y_descripcion(cliente_grande):
+    html = cliente_grande.get("/item/271440").text
+    assert 'property="og:title" content="Greaves of the Noxious Depths' in html
+    assert 'property="og:description"' in html
+    assert 'property="og:url" content="https://auctionsentinel.example/item/271440"' in html
+
+
+def test_la_tarjeta_de_una_ficha_lleva_el_icono_del_objeto(cliente_grande):
+    """Es lo que se ve al pegar el enlace en Discord."""
+    html = cliente_grande.get("/item/271440").text
+    assert 'property="og:image" content="https://cdn/greaves.jpg"' in html
+
+
+def test_una_ficha_sin_icono_no_deja_una_tarjeta_con_imagen_vacia(cliente_catalogo):
+    html = cliente_catalogo.get("/item/5").text
+    assert 'og:image" content=""' not in html
+
+
+def test_hay_tarjeta_de_twitter(cliente_grande):
+    assert 'name="twitter:card"' in cliente_grande.get("/item/271440").text
