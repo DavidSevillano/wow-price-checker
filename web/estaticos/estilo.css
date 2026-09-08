@@ -73,8 +73,20 @@ td a:hover { color: var(--gold); text-decoration: underline; }
 /* En pantalla estrecha se cae la columna del precio normal. Es la unica
    prescindible: el porcentaje de rebaja ya dice lo mismo en una cifra, y
    quitarla deja que las otras cuatro entren sin scroll lateral. */
+/* En pantalla ancha el reino tiene su columna y no hace falta repetirlo. */
+.reino-movil { display: none; }
+
 @media (max-width: 560px) {
   th.opcional, td.opcional { display: none; }
+  /* Y la del reino tambien: con el icono delante del nombre y nombres de
+     reino conectado como "Echsenkessel / Blackhand / Mal'Ganis / Taerar", las
+     cuatro columnas dejaban el % de rebaja fuera de la pantalla. El reino
+     pasa a una linea debajo del nombre, que ademas se lee mejor. */
+  th.reino-col, td.reino-col { display: none; }
+  .reino-movil {
+    display: block; color: var(--muted); font-size: 12px; margin-top: 2px;
+  }
+  .objeto { align-items: flex-start; }
   .ficha { padding: 16px; }
   th, td { padding: 9px 10px; }
 }

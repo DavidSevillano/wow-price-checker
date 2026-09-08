@@ -39,18 +39,18 @@ hourly.{% endblock %}
   <table>
     <thead>
       <tr>
-        <th class="txt">Item</th><th class="txt">Realm</th>
+        <th class="txt">Item</th><th class="txt reino-col">Realm</th>
         <th class="opcional">Normally</th><th>Now</th><th>Off</th>
       </tr>
     </thead>
     <tbody>
       {% for r in rebajas %}
-      {% set producto_id, nombre, icono, variante = r.producto_id, r.nombre, r.icono, r.variante %}
+      {% set producto_id, nombre, icono, variante, reino = r.producto_id, r.nombre, r.icono, r.variante, r.reino %}
       <tr>
         <td class="txt">
           {% include "_objeto.html" with context %}
         </td>
-        <td class="txt"><a href="/realm/{{ r.slug }}">{{ r.reino }}</a></td>
+        <td class="txt reino-col"><a href="/realm/{{ r.slug }}">{{ r.reino }}</a></td>
         <td class="opcional">{{ r.mediana | oro }}g</td>
         <td>{{ r.minimo | oro }}g</td>
         <td class="pct">{{ r.descuento }}%</td>

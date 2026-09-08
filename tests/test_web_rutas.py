@@ -456,3 +456,15 @@ def test_un_objeto_sin_icono_no_deja_una_imagen_rota(tmp_path):
     texto = TestClient(crear_app(ruta)).get("/").text
     assert "Sin foto" in texto
     assert 'src=""' not in texto
+
+
+def test_en_movil_el_reino_sigue_estando_aunque_su_columna_se_caiga(cliente_grande):
+    """A 375px las cuatro columnas no caben y el % de rebaja se salia.
+
+    La columna de reino se cae en pantalla estrecha, pero el dato no puede
+    perderse --sin el reino la ganga no sirve de nada-- asi que se repite
+    debajo del nombre. El HTML lleva las dos; el CSS ensena una u otra.
+    """
+    texto = cliente_grande.get("/").text
+    assert texto.count("Reino 1") >= 2
+    assert "reino-movil" in texto

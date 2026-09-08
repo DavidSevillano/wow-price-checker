@@ -13,3 +13,7 @@
   <span>{{ nombre }}</span>
 </a>
 {%- if variante != -1 %}<span class="ilvl-et">{{ variante }}</span>{% endif %}
+{#- El reino repetido para pantalla estrecha, donde su columna se cae: sin el,
+    la fila dice que algo esta al 95% pero no donde comprarlo. Solo cuando hay
+    reino que decir (la pagina de reino ya sabe en cual esta). -#}
+{% if reino %}<span class="reino-movil">{{ reino }}</span>{% endif %}
