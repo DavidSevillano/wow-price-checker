@@ -34,7 +34,6 @@ COLOR_STEAL = 0x2ECC71       # verde: chollo serio
 COLOR_WARNING = 0xE74C3C     # rojo: aviso de salud del bot
 COLOR_UNDERCUT = 0xC0392B    # rojo oscuro: te han adelantado
 COLOR_VENTA = 0xD4AF37       # oro viejo: dinero que entra
-COLOR_REPETIDO = 0x7F8C8D    # gris: siguen adelantadas, ya avisadas
 # Limite duro de Discord para la descripcion de un embed.
 MAX_EMBED_DESCRIPTION = 4096
 # Tope propio de lineas por mensaje: mas de esto ya no se lee de un vistazo.
@@ -308,11 +307,6 @@ def _repartir(lineas: list[str], presupuesto: int) -> list[list[str]]:
     return grupos
 
 
-# Cuantas de las ya avisadas se nombran antes de remitir al panel. Mas de esto
-# en una linea de cabecera deja de leerse.
-MAX_YA_AVISADAS_NOMBRADAS = 6
-
-
 def build_undercut_messages(
     undercuts: Sequence[Undercut],
     ya_avisados: Sequence[Undercut] = (),
@@ -329,11 +323,20 @@ def build_undercut_messages(
     seguidos de un mismo webhook: le quita al segundo el avatar y el nombre, y
     dos avisos se leen como uno. El borde de color de la tarjeta los separa sin
     gastar una linea en decirlo.
+
+    Las de `ya_avisados` no van aparte ni marcadas como repetidas: se acumulan
+    con las nuevas en la tarjeta de su personaje. Saber cuando se aviso por
+    primera vez no cambia nada; lo accionable es todo lo que sigue adelantado.
+    Solo hay mensaje si hay alguna nueva, que es lo que evita repetir el mismo
+    aviso cada pasada.
     """
     if not undercuts:
         return []
 
+    # Las nuevas primero para que el tope de la pasada nunca deje fuera una que
+    # no se haya avisado todavia: esas son las que luego se marcan como avisadas.
     shown = list(undercuts[:MAX_DEALS_PER_RUN])
+    shown += list(ya_avisados)[: max(0, MAX_DEALS_PER_RUN - len(shown))]
 
     # dict normal: conserva el orden de llegada, que ya viene por diferencia de
     # precio, asi que el personaje con el undercut mas gordo sale primero.
@@ -354,10 +357,10 @@ def build_undercut_messages(
         if account is not None:
             quien += f" · WoW {account}"
 
-        # "1 subasta" se leia como el total de ese personaje, y no lo es: aqui
-        # solo van las que no se hayan avisado ya. Decir "nueva" evita creer que
-        # un personaje con tres adelantadas solo tiene una.
-        plural = "nuevas" if len(suyas) != 1 else "nueva"
+        # El recuento es todo lo que ese personaje tiene adelantado ahora
+        # mismo, se avisara antes o no: es exactamente lo que hay que ir a
+        # cambiar en su buzon.
+        plural = "subastas" if len(suyas) != 1 else "subasta"
         titulo = f"{quien} — {len(suyas)} {plural}"
         continuacion = f"{quien} · sigue"
 
@@ -377,62 +380,27 @@ def build_undercut_messages(
                 }
             )
 
-    if ya_avisados and messages:
-        # Sin esto, un personaje con tres adelantadas de las que dos ya se
-        # avisaron aparece con una sola y parece que las otras se arreglaron.
-        # Van en su propio bloque y agrupadas por personaje: una lista corrida
-        # repitiendo el mismo nombre no se lee.
-        messages.append(_resumen_ya_avisadas(ya_avisados, panel_url, orden))
+    if panel_url and messages:
+        # El panel es el unico sitio donde estan todas, incluidas las que hoy no
+        # han entrado en ningun mensaje; el enlace va una sola vez, al final.
+        enlace = f"\n[📊 Ver el panel con todas]({panel_url})"
+        ultimo = messages[-1]["embeds"][0]
+        if len(ultimo["description"]) + len(enlace) <= MAX_EMBED_DESCRIPTION:
+            ultimo["description"] += enlace
+        else:
+            messages.append(
+                {
+                    "embeds": [
+                        {
+                            "title": "📊 Todas tus subastas",
+                            "description": enlace.strip(),
+                            "color": COLOR_UNDERCUT,
+                        }
+                    ]
+                }
+            )
 
     return messages
-
-
-def _resumen_ya_avisadas(
-    ya_avisados: Sequence[Undercut],
-    panel_url: str | None = None,
-    orden: Mapping[tuple[str, str], int] | None = None,
-) -> dict[str, Any]:
-    """Un bloque con las que siguen adelantadas y ya se avisaron.
-
-    Agrupado por personaje, que es como se actua: cada linea es un viaje al
-    buzon de uno. El ilvl va detras del objeto porque el mismo objeto puesto a
-    dos ilvl salia dos veces identico y parecia un fallo.
-    """
-    por_personaje: dict[tuple[str, str, object], list[Undercut]] = {}
-    for undercut in ya_avisados:
-        clave = (undercut.mine.character, undercut.mine.realm, undercut.mine.account)
-        por_personaje.setdefault(clave, []).append(undercut)
-
-    lineas: list[str] = []
-    for (character, _realm, account), suyas in _en_orden(por_personaje, orden):
-        quien = character
-        if account is not None:
-            quien += f" · WoW {account}"
-        objetos = ", ".join(
-            f"{u.mine.item_name} ({u.mine.ilvl})" if u.mine.ilvl else u.mine.item_name
-            for u in suyas
-        )
-        lineas.append(f"**{quien}** — {objetos}")
-
-    grupos = _repartir(lineas, MAX_EMBED_DESCRIPTION)
-    dentro = grupos[0] if grupos else []
-    fuera = len(lineas) - len(dentro)
-    if fuera:
-        dentro = dentro + [f"_y {fuera} personaje(s) mas: mira el panel fijado._"]
-
-    if panel_url:
-        dentro = dentro + [f"\n[📊 Ver el panel con todas]({panel_url})"]
-
-    plural = "siguen" if len(ya_avisados) != 1 else "sigue"
-    return {
-        "embeds": [
-            {
-                "title": f"🔁 {len(ya_avisados)} que ya te avise y {plural} adelantadas",
-                "description": "\n".join(dentro),
-                "color": COLOR_REPETIDO,
-            }
-        ]
-    }
 
 
 def _venta_line(venta: Venta) -> str:

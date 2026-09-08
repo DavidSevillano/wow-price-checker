@@ -642,9 +642,9 @@ def run_mis_subastas(
             )
 
         frescos = todos if ignore_state else notified.filter_new(todos)
-        # Los repetidos no se tiran: van nombrados en la cabecera del aviso,
-        # porque un personaje con tres adelantadas de las que dos son repetidas
-        # aparecia con una sola y parecia que las otras se habian arreglado.
+        # Los ya avisados no se tiran ni van marcados como repetidos: se
+        # acumulan con los nuevos en la tarjeta de su personaje, porque lo
+        # accionable es todo lo que sigue adelantado, no cuando se dijo.
         claves_frescas = {
             (u.realm_id, u.mine.auction_id, u.rival_auction_id) for u in frescos
         }
@@ -655,7 +655,10 @@ def run_mis_subastas(
             not in claves_frescas
         ]
         if ya_avisados:
-            log.info("🔁 %s undercut(s) ya avisados, omitidos.", len(ya_avisados))
+            log.info(
+                "🔁 %s undercut(s) ya avisados, van con los nuevos.",
+                len(ya_avisados),
+            )
 
         if not frescos:
             log.info("😌 Nadie nuevo te ha adelantado.")

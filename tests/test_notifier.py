@@ -322,61 +322,56 @@ def test_el_recuento_va_en_la_cabecera():
     mensajes = build_undercut_messages(
         [un_undercut(auction_id=1), un_undercut(auction_id=2)]
     )
-    assert "2 nuevas" in texto(mensajes[0])
+    assert "2 subastas" in texto(mensajes[0])
 
 
 def test_una_sola_subasta_va_en_singular():
     contenido = texto(build_undercut_messages([un_undercut()])[0])
-    assert "1 nueva" in contenido
-    assert "nuevas" not in contenido
+    assert "1 subasta" in contenido
+    assert "subastas" not in contenido
 
 
-def test_el_recuento_dice_que_son_solo_las_nuevas():
-    """"1 subasta" se leia como el total del personaje, y no lo es."""
-    contenido = texto(build_undercut_messages([un_undercut()])[0])
-    assert "nueva" in contenido
+def test_las_ya_avisadas_van_con_las_nuevas_del_personaje():
+    """Acumuladas en la misma tarjeta: no hay bloque de repetidas."""
+    ya = [un_undercut(objeto="Zapatillas", auction_id=7)]
+    mensajes = build_undercut_messages(
+        [un_undercut(objeto="Grebas", auction_id=1)], ya_avisados=ya
+    )
+    assert len(mensajes) == 1
+    contenido = texto(mensajes[0])
+    assert "Grebas" in contenido
+    assert "Zapatillas" in contenido
 
 
-def resumen(mensajes):
-    """El embed de las que siguen adelantadas, que va el ultimo."""
-    return mensajes[-1]["embeds"][0]
+def test_el_recuento_incluye_las_ya_avisadas():
+    """El numero es lo que hay adelantado ahora, no solo lo nuevo."""
+    ya = [un_undercut(objeto="Zapatillas", auction_id=7)]
+    mensajes = build_undercut_messages([un_undercut(auction_id=1)], ya_avisados=ya)
+    assert "2 subastas" in texto(mensajes[0])
 
 
-def test_las_ya_avisadas_van_en_su_propio_bloque():
-    """Un recuento a secas no sirve: hay que decir cuales, y agrupadas."""
+def test_una_ya_avisada_no_se_marca_como_repetida():
+    """Decir que ya se aviso no cambia nada: solo estorba."""
+    ya = [un_undercut(objeto="Zapatillas", auction_id=7)]
+    contenido = texto(
+        build_undercut_messages([un_undercut(auction_id=1)], ya_avisados=ya)[0]
+    )
+    for palabra in ("ya te avise", "repetid", "sigue adelantada"):
+        assert palabra not in contenido.lower()
+
+
+def test_una_ya_avisada_de_otro_personaje_va_en_su_mensaje():
     ya = [un_undercut(personaje="Ana", objeto="Zapatillas", auction_id=7)]
-    mensajes = build_undercut_messages([un_undercut()], ya_avisados=ya)
-    e = resumen(mensajes)
-    assert "1" in e["title"]
-    assert "Ana" in e["description"]
-    assert "Zapatillas" in e["description"]
+    mensajes = build_undercut_messages([un_undercut(personaje="Pepe")], ya_avisados=ya)
+    assert len(mensajes) == 2
+    assert "Zapatillas" in texto(mensajes[1])
+    assert "Ana" in texto(mensajes[1])
 
 
-def test_las_ya_avisadas_se_agrupan_por_personaje():
-    """Tres lineas repitiendo el mismo nombre no se leen."""
-    ya = [
-        un_undercut(personaje="Ana", objeto="Grebas", auction_id=7),
-        un_undercut(personaje="Ana", objeto="Zapatillas", auction_id=8),
-        un_undercut(personaje="Luis", objeto="Grebas", auction_id=9),
-    ]
-    desc = resumen(build_undercut_messages([un_undercut()], ya_avisados=ya))[
-        "description"
-    ]
-    assert desc.count("Ana") == 1
-    assert desc.count("Luis") == 1
-    assert "3" in resumen(build_undercut_messages([un_undercut()], ya_avisados=ya))["title"]
-
-
-def test_el_ilvl_distingue_dos_del_mismo_objeto():
-    """El mismo objeto a dos ilvl salia dos veces igual y parecia un error."""
-    ya = [
-        un_undercut(personaje="Ana", objeto="Zapatillas", auction_id=7, ilvl=292),
-        un_undercut(personaje="Ana", objeto="Zapatillas", auction_id=8, ilvl=295),
-    ]
-    desc = resumen(build_undercut_messages([un_undercut()], ya_avisados=ya))[
-        "description"
-    ]
-    assert "292" in desc and "295" in desc
+def test_sin_ninguna_nueva_no_se_avisa_de_las_ya_avisadas():
+    """Si no hay novedad, el mismo aviso cada pasada seria ruido."""
+    ya = [un_undercut(objeto="Zapatillas", auction_id=7)]
+    assert build_undercut_messages([], ya_avisados=ya) == []
 
 
 def test_sin_repetidos_no_se_anade_nada():
@@ -583,12 +578,16 @@ def test_sin_guild_no_hay_enlace(requests_mock):
     assert notifier.panel_url("333") is None
 
 
-def test_el_enlace_del_panel_va_en_el_bloque_de_repetidas():
+def test_el_enlace_del_panel_va_una_vez_al_final():
     ya = [un_undercut(personaje="Ana", objeto="Zapatillas", auction_id=7)]
     mensajes = build_undercut_messages(
         [un_undercut()], ya_avisados=ya, panel_url="https://discord.com/channels/1/2/3"
     )
-    assert "https://discord.com/channels/1/2/3" in mensajes[-1]["embeds"][0]["description"]
+    enlaces = [
+        m for m in mensajes if "channels/1/2/3" in m["embeds"][0]["description"]
+    ]
+    assert len(enlaces) == 1
+    assert enlaces[0] is mensajes[-1]
 
 
 

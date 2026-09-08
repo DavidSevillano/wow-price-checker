@@ -534,21 +534,21 @@ subastas de 100 g salian compitiendo contra listados de 10.000 g.
 - **Un aviso por rival.** Mientras sea el mismo el que te adelanta, no se
   repite. Si reposteas y te vuelven a adelantar, aviso nuevo.
 
-  Ojo a lo que eso significa al leer el aviso: **ahi solo van las nuevas**. Si
-  un personaje tiene tres adelantadas y dos ya te las avise, veras "1 nueva", no
-  "3". Por eso el titulo dice *nueva* y, cuando hay omitidas, el mensaje las
-  **nombra** en la cabecera:
+  Lo que decide **si hay mensaje** es que haya alguna nueva; lo que va **dentro**
+  del mensaje es **todo lo que ese personaje tiene adelantado ahora mismo**, se
+  avisara antes o no, sin marcar cuales son repetidas. Saber cuando se dijo por
+  primera vez no cambia nada: vas al buzon a cambiarlas todas igual.
 
   ```
-  🔁 7 que ya te avise y siguen adelantadas
-  Adangor · WoW 2 — Yelmo místico de explorador de templos (295)
-  Dbardan · WoW 2 — Grebas (305), Zapatillas (292), Zapatillas (295)
-  Mbarlin · WoW 2 — Grebas de las profundidades nocivas (295)
+  ⚔️ Dbardan · WoW 2 — 3 subastas
+  • Grebas de las profundidades nocivas — ~~9.000~~ **8.000 g**
+  • Zapatillas (292) — ~~5.500~~ **5.100 g**
+  • Zapatillas (295) — te igualan a 6.000 g
   ```
 
-  Van **agrupadas por personaje**, que es como se actua: cada linea es un viaje
-  al buzon de uno. Y con el **ilvl** detras del objeto, porque el mismo objeto
-  puesto a dos ilvl salia dos veces identico y parecia un fallo.
+  Asi un personaje con tres adelantadas de las que dos ya te avise sale con
+  "3 subastas" y las tres lineas, no con "1 nueva" y la sensacion de que las
+  otras se arreglaron solas.
 
   **La foto completa esta siempre en el panel fijado** (ver 5.8).
 - **Nada de avisos fantasma.** Si una subasta tuya ya no aparece en la casa de
@@ -590,8 +590,8 @@ subastas vigiladas y todas las adelantadas, sin filtro de repetidas.
 **No lo vas a ver llegar.** Se crea una sola vez y a partir de ahi se edita en
 su sitio, asi que nunca sube al final del canal. Tres formas de llegar a el:
 
-- **El enlace del propio aviso.** Cuando hay adelantadas ya avisadas, el bloque
-  gris del final lleva un `📊 Ver el panel con todas` que va directo.
+- **El enlace del propio aviso.** El ultimo mensaje de cada tanda lleva un
+  `📊 Ver el panel con todas` que va directo.
 - **Buscando** `Tus subastas` en el canal, con la lupa de Discord.
 - **En el log de cada pasada**, que imprime su url:
   `📊 Panel actualizado: https://discord.com/channels/.../...`
