@@ -4,7 +4,13 @@ from fastapi.testclient import TestClient
 from wowalerts.mercado import TIPO_OBJETO, Clave, ResumenReino
 from web.app import crear_app
 from web.db import abrir
-from web.ingesta import guardar_nombres, guardar_reinos, recalcular_estadisticas, volcar
+from web.ingesta import (
+    guardar_atributos,
+    guardar_nombres,
+    guardar_reinos,
+    recalcular_estadisticas,
+    volcar,
+)
 
 
 def resumen(*precios, listados=None):
@@ -468,3 +474,153 @@ def test_en_movil_el_reino_sigue_estando_aunque_su_columna_se_caiga(cliente_gran
     texto = cliente_grande.get("/").text
     assert texto.count("Reino 1") >= 2
     assert "reino-movil" in texto
+
+
+# -- Categorias y buscador ---------------------------------------------------
+
+
+@pytest.fixture
+def ruta_catalogo(tmp_path):
+    ruta = tmp_path / "cat.db"
+    con = abrir(ruta)
+    guardar_reinos(con, {i: f"Reino {i}" for i in range(1, 21)})
+    piezas = [
+        (1, "Mail Boots", "Armor", "Mail", "EPIC"),
+        (2, "Mail Helm", "Armor", "Mail", "RARE"),
+        (3, "Plate Boots", "Armor", "Plate", "EPIC"),
+        (4, "Big Sword", "Weapon", "One-Handed Swords", "EPIC"),
+        (5, "Recipe: Soup", "Recipe", "Cooking", "COMMON"),
+    ]
+    guardar_nombres(
+        con, [(TIPO_OBJETO, i, "en", n, f"https://cdn/{i}.jpg") for i, n, *_ in piezas]
+    )
+    guardar_atributos(
+        con,
+        [
+            {"tipo": TIPO_OBJETO, "producto_id": i, "clase_id": 1, "clase": c,
+             "subclase_id": 1, "subclase": s, "calidad": q, "hueco": "FEET",
+             "nivel": 200, "nivel_requerido": 70}
+            for i, n, c, s, q in piezas
+        ],
+    )
+    volcar(
+        con,
+        {
+            Clave(TIPO_OBJETO, i, 305): {
+                1: resumen(10_000 * i),
+                **{r: resumen(100_000 * i) for r in range(2, 21)},
+            }
+            for i, *_ in piezas
+        },
+        generado_en=1788451184,
+    )
+    recalcular_estadisticas(con)
+    con.close()
+    return ruta
+
+
+@pytest.fixture
+def cliente_catalogo(ruta_catalogo):
+    return TestClient(crear_app(ruta_catalogo))
+
+
+def test_el_indice_de_categorias_responde(cliente_catalogo):
+    r = cliente_catalogo.get("/items")
+    assert r.status_code == 200
+    for esperado in ("Armor", "Weapon", "Recipe"):
+        assert esperado in r.text
+
+
+def test_el_indice_enlaza_cada_categoria(cliente_catalogo):
+    texto = cliente_catalogo.get("/items").text
+    assert '/items/armor"' in texto
+    assert '/items/weapon"' in texto
+
+
+def test_una_categoria_lista_sus_objetos_y_sus_subcategorias(cliente_catalogo):
+    texto = cliente_catalogo.get("/items/armor").text
+    assert "Mail Boots" in texto and "Plate Boots" in texto
+    assert '/items/armor/mail"' in texto
+    assert "Big Sword" not in texto
+
+
+def test_una_subcategoria_afina(cliente_catalogo):
+    texto = cliente_catalogo.get("/items/armor/mail").text
+    assert "Mail Boots" in texto
+    assert "Plate Boots" not in texto
+
+
+def test_una_categoria_que_no_existe_da_404(cliente_catalogo):
+    assert cliente_catalogo.get("/items/no-existe").status_code == 404
+    assert cliente_catalogo.get("/items/armor/no-existe").status_code == 404
+
+
+def test_la_categoria_no_dice_en_que_reino_esta_lo_barato(cliente_catalogo):
+    """Es lo que vende el Pro: una tabla de cien filas lo regalaria en bloque."""
+    texto = cliente_catalogo.get("/items/armor").text
+    assert "Reino 1" not in texto
+
+
+def test_las_paginas_de_categoria_se_enlazan_entre_si(cliente_catalogo, monkeypatch):
+    """Sin el enlace a la pagina 2, Google solo ve los primeros 100 objetos y
+    el catalogo sigue sin estar enlazado, que es todo el motivo de esto."""
+    import web.app
+
+    monkeypatch.setattr(web.app, "POR_PAGINA", 2)
+    texto = cliente_catalogo.get("/items/armor").text
+    assert "?p=2" in texto
+
+
+def test_la_pagina_dos_ensena_otros_objetos(cliente_catalogo, monkeypatch):
+    import web.app
+
+    monkeypatch.setattr(web.app, "POR_PAGINA", 2)
+    p1 = cliente_catalogo.get("/items/armor").text
+    p2 = cliente_catalogo.get("/items/armor?p=2").text
+    assert "Mail Boots" in p1 and "Mail Boots" not in p2
+    assert "Plate Boots" in p2
+
+
+def test_una_pagina_que_no_existe_da_404(cliente_catalogo):
+    """Si no, hay infinitas URLs vacias que Google se dedica a rastrear."""
+    assert cliente_catalogo.get("/items/armor?p=99").status_code == 404
+
+
+def test_el_buscador_responde(cliente_catalogo):
+    r = cliente_catalogo.get("/search?q=mail")
+    assert r.status_code == 200
+    assert "Mail Boots" in r.text and "Big Sword" not in r.text
+
+
+def test_el_buscador_sin_texto_no_revienta(cliente_catalogo):
+    assert cliente_catalogo.get("/search").status_code == 200
+
+
+def test_la_caja_de_busqueda_sale_en_todas_las_paginas(cliente_catalogo):
+    for ruta in ("/", "/items", "/items/armor", "/item/1", "/realm/reino-1"):
+        assert 'action="/search"' in cliente_catalogo.get(ruta).text, ruta
+
+
+def test_el_sitemap_lleva_las_categorias(cliente_catalogo):
+    texto = cliente_catalogo.get("/sitemap.xml").text
+    assert "/items</loc>" in texto
+    assert "/items/armor</loc>" in texto
+    assert "/items/armor/mail</loc>" in texto
+
+
+def test_ningun_enlace_de_las_categorias_da_404(cliente_catalogo):
+    import re
+
+    for pagina in ("/items", "/items/armor", "/items/armor/mail", "/search?q=mail"):
+        for href in set(re.findall(r'href="(/[^"#]*)"', cliente_catalogo.get(pagina).text)):
+            assert cliente_catalogo.get(href).status_code != 404, f"{pagina} -> {href}"
+
+
+def test_la_subcategoria_abierta_se_ve_marcada(cliente_catalogo):
+    """Sin esto las pastillas salen todas iguales y no se sabe cual esta puesta.
+
+    El modificador `activo` vivia solo en `.ilvl`, que es la pastilla de la
+    ficha; las de categoria comparten el estilo base pero no lo tenian.
+    """
+    texto = cliente_catalogo.get("/items/armor/mail").text
+    assert 'class="pastilla activo"' in texto

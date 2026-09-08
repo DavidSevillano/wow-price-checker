@@ -4,14 +4,15 @@ from wowalerts.blizzard import AuctionSnapshot, BlizzardError
 from wowalerts.mercado import TIPO_MASCOTA, TIPO_OBJETO, Clave, ResumenReino
 from web.consultas import ficha
 from web.db import abrir
-from web.ingesta import guardar_iconos, guardar_nombres
+from web.ingesta import guardar_atributos, guardar_iconos, guardar_nombres
 
 from publicar_web import (
     EXIT_DEMASIADOS_FALLOS,
     EXIT_OK,
     main,
-    pedir_nombres,
+    pedir_datos,
     poblar,
+    productos_sin_atributos,
     productos_sin_icono,
     productos_sin_nombre,
 )
@@ -126,8 +127,14 @@ class ClientePrueba:
     def connected_realm_name(self, realm_id):
         return f"Reino {realm_id}"
 
-    def item_names(self, item_id):
-        return {"en_GB": f"Objeto {item_id}"}
+    def item_datos(self, item_id):
+        return {
+            "nombres": {"en_GB": f"Objeto {item_id}"},
+            "clase_id": 4, "clase": "Armor",
+            "subclase_id": 3, "subclase": "Mail",
+            "calidad": "EPIC", "hueco": "FEET",
+            "nivel": 219, "nivel_requerido": 90,
+        }
 
     def item_icon_url(self, item_id):
         return f"https://cdn/{item_id}.jpg"
@@ -231,15 +238,21 @@ def test_si_fallan_pocos_reinos_se_publica_igual(tmp_path, monkeypatch):
 
 
 class ClienteFalso:
-    """Solo lo que usan `pedir_nombres` y `pedir_iconos`."""
+    """Solo lo que usan `pedir_datos` y `pedir_iconos`."""
 
     def __init__(self, iconos=None, nombres=None):
         self.iconos = iconos if iconos is not None else {}
         self.nombres = nombres if nombres is not None else {}
         self.iconos_pedidos = []
 
-    def item_names(self, item_id):
-        return self.nombres.get(item_id, {"en_GB": f"Objeto {item_id}"})
+    def item_datos(self, item_id):
+        return {
+            "nombres": self.nombres.get(item_id, {"en_GB": f"Objeto {item_id}"}),
+            "clase_id": 4, "clase": "Armor",
+            "subclase_id": 3, "subclase": "Mail",
+            "calidad": "EPIC", "hueco": "FEET",
+            "nivel": 219, "nivel_requerido": 90,
+        }
 
     def item_icon_url(self, item_id):
         self.iconos_pedidos.append(item_id)
@@ -249,7 +262,7 @@ class ClienteFalso:
 def test_un_objeto_nuevo_trae_su_icono(tmp_path):
     client = ClienteFalso(iconos={222: "https://cdn/222.jpg"})
 
-    filas = pedir_nombres(client, [(TIPO_OBJETO, 222)], max_workers=2)
+    filas, _ = pedir_datos(client, [(TIPO_OBJETO, 222)], max_workers=2)
 
     assert filas, "algo tiene que salir"
     assert {f[4] for f in filas} == {"https://cdn/222.jpg"}
@@ -264,7 +277,7 @@ def test_el_icono_va_en_todos_los_idiomas_del_objeto(tmp_path):
         nombres={222: {"en_GB": "Boots", "de_DE": "Stiefel"}},
     )
 
-    filas = pedir_nombres(client, [(TIPO_OBJETO, 222)], max_workers=2)
+    filas, _ = pedir_datos(client, [(TIPO_OBJETO, 222)], max_workers=2)
 
     assert len(filas) == 2
     assert all(f[4] == "https://cdn/222.jpg" for f in filas)
@@ -274,7 +287,7 @@ def test_un_objeto_sin_icono_no_rompe_la_pasada(tmp_path):
     """`item_icon_url` devuelve None si Blizzard no lo tiene. No es un error."""
     client = ClienteFalso(iconos={})
 
-    filas = pedir_nombres(client, [(TIPO_OBJETO, 222)], max_workers=2)
+    filas, _ = pedir_datos(client, [(TIPO_OBJETO, 222)], max_workers=2)
 
     assert filas and all(f[4] is None for f in filas)
 
@@ -371,3 +384,113 @@ def test_solo_iconos_no_toca_los_precios(tmp_path, monkeypatch):
     assert con.execute("SELECT icono FROM nombre").fetchone()[0] == (
         "https://cdn/271440.jpg"
     )
+
+
+# -- Atributos en la pasada --------------------------------------------------
+
+
+class ClienteConDatos:
+    """Cliente falso que responde `item_datos` como el de verdad."""
+
+    def __init__(self, datos=None):
+        self.datos = datos if datos is not None else {}
+        self.pedidos = []
+
+    def item_datos(self, item_id):
+        self.pedidos.append(item_id)
+        if item_id in self.datos:
+            return self.datos[item_id]
+        return {
+            "nombres": {"en_GB": f"Objeto {item_id}"},
+            "clase_id": 4, "clase": "Armor",
+            "subclase_id": 3, "subclase": "Mail",
+            "calidad": "EPIC", "hueco": "FEET",
+            "nivel": 219, "nivel_requerido": 90,
+        }
+
+    def item_icon_url(self, item_id):
+        return f"https://cdn/{item_id}.jpg"
+
+
+def test_un_objeto_nuevo_trae_nombre_y_atributos_en_una_peticion(tmp_path):
+    client = ClienteConDatos()
+
+    nombres, atrib = pedir_datos(client, [(TIPO_OBJETO, 222)], max_workers=2)
+
+    assert client.pedidos == [222], "una sola peticion de datos por objeto"
+    assert nombres and nombres[0][3] == "Objeto 222"
+    assert atrib and atrib[0]["subclase"] == "Mail"
+
+
+def test_un_objeto_sin_categoria_conserva_su_nombre(tmp_path):
+    """`item_datos` devuelve None cuando no hay categoria. El objeto sigue
+    existiendo y su ficha tiene que poder ensenar el nombre; lo que no tiene es
+    sitio en /items.
+    """
+    client = ClienteConDatos(datos={222: None})
+
+    nombres, atrib = pedir_datos(client, [(TIPO_OBJETO, 222)], max_workers=2)
+
+    assert atrib == []
+    assert nombres == []
+
+
+def test_se_rellenan_los_atributos_que_faltan_de_antes(tmp_path):
+    """Los 19.365 productos que ya tenian nombre no pasan por
+    `productos_sin_nombre`, asi que sin esto no tendrian categoria jamas."""
+    con = abrir(tmp_path / "p.db")
+    guardar_nombres(
+        con,
+        [
+            (TIPO_OBJETO, 111, "en", "Ya clasificado", None),
+            (TIPO_OBJETO, 222, "en", "Sin clasificar", None),
+        ],
+    )
+    guardar_atributos(
+        con,
+        [
+            {
+                "tipo": TIPO_OBJETO, "producto_id": 111,
+                "clase_id": 4, "clase": "Armor",
+                "subclase_id": 3, "subclase": "Mail",
+            }
+        ],
+    )
+
+    assert productos_sin_atributos(con, limite=10) == [(TIPO_OBJETO, 222)]
+
+
+def test_el_relleno_de_atributos_esta_acotado(tmp_path):
+    con = abrir(tmp_path / "p.db")
+    guardar_nombres(
+        con, [(TIPO_OBJETO, i, "en", f"Objeto {i}", None) for i in range(1, 11)]
+    )
+
+    assert len(productos_sin_atributos(con, limite=4)) == 4
+
+
+def test_solo_atributos_no_toca_los_precios(tmp_path, monkeypatch):
+    monkeypatch.chdir(RAIZ)
+    ruta = tmp_path / "p.db"
+    con = abrir(ruta)
+    guardar_nombres(con, [(TIPO_OBJETO, 271440, "en", "Boots", None)])
+    poblar(
+        con,
+        {Clave(TIPO_OBJETO, 271440, 305): {1305: resumen(500_000_000)}},
+        {1305: "Kazzak"},
+        [],
+        generado_en=1788451184,
+    )
+    con.close()
+
+    antes = _snapshot(ruta)
+    codigo = main(
+        ["--db", str(ruta), "--solo-atributos", "--atributos", "50"],
+        client=ClienteConDatos(),
+    )
+
+    assert codigo == EXIT_OK
+    despues = _snapshot(ruta)
+    assert despues["precio"] == antes["precio"]
+    con = abrir(ruta)
+    assert con.execute("SELECT clase_slug FROM atributo").fetchone()[0] == "armor"

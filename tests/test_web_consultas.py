@@ -7,17 +7,28 @@ from web.consultas import (
     REINOS_PARA_MEDIANA,
     TOPE_CDS,
     anotar_peticion,
+    buscar,
+    categorias,
+    contar_categoria,
     ficha,
     mejores_rebajas,
     paginas_mas_pedidas,
+    productos_de_categoria,
     productos_de_reino,
     productos_mas_vistos,
     reino_por_slug,
     reinos_de,
     reinos_publicados,
     resumen_del_catalogo,
+    subcategorias,
 )
-from web.ingesta import guardar_nombres, guardar_reinos, recalcular_estadisticas, volcar
+from web.ingesta import (
+    guardar_atributos,
+    guardar_nombres,
+    guardar_reinos,
+    recalcular_estadisticas,
+    volcar,
+)
 
 
 def resumen(*precios, listados=None):
@@ -677,3 +688,163 @@ def test_un_reino_no_ensena_productos_sin_nombre(tmp_path):
     )
     recalcular_estadisticas(c)
     assert productos_de_reino(c, 1, 10, 15) == []
+
+
+# -- Categorias: /items/armor/mail ------------------------------------------
+#
+# Son las dos cosas a la vez: los filtros de la casa de subastas que se pidieron
+# (armas, armadura, recetas...) y el camino de rastreo que le faltaba al sitio.
+# Con 19.365 fichas y solo 4.598 enlazadas desde alguna pagina de reino, tres
+# de cada cuatro no tenian forma de ser descubiertas.
+#
+# NO llevan el reino mas barato: eso es justo lo que vende el Pro, y una tabla
+# de cien filas con su reino al lado lo regalaria en bloque.
+
+
+@pytest.fixture
+def con_catalogo(tmp_path):
+    c = abrir(tmp_path / "cat.db")
+    guardar_reinos(c, {i: f"Reino {i}" for i in range(1, 21)})
+    piezas = [
+        (1, "Mail Boots", "Armor", 4, "Mail", 3, "EPIC"),
+        (2, "Mail Helm", "Armor", 4, "Mail", 3, "RARE"),
+        (3, "Plate Boots", "Armor", 4, "Plate", 4, "EPIC"),
+        (4, "Big Sword", "Weapon", 2, "One-Handed Swords", 7, "EPIC"),
+        (5, "Recipe: Soup", "Recipe", 9, "Cooking", 5, "COMMON"),
+    ]
+    guardar_nombres(
+        c, [(TIPO_OBJETO, i, "en", n, f"https://cdn/{i}.jpg") for i, n, *_ in piezas]
+    )
+    guardar_atributos(
+        c,
+        [
+            {
+                "tipo": TIPO_OBJETO, "producto_id": i,
+                "clase_id": cid, "clase": clase,
+                "subclase_id": sid, "subclase": sub,
+                "calidad": cal, "hueco": "FEET", "nivel": 200,
+                "nivel_requerido": 70,
+            }
+            for i, n, clase, cid, sub, sid, cal in piezas
+        ],
+    )
+    volcar(
+        c,
+        {
+            Clave(TIPO_OBJETO, i, 305): {
+                1: resumen(10_000 * i), **{r: resumen(100_000 * i) for r in range(2, 21)}
+            }
+            for i, *_ in piezas
+        },
+        generado_en=1788451184,
+    )
+    recalcular_estadisticas(c)
+    return c
+
+
+def test_las_categorias_salen_con_cuantos_objetos_tienen(con_catalogo):
+    cats = {c["clase_slug"]: c for c in categorias(con_catalogo)}
+    assert cats["armor"]["objetos"] == 3
+    assert cats["weapon"]["objetos"] == 1
+    assert cats["recipe"]["objetos"] == 1
+
+
+def test_las_categorias_salen_ordenadas_por_nombre(con_catalogo):
+    nombres = [c["clase"] for c in categorias(con_catalogo)]
+    assert nombres == sorted(nombres)
+
+
+def test_las_subcategorias_son_las_de_su_clase(con_catalogo):
+    subs = [s["subclase"] for s in subcategorias(con_catalogo, "armor")]
+    assert subs == ["Mail", "Plate"]
+
+
+def test_una_clase_que_no_existe_no_tiene_subcategorias(con_catalogo):
+    assert subcategorias(con_catalogo, "no-existe") == []
+
+
+def test_una_categoria_lista_sus_objetos(con_catalogo):
+    filas = productos_de_categoria(con_catalogo, "armor", limite=10)
+    assert {f["nombre"] for f in filas} == {"Mail Boots", "Mail Helm", "Plate Boots"}
+
+
+def test_una_subcategoria_afina(con_catalogo):
+    filas = productos_de_categoria(con_catalogo, "armor", "mail", limite=10)
+    assert {f["nombre"] for f in filas} == {"Mail Boots", "Mail Helm"}
+
+
+def test_se_puede_filtrar_por_calidad(con_catalogo):
+    filas = productos_de_categoria(con_catalogo, "armor", calidad="EPIC", limite=10)
+    assert {f["nombre"] for f in filas} == {"Mail Boots", "Plate Boots"}
+
+
+def test_la_lista_de_categoria_no_dice_en_que_reino(con_catalogo):
+    """Es lo que vende el Pro. Una tabla de cien filas con su reino al lado lo
+    regalaria en bloque, y el muro de la ficha dejaria de tener sentido.
+    """
+    fila = productos_de_categoria(con_catalogo, "armor", limite=1)[0]
+    assert "reino" not in fila and "slug" not in fila
+    # Lo que si lleva: desde cuanto sale y su icono, que es el gancho.
+    assert fila["desde"] > 0
+    assert fila["icono"].startswith("https://cdn/")
+
+
+def test_una_categoria_se_puede_paginar(con_catalogo):
+    """Con 19.365 objetos, una categoria no cabe en una pagina y Google tiene
+    que poder recorrerlas todas."""
+    p1 = productos_de_categoria(con_catalogo, "armor", limite=2)
+    p2 = productos_de_categoria(con_catalogo, "armor", limite=2, desde=2)
+    assert len(p1) == 2 and len(p2) == 1
+    assert not ({f["producto_id"] for f in p1} & {f["producto_id"] for f in p2})
+
+
+def test_cuantos_objetos_tiene_una_categoria(con_catalogo):
+    """Hace falta para saber cuantas paginas hay que enlazar."""
+    assert contar_categoria(con_catalogo, "armor") == 3
+    assert contar_categoria(con_catalogo, "armor", "mail") == 2
+
+
+def test_un_objeto_sin_precio_no_sale_en_su_categoria(con_catalogo):
+    """La categoria viene de `atributo`, que no se borra en cada pasada; los
+    precios si. Un objeto que hoy no esta en subastas no tiene ficha que
+    ensenar, asi que enlazarlo seria mandar a Google a un 404.
+    """
+    guardar_nombres(con_catalogo, [(TIPO_OBJETO, 99, "en", "Fantasma", None)])
+    guardar_atributos(
+        con_catalogo,
+        [{"tipo": TIPO_OBJETO, "producto_id": 99, "clase_id": 4, "clase": "Armor",
+          "subclase_id": 3, "subclase": "Mail"}],
+    )
+
+    assert "Fantasma" not in {
+        f["nombre"] for f in productos_de_categoria(con_catalogo, "armor", limite=10)
+    }
+
+
+# -- El buscador -------------------------------------------------------------
+
+
+def test_el_buscador_encuentra_por_trozo_del_nombre(con_catalogo):
+    assert {f["nombre"] for f in buscar(con_catalogo, "mail", limite=10)} == {
+        "Mail Boots", "Mail Helm"
+    }
+
+
+def test_el_buscador_no_distingue_mayusculas(con_catalogo):
+    assert buscar(con_catalogo, "MAIL BOOTS", limite=10)[0]["nombre"] == "Mail Boots"
+
+
+def test_el_buscador_ignora_los_comodines_de_sql(con_catalogo):
+    """Un `%` escrito por el usuario no puede convertirse en "damelo todo"."""
+    assert buscar(con_catalogo, "%", limite=10) == []
+
+
+def test_una_busqueda_vacia_no_devuelve_el_catalogo(con_catalogo):
+    assert buscar(con_catalogo, "   ", limite=10) == []
+
+
+def test_el_buscador_solo_devuelve_lo_que_esta_en_venta(con_catalogo):
+    guardar_nombres(con_catalogo, [(TIPO_OBJETO, 98, "en", "Mail Fantasma", None)])
+    assert "Mail Fantasma" not in {
+        f["nombre"] for f in buscar(con_catalogo, "mail", limite=10)
+    }

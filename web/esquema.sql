@@ -70,3 +70,37 @@ CREATE TABLE IF NOT EXISTS volcado (
 -- ficha y la única que se hace en caliente.
 CREATE INDEX IF NOT EXISTS precio_por_producto
     ON precio (tipo, producto_id, variante, minimo);
+
+-- Lo que la casa de subastas usa para filtrar: categoria, subcategoria,
+-- calidad, hueco de equipo y niveles. Una fila por producto, no por variante:
+-- las Grebas a ilvl 305 y a 318 son la misma armadura de malla para los pies.
+--
+-- Todo esto ya venia en la misma respuesta de `/data/wow/item/{id}` de la que
+-- se saca el nombre, y se estaba descartando. Guardarlo no cuesta ni una
+-- peticion mas por objeto nuevo.
+--
+-- Los nombres se guardan en ingles y no localizados porque de aqui salen las
+-- URLs (`/items/armor/mail`), que no cambian con el idioma del visitante. El
+-- `_id` de Blizzard se guarda al lado porque es lo estable: si algun dia
+-- renombran una subclase, el id sigue siendo el mismo y el slug se puede
+-- recalcular sin perder de vista que es la misma categoria.
+CREATE TABLE IF NOT EXISTS atributo (
+    tipo            TEXT    NOT NULL,
+    producto_id     INTEGER NOT NULL,
+    clase_id        INTEGER NOT NULL,
+    clase           TEXT    NOT NULL,
+    clase_slug      TEXT    NOT NULL,
+    subclase_id     INTEGER NOT NULL,
+    subclase        TEXT    NOT NULL,
+    subclase_slug   TEXT    NOT NULL,
+    calidad         TEXT,
+    hueco           TEXT,
+    nivel           INTEGER,
+    nivel_requerido INTEGER,
+    PRIMARY KEY (tipo, producto_id)
+) WITHOUT ROWID;
+
+-- Para "dame los objetos de esta categoria", que es la consulta de las paginas
+-- nuevas de /items.
+CREATE INDEX IF NOT EXISTS atributo_por_categoria
+    ON atributo (clase_slug, subclase_slug, producto_id);

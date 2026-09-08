@@ -1266,8 +1266,9 @@ no cuadre con `config.yaml`.
 ## 8. La web publica de precios
 
 Ademas del vigilante privado, el repositorio incluye una web publica de solo
-lectura con los precios de la region: portada, pagina de producto, pagina
-de reino, `robots.txt` y `sitemap.xml`. Vive en `web/` (FastAPI + Jinja2, base SQLite propia,
+lectura con los precios de la region: portada, buscador, indice de
+categorias, pagina de producto, pagina de reino, `robots.txt` y
+`sitemap.xml`. Vive en `web/` (FastAPI + Jinja2, base SQLite propia,
 `web.db`) y no comparte nada con el vigilante salvo el codigo de
 `wowalerts/` que habla con la API de Blizzard.
 
@@ -1312,6 +1313,34 @@ Para hacerlo todo de una sentada, sin bajar subastas ni tocar los precios:
 
 Va a ~60 objetos por segundo, o sea unos cinco minutos para el catalogo
 entero.
+
+### El catalogo navegable: `/items`
+
+Las categorias de la casa de subastas (Weapon, Armor, Recipe, Consumable...)
+con sus subcategorias, paginadas, mas un buscador por nombre en la cabecera de
+todas las paginas.
+
+Existen por dos motivos a la vez. El primero es el evidente: son los filtros
+que se piden para poder mirar el mercado por tipo de objeto. El segundo es el
+que de verdad importa, y se midio: de las **19.365 fichas, solo 4.598 estaban
+enlazadas** desde alguna pagina de reino (el top 100 de cada uno, con mucho
+solape). Las otras **14.767 no tenian ni un enlace** que llevara a ellas, y
+tampoco entraban en el sitemap, que solo lista lo que ya se ha pedido. O sea:
+tres de cada cuatro paginas no se podian descubrir, ni por Google ni por
+nadie. Las paginas de categoria son de donde cuelgan ahora todas.
+
+Los atributos (`clase`, `subclase`, `calidad`, `hueco`, niveles) salen de la
+MISMA respuesta de `/data/wow/item/{id}` de la que ya se sacaba el nombre, y
+que se estaba tirando entera. Para un objeto nuevo no cuesta ni una peticion
+mas. Los que ya estaban guardados se rellenan igual que los iconos:
+
+```bash
+.venv\Scripts\python.exe publicar_web.py --db web.db --solo-atributos --atributos 25000
+```
+
+**Las listas de categoria NO dicen en que reino esta lo barato**, solo desde
+cuanto sale. Es deliberado: el reino mas barato es lo que vende el plan Pro, y
+una tabla de cien filas con su reino al lado lo regalaria en bloque.
 
 **No todo lo que esta rebajado es una ganga.** La portada y las paginas de
 reino descartan dos clases de basura que salian a la vista con los 92 reinos:

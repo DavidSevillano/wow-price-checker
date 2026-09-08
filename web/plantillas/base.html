@@ -10,6 +10,13 @@
 <body>
   <nav class="nav">
     <a class="marca" href="/">AUCTION SENTINEL</a>
+    {# GET y no POST a proposito: asi cada busqueda es una URL que se puede
+       compartir, marcar y --si algun dia interesa-- indexar. #}
+    <form class="buscar" action="/search" method="get" role="search">
+      <input type="search" name="q" placeholder="Search items"
+             aria-label="Search items" value="{{ q or '' }}">
+    </form>
+    <a class="nav-enlace" href="/items">Browse</a>
   </nav>
   {% block contenido %}{% endblock %}
   <footer class="pie">

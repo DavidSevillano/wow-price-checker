@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 
 from web.db import abrir, ruta_de_entorno
 from web.ingesta import (
+    guardar_atributos,
     guardar_iconos,
     guardar_nombres,
     guardar_reinos,
@@ -52,6 +53,10 @@ PRECIO_MINIMO_ORO = 500
 # queda completo en unas seis horas. `--iconos` lo sube para un relleno
 # inicial de una sentada.
 ICONOS_POR_PASADA = 3000
+
+# Lo mismo para las categorias. Se rellenan al mismo ritmo y por lo mismo:
+# 19.365 productos se guardaron antes de que existiera la tabla `atributo`.
+ATRIBUTOS_POR_PASADA = 3000
 
 # Los idiomas que sirve la web, guardados con el codigo de dos letras que usa
 # `web.consultas.IDIOMA_POR_DEFECTO` y que es la clave `idioma` de la tabla
@@ -107,6 +112,23 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Cuantos iconos atrasados rellenar en esta pasada. 0 los desactiva. "
             "Subelo para el relleno inicial del catalogo entero."
+        ),
+    )
+    parser.add_argument(
+        "--atributos",
+        type=int,
+        default=ATRIBUTOS_POR_PASADA,
+        help=(
+            "Cuantas categorias atrasadas rellenar en esta pasada. 0 las "
+            "desactiva. Subelo para clasificar el catalogo entero de una vez."
+        ),
+    )
+    parser.add_argument(
+        "--solo-atributos",
+        action="store_true",
+        help=(
+            "Solo rellena categorias que falten: no baja subastas ni toca los "
+            "precios."
         ),
     )
     parser.add_argument(
@@ -198,42 +220,89 @@ def productos_sin_nombre(con, agregado) -> list[tuple[str, int]]:
     return faltan
 
 
-def pedir_nombres(
+def pedir_datos(
     client: BlizzardClient, faltan: Sequence[tuple[str, int]], max_workers: int
-) -> list[FilaNombre]:
-    """Pide a Blizzard los nombres de lo que falte, en paralelo.
+) -> tuple[list[FilaNombre], list[dict]]:
+    """Nombres y atributos de lo que falte, en paralelo. Una peticion por objeto.
 
     Incluso en la primera pasada son del orden de 20 000 objetos: en serie
     tardaria decenas de minutos, y el volcado de subastas que se esta
-    publicando se renueva cada hora. `client.item_names` ya se traga sus
-    propios errores y devuelve {} si un objeto en concreto falla, asi que no
-    hace falta capturar nada aqui: un objeto sin nombre esta pasada se vuelve
-    a intentar en la siguiente, porque sigue sin tener fila en `nombre`.
+    publicando se renueva cada hora.
+
+    `client.item_datos` se traga sus propios errores y devuelve None si un
+    objeto falla, asi que no hace falta capturar nada aqui: un objeto que hoy
+    no responde se vuelve a intentar en la pasada siguiente, porque sigue sin
+    tener fila en `nombre`.
+
+    Un objeto sin categoria no se guarda NI CON NOMBRE, a proposito. Si se
+    guardara el nombre, dejaria de aparecer en `productos_sin_nombre` y ya no
+    se volveria a preguntar por el nunca, quedandose sin categoria para
+    siempre. Prefiero reintentarlo cada hora: son pocos y la alternativa es
+    perderlos.
+
+    Dos peticiones por objeto nuevo en total --esta y la del icono-- y ninguna
+    para los ~20.000 que ya estan guardados.
     """
-    filas: list[FilaNombre] = []
+    nombres: list[FilaNombre] = []
+    atributos: list[dict] = []
 
     def uno(par: tuple[str, int]):
-        _, producto_id = par
-        # Dos peticiones por objeto en vez de una. Se pagan aqui, con el objeto
-        # nuevo, porque es la unica vez que se piden: el icono se guarda con el
-        # nombre y ya no se vuelve a preguntar nunca por ese producto. Lo que
-        # esto duplica es el coste de los objetos NUEVOS de cada pasada (3.924
-        # en la primera pasada completa de los 92 reinos, y bajando), no el de
-        # los 20.000 del catalogo.
-        return (
-            producto_id,
-            client.item_names(producto_id),
-            client.item_icon_url(producto_id),
+        tipo, producto_id = par
+        return tipo, producto_id, client.item_datos(producto_id), client.item_icon_url(
+            producto_id
         )
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         for futuro in [pool.submit(uno, par) for par in faltan]:
-            producto_id, nombres, icono = futuro.result()
+            tipo, producto_id, datos, icono = futuro.result()
+            if datos is None:
+                continue
             for locale, codigo in IDIOMAS.items():
-                nombre = nombres.get(locale)
+                nombre = datos["nombres"].get(locale)
                 if nombre:
-                    filas.append((TIPO_OBJETO, producto_id, codigo, nombre, icono))
+                    nombres.append((tipo, producto_id, codigo, nombre, icono))
+            atributos.append({"tipo": tipo, "producto_id": producto_id, **datos})
 
+    return nombres, atributos
+
+
+def productos_sin_atributos(con, limite: int) -> list[tuple[str, int]]:
+    """Productos con nombre pero sin categoria, hasta `limite`.
+
+    El gemelo de `productos_sin_icono`, y por lo mismo: los 19.365 objetos que
+    se guardaron antes de que existiera la tabla `atributo` ya tienen fila en
+    `nombre`, asi que `productos_sin_nombre` no vuelve a mirarlos y sin esto no
+    tendrian categoria jamas --ni saldrian en ninguna pagina de /items.
+    """
+    return [
+        (fila[0], fila[1])
+        for fila in con.execute(
+            "SELECT DISTINCT n.tipo, n.producto_id FROM nombre n "
+            " WHERE NOT EXISTS (SELECT 1 FROM atributo a "
+            "                    WHERE a.tipo = n.tipo "
+            "                      AND a.producto_id = n.producto_id) "
+            " ORDER BY n.producto_id "
+            " LIMIT ?",
+            (limite,),
+        )
+    ]
+
+
+def pedir_atributos(
+    client: BlizzardClient, faltan: Sequence[tuple[str, int]], max_workers: int
+) -> list[dict]:
+    """Los atributos que falten, en paralelo. Igual que `pedir_iconos`."""
+
+    def uno(par: tuple[str, int]):
+        tipo, producto_id = par
+        return tipo, producto_id, client.item_datos(producto_id)
+
+    filas = []
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for futuro in [pool.submit(uno, par) for par in faltan]:
+            tipo, producto_id, datos = futuro.result()
+            if datos is not None:
+                filas.append({"tipo": tipo, "producto_id": producto_id, **datos})
     return filas
 
 
@@ -265,7 +334,7 @@ def productos_sin_icono(con, limite: int) -> list[tuple[str, int]]:
 def pedir_iconos(
     client: BlizzardClient, faltan: Sequence[tuple[str, int]], max_workers: int
 ) -> list[tuple[str, int, str | None]]:
-    """Los iconos que falten, en paralelo. Igual que `pedir_nombres`.
+    """Los iconos que falten, en paralelo. Igual que `pedir_atributos`.
 
     `item_icon_url` ya se traga sus errores y devuelve None, y `guardar_iconos`
     descarta los None, asi que un objeto que falle hoy se reintenta manana sin
@@ -332,6 +401,25 @@ def main(argv=None, *, client: BlizzardClient | None = None) -> int:
             locale=config.locale,
             timeout=config.settings.request_timeout,
         )
+
+    if args.solo_atributos:
+        # Misma cautela que en `--solo-iconos`: fuera antes de tocar subastas,
+        # porque `volcar()` reemplaza la tabla `precio` entera.
+        con = abrir(ruta_db)
+        faltan_atrib = productos_sin_atributos(con, args.atributos)
+        log.info("%s productos sin categoria en esta tanda", len(faltan_atrib))
+        arranque_atrib = time.monotonic()
+        puestos = guardar_atributos(
+            con, pedir_atributos(client, faltan_atrib, config.settings.max_workers)
+        )
+        log.info(
+            "Listo: %s categorias de %s pedidas en %.0f s. Quedan %s.",
+            puestos,
+            len(faltan_atrib),
+            time.monotonic() - arranque_atrib,
+            len(productos_sin_atributos(con, 1_000_000)),
+        )
+        return EXIT_OK
 
     if args.solo_iconos:
         # Sale por aqui antes de tocar nada de subastas. No es un atajo de
@@ -406,7 +494,9 @@ def main(argv=None, *, client: BlizzardClient | None = None) -> int:
     faltan = productos_sin_nombre(con, agregado)
     log.info("%s productos sin nombre todavia", len(faltan))
     arranque_nombres = time.monotonic()
-    nombres_producto = pedir_nombres(client, faltan, config.settings.max_workers)
+    nombres_producto, atributos_producto = pedir_datos(
+        client, faltan, config.settings.max_workers
+    )
     if faltan:
         log.info(
             "%s filas de nombre en %.0f s",
@@ -421,6 +511,21 @@ def main(argv=None, *, client: BlizzardClient | None = None) -> int:
     # medias, el volcado de precios ya esta escrito y la web ya sirve datos
     # nuevos. Una foto que falta es un defecto cosmetico, y no vale la pena
     # arriesgar la pasada entera por ella.
+    if atributos_producto:
+        guardar_atributos(con, atributos_producto)
+
+    # Las categorias atrasadas, al mismo ritmo y despues de publicar que
+    # los iconos: son metadatos, y ninguno vale una pasada de precios.
+    sin_atributos = (
+        productos_sin_atributos(con, args.atributos) if args.atributos else []
+    )
+    clasificados = 0
+    if sin_atributos:
+        clasificados = guardar_atributos(
+            con, pedir_atributos(client, sin_atributos, config.settings.max_workers)
+        )
+        log.info("%s categorias nuevas", clasificados)
+
     sin_icono = productos_sin_icono(con, args.iconos) if args.iconos else []
     puestos = 0
     if sin_icono:

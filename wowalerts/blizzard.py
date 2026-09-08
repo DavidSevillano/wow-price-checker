@@ -192,6 +192,57 @@ class BlizzardClient:
             log.debug("Sin nombre para el objeto %s: %s", item_id, exc)
             return None
 
+    def item_datos(self, item_id: int) -> dict | None:
+        """Nombre y atributos de un objeto, en una sola peticion.
+
+        La respuesta de `/data/wow/item/{id}` trae, ademas del nombre en ocho
+        idiomas, justo lo que la casa de subastas usa para filtrar: categoria,
+        subcategoria, calidad, hueco de equipo y niveles. `item_names` pedia
+        esta misma respuesta y descartaba todo menos `name`; esto la aprovecha
+        entera, asi que los filtros no cuestan ni una peticion mas.
+
+        `item_names` se conserva porque el vigilante (`main.py`) solo quiere el
+        nombre y no tiene por que cargar con el resto.
+
+        La categoria se devuelve **en ingles**: de ella salen las URLs
+        (`/items/armor/mail`), y esas no cambian con el idioma del visitante.
+
+        Devuelve None si el objeto no responde o si no trae categoria: sin ella
+        no se puede colocar en ninguna pagina, y una fila a medias solo
+        obligaria a filtrarla en cada consulta.
+        """
+        try:
+            response = self._api_get(
+                f"/data/wow/item/{item_id}",
+                namespace=f"static-{self.region}",
+                localized=False,
+            )
+            if response.status_code != 200:
+                return None
+            doc = response.json()
+        except BlizzardError as exc:
+            log.debug("Sin datos para el objeto %s: %s", item_id, exc)
+            return None
+
+        clase = _categoria(doc.get("item_class"))
+        subclase = _categoria(doc.get("item_subclass"))
+        if clase is None or subclase is None:
+            return None
+
+        return {
+            "nombres": _nombres(doc.get("name"), self.locale),
+            "clase_id": clase[0],
+            "clase": clase[1],
+            "subclase_id": subclase[0],
+            "subclase": subclase[1],
+            "calidad": _tipo(doc.get("quality")),
+            # NON_EQUIP es como Blizzard dice "esto no se equipa" (una pocion,
+            # una receta). Guardarlo seria un hueco de equipo que no existe.
+            "hueco": _tipo(doc.get("inventory_type"), descartar="NON_EQUIP"),
+            "nivel": doc.get("level"),
+            "nivel_requerido": doc.get("required_level"),
+        }
+
     def item_names(self, item_id: int) -> dict[str, str]:
         """Todos los idiomas de golpe, para las páginas de la web pública.
 
@@ -614,3 +665,49 @@ def _realm_id_from_href(href: str) -> int | None:
     tail = href.split(marker, 1)[1]
     digits = tail.split("?", 1)[0].strip("/")
     return int(digits) if digits.isdigit() else None
+
+
+def _categoria(campo) -> tuple[int, str] | None:
+    """(id, nombre en ingles) de un `item_class` / `item_subclass`.
+
+    El nombre en ingles y no el localizado porque de aqui salen las URLs. Si
+    en_GB no viniera se cae a en_US, que es el otro ingles que manda Blizzard.
+    """
+    if not isinstance(campo, dict):
+        return None
+    id_ = campo.get("id")
+    nombre = campo.get("name")
+    if isinstance(nombre, dict):
+        nombre = nombre.get("en_GB") or nombre.get("en_US")
+    if not isinstance(id_, int) or not isinstance(nombre, str) or not nombre:
+        return None
+    return id_, nombre
+
+
+def _tipo(campo, descartar: str | None = None) -> str | None:
+    """El `type` de un campo enumerado de Blizzard (EPIC, FEET, ...).
+
+    Es el valor estable: el `name` del mismo campo viene traducido y cambia.
+    """
+    if not isinstance(campo, dict):
+        return None
+    valor = campo.get("type")
+    if not isinstance(valor, str) or not valor or valor == descartar:
+        return None
+    return valor
+
+
+def _nombres(campo, locale: str) -> dict[str, str]:
+    """Los nombres por idioma, o el suelto en el locale del cliente.
+
+    Mismo criterio que `item_names`, con el que comparte respuesta.
+    """
+    if isinstance(campo, dict):
+        return {
+            idioma: texto
+            for idioma, texto in campo.items()
+            if isinstance(texto, str) and texto
+        }
+    if isinstance(campo, str) and campo:
+        return {locale: campo}
+    return {}

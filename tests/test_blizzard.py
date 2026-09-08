@@ -380,3 +380,99 @@ def test_item_name_sigue_dando_un_solo_idioma(requests_mock, client):
         json={"name": {"en_GB": "Solo este", "es_ES": "Este no"}},
     )
     assert client.item_name(4) == "Solo este"
+
+
+# -- Atributos del objeto ----------------------------------------------------
+#
+# Los filtros de la casa de subastas (categoria, subcategoria, calidad, hueco,
+# nivel) vienen en la MISMA respuesta de la que sale el nombre. `item_names` la
+# pedia y tiraba todo menos `name`; esto la aprovecha entera, sin una peticion
+# mas por objeto.
+
+
+def doc_objeto(**cambios):
+    doc = {
+        "id": 271440,
+        "name": {"en_GB": "Greaves of the Noxious Depths"},
+        "item_class": {"id": 4, "name": {"en_GB": "Armor", "es_ES": "Armadura"}},
+        "item_subclass": {"id": 3, "name": {"en_GB": "Mail", "es_ES": "Malla"}},
+        "quality": {"type": "EPIC", "name": {"en_GB": "Epic"}},
+        "inventory_type": {"type": "FEET", "name": {"en_GB": "Feet"}},
+        "level": 219,
+        "required_level": 90,
+    }
+    doc.update(cambios)
+    return doc
+
+
+def test_los_datos_del_objeto_salen_de_una_sola_peticion(requests_mock, client):
+    give_token(requests_mock)
+    m = requests_mock.get(
+        "https://eu.api.blizzard.com/data/wow/item/271440", json=doc_objeto()
+    )
+
+    datos = client.item_datos(271440)
+
+    assert m.call_count == 1
+    assert datos["nombres"]["en_GB"] == "Greaves of the Noxious Depths"
+    assert datos["clase"] == "Armor"
+    assert datos["subclase"] == "Mail"
+    assert datos["calidad"] == "EPIC"
+    assert datos["hueco"] == "FEET"
+    assert datos["nivel"] == 219
+    assert datos["nivel_requerido"] == 90
+
+
+def test_la_categoria_se_guarda_en_ingles(requests_mock, client):
+    """De aqui salen las URLs (/items/armor/mail) y esas no se traducen."""
+    give_token(requests_mock)
+    requests_mock.get(
+        "https://eu.api.blizzard.com/data/wow/item/271440", json=doc_objeto()
+    )
+
+    datos = client.item_datos(271440)
+
+    assert datos["clase"] == "Armor" and datos["subclase"] == "Mail"
+
+
+def test_el_id_de_la_categoria_viaja_con_su_nombre(requests_mock, client):
+    """El nombre lo pueden cambiar; el id de Blizzard es lo estable."""
+    give_token(requests_mock)
+    requests_mock.get(
+        "https://eu.api.blizzard.com/data/wow/item/271440", json=doc_objeto()
+    )
+
+    datos = client.item_datos(271440)
+
+    assert datos["clase_id"] == 4
+    assert datos["subclase_id"] == 3
+
+
+def test_un_objeto_sin_categoria_no_da_atributos(requests_mock, client):
+    """Sin categoria no se puede colocar en ninguna pagina de /items.
+
+    Devolver una fila a medias seria peor: entraria en la base con clase vacia
+    y habria que filtrarla en cada consulta.
+    """
+    give_token(requests_mock)
+    doc = doc_objeto()
+    del doc["item_class"]
+    requests_mock.get("https://eu.api.blizzard.com/data/wow/item/271440", json=doc)
+
+    assert client.item_datos(271440) is None
+
+
+def test_un_consumible_no_tiene_hueco_de_equipo(requests_mock, client):
+    """Una pocion no se equipa: `hueco` sale None, no cadena vacia."""
+    give_token(requests_mock)
+    doc = doc_objeto(inventory_type={"type": "NON_EQUIP", "name": {"en_GB": "Non-equippable"}})
+    requests_mock.get("https://eu.api.blizzard.com/data/wow/item/271440", json=doc)
+
+    assert client.item_datos(271440)["hueco"] is None
+
+
+def test_un_objeto_que_no_existe_no_tumba_la_pasada(requests_mock, client):
+    give_token(requests_mock)
+    requests_mock.get("https://eu.api.blizzard.com/data/wow/item/271440", status_code=404)
+
+    assert client.item_datos(271440) is None

@@ -261,6 +261,56 @@ def guardar_reinos(con: sqlite3.Connection, nombres: Mapping[int, str]) -> None:
         )
 
 
+def guardar_atributos(con: sqlite3.Connection, filas: Iterable[Mapping]) -> int:
+    """Upsert de los atributos de cada producto: categoria, calidad, hueco...
+
+    Una fila por producto y no por variante: las Grebas a ilvl 305 y a 318 son
+    la misma armadura de malla para los pies. Si llegan repetidas, la ultima
+    gana --es lo que hace `ON CONFLICT`-- y da igual, porque son iguales.
+
+    El slug se calcula aqui y se guarda, en vez de sacarlo en cada visita: es
+    la clave por la que buscan las paginas de categoria, y una funcion de
+    Python en un `WHERE` obligaria a recorrer la tabla entera.
+    """
+    filas = [
+        (
+            f["tipo"],
+            f["producto_id"],
+            f["clase_id"],
+            f["clase"],
+            slug(f["clase"]),
+            f["subclase_id"],
+            f["subclase"],
+            slug(f["subclase"]),
+            f.get("calidad"),
+            f.get("hueco"),
+            f.get("nivel"),
+            f.get("nivel_requerido"),
+        )
+        for f in filas
+    ]
+    if not filas:
+        return 0
+
+    with _transaccion(con):
+        con.executemany(
+            "INSERT INTO atributo (tipo, producto_id, clase_id, clase, "
+            "  clase_slug, subclase_id, subclase, subclase_slug, calidad, "
+            "  hueco, nivel, nivel_requerido) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(tipo, producto_id) DO UPDATE SET "
+            "  clase_id = excluded.clase_id, clase = excluded.clase, "
+            "  clase_slug = excluded.clase_slug, "
+            "  subclase_id = excluded.subclase_id, "
+            "  subclase = excluded.subclase, "
+            "  subclase_slug = excluded.subclase_slug, "
+            "  calidad = excluded.calidad, hueco = excluded.hueco, "
+            "  nivel = excluded.nivel, nivel_requerido = excluded.nivel_requerido",
+            filas,
+        )
+    return len(filas)
+
+
 def guardar_iconos(
     con: sqlite3.Connection, iconos: Iterable[tuple[str, int, str | None]]
 ) -> int:

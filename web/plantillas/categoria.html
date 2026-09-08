@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block titulo %}{{ titulo }} — EU auction house prices{% endblock %}
+{% block descripcion %}Every {{ titulo }} item on the EU auction house and what
+it costs across all 92 realms. Updated hourly.{% endblock %}
+
+{% block contenido %}
+<main class="ficha">
+  <h1>{{ titulo }}</h1>
+  <p class="aviso">
+    {{ "{:,}".format(total) }} items.
+    {%- if paginas > 1 %} Page {{ pagina }} of {{ paginas }}.{% endif %}
+  </p>
+
+  {# Las subcategorias son los mismos desplegables de la casa de subastas, pero
+     como enlaces: un desplegable no lo abre ningun rastreador. #}
+  {% if subcategorias %}
+  <div class="pastillas">
+    <a class="pastilla {% if not subclase %}activo{% endif %}"
+       href="/items/{{ clase_slug }}">All</a>
+    {% for s in subcategorias %}
+    <a class="pastilla {% if s.subclase_slug == subclase %}activo{% endif %}"
+       href="/items/{{ clase_slug }}/{{ s.subclase_slug }}">
+      {{ s.subclase }} <span class="ilvl-et">{{ s.objetos }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="tabla">
+  <table>
+    <thead>
+      <tr><th class="txt">Item</th><th class="txt opcional">Type</th><th>From</th></tr>
+    </thead>
+    <tbody>
+      {% for p in productos %}
+      <tr>
+        <td class="txt">
+          {% set producto_id, nombre, icono, variante, reino = p.producto_id, p.nombre, p.icono, -1, None %}
+          {% include "_objeto.html" with context %}
+        </td>
+        <td class="txt opcional">{{ p.subclase }}</td>
+        <td>{{ p.desde | oro }}g</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {# La paginacion es lo que de verdad enlaza el catalogo: sin estos enlaces
+     Google solo ve los primeros cien objetos de cada categoria. #}
+  {% if paginas > 1 %}
+  <nav class="pastillas paginacion">
+    {% for n in ventana %}
+      {% if n == pagina %}
+      <span class="pastilla activo">{{ n }}</span>
+      {% else %}
+      <a class="pastilla" href="{{ base_url }}{% if n > 1 %}?p={{ n }}{% endif %}">{{ n }}</a>
+      {% endif %}
+    {% endfor %}
+  </nav>
+  {% endif %}
+</main>
+{% endblock %}

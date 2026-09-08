@@ -19,15 +19,20 @@ from wowalerts.mercado import TIPO_OBJETO
 from web.consultas import (
     REINOS_GRATIS,
     anotar_peticion,
+    buscar,
+    categorias,
+    contar_categoria,
     ficha,
     mejores_rebajas,
     paginas_mas_pedidas,
+    productos_de_categoria,
     productos_de_reino,
     productos_mas_vistos,
     reino_por_slug,
     reinos_de,
     reinos_publicados,
     resumen_del_catalogo,
+    subcategorias,
 )
 from web.db import VARIABLE_DB, abrir, ruta_de_entorno
 
@@ -45,6 +50,15 @@ BASE_URL = os.environ.get("BASE_URL", "https://auctionsentinel.example")
 # creada `generado_en` ES None, y entonces "todavía no lo he calculado" y "lo
 # calculé cuando no había volcado" serían el mismo estado.
 _SIN_CALCULAR = object()
+
+# Objetos por pagina de categoria. Cien filas es lo que aguanta una pagina
+# sin volverse un muro, y con 19.365 objetos salen ~200 paginas: suficientes
+# para que quede enlazado el catalogo entero, que es para lo que existen.
+POR_PAGINA = 100
+
+# Cuantos resultados devuelve la caja de busqueda. No hay paginacion aqui a
+# proposito: quien busca quiere encontrar, no pasear.
+RESULTADOS_BUSQUEDA = 50
 
 # Los meses a mano en vez de `%B`, que saca el nombre en la locale del
 # sistema: la página está en inglés y el VPS no tiene por qué estarlo, así que
@@ -65,6 +79,26 @@ def _fecha(epoch: Optional[int]) -> Optional[str]:
         return None
     d = datetime.fromtimestamp(epoch, timezone.utc)
     return f"{d.day} {_MESES[d.month - 1]} {d.year}, {d:%H:%M} UTC"
+
+
+def _ventana(pagina: int, paginas: int, ancho: int = 7) -> list[int]:
+    """Los numeros de pagina que se pintan alrededor del actual.
+
+    Con ~200 paginas por categoria, pintarlas todas es una barra ilegible; y
+    pintar solo "anterior/siguiente" obliga a un rastreador a dar 200 saltos en
+    cadena para llegar al final. Una ventana deja siempre la primera y la
+    ultima a un clic.
+    """
+    if paginas <= ancho:
+        return list(range(1, paginas + 1))
+    mitad = ancho // 2
+    inicio = max(1, min(pagina - mitad, paginas - ancho + 1))
+    numeros = list(range(inicio, inicio + ancho))
+    if numeros[0] != 1:
+        numeros[0] = 1
+    if numeros[-1] != paginas:
+        numeros[-1] = paginas
+    return numeros
 
 
 def _oro(cobre: int) -> str:
@@ -235,6 +269,88 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
             context={"reino": reino, "productos": filas},
         )
 
+    @app.get("/items", response_class=HTMLResponse)
+    def indice_categorias(request: Request):
+        """El indice del catalogo entero.
+
+        Es la pieza que le faltaba al sitio: con 19.365 fichas y solo 4.598
+        enlazadas desde alguna pagina de reino, tres de cada cuatro no tenian
+        forma de ser descubiertas. De aqui cuelgan todas.
+        """
+        con = conexion()
+        try:
+            cats = categorias(con)
+        finally:
+            con.close()
+
+        return plantillas.TemplateResponse(
+            request=request,
+            name="categorias.html",
+            context={"categorias": cats, "total": sum(c["objetos"] for c in cats)},
+        )
+
+    @app.get("/items/{clase}", response_class=HTMLResponse)
+    @app.get("/items/{clase}/{subclase}", response_class=HTMLResponse)
+    def pagina_categoria(
+        request: Request, clase: str, subclase: Optional[str] = None, p: int = 1
+    ):
+        con = conexion()
+        try:
+            subs = subcategorias(con, clase)
+            if not subs:
+                raise HTTPException(status_code=404, detail="Category not found")
+            if subclase and subclase not in {s["subclase_slug"] for s in subs}:
+                raise HTTPException(status_code=404, detail="Subcategory not found")
+
+            total = contar_categoria(con, clase, subclase)
+            paginas = max(1, -(-total // POR_PAGINA))
+            # Una pagina fuera de rango es un 404 y no una tabla vacia: si no,
+            # hay infinitas URLs que un rastreador se dedica a pedir.
+            if p < 1 or p > paginas:
+                raise HTTPException(status_code=404, detail="Page not found")
+
+            productos = productos_de_categoria(
+                con, clase, subclase, limite=POR_PAGINA, desde=(p - 1) * POR_PAGINA
+            )
+            nombre_clase = next(
+                (s["subclase"] for s in subs if s["subclase_slug"] == subclase), None
+            )
+        finally:
+            con.close()
+
+        base_url = f"/items/{clase}" + (f"/{subclase}" if subclase else "")
+        return plantillas.TemplateResponse(
+            request=request,
+            name="categoria.html",
+            context={
+                "titulo": nombre_clase or clase.replace("-", " ").title(),
+                "clase_slug": clase,
+                "subclase": subclase,
+                "subcategorias": subs,
+                "productos": productos,
+                "total": total,
+                "pagina": p,
+                "paginas": paginas,
+                "ventana": _ventana(p, paginas),
+                "base_url": base_url,
+            },
+        )
+
+    @app.get("/search", response_class=HTMLResponse)
+    def busqueda(request: Request, q: str = ""):
+        """La caja de la cabecera. GET para que cada busqueda sea una URL."""
+        con = conexion()
+        try:
+            productos = buscar(con, q, limite=RESULTADOS_BUSQUEDA) if q else []
+        finally:
+            con.close()
+
+        return plantillas.TemplateResponse(
+            request=request,
+            name="busqueda.html",
+            context={"q": q, "productos": productos},
+        )
+
     @app.get("/sitemap.xml")
     def sitemap():
         """Solo entra lo que ya se ha pedido, más los reinos.
@@ -249,12 +365,23 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
         try:
             paginas = paginas_mas_pedidas(con, limite=50_000)
             reinos = reinos_publicados(con)
+            cats = categorias(con)
+            subs = {c["clase_slug"]: subcategorias(con, c["clase_slug"]) for c in cats}
         finally:
             con.close()
 
         # La portada primero: es la que más enlaces internos tiene y la raíz
         # del mapa. Luego lo pedido y, al final, los reinos.
-        urls = [f"{BASE_URL}/"]
+        urls = [f"{BASE_URL}/", f"{BASE_URL}/items"]
+        # Las categorias van SIEMPRE, como los reinos: son pocas, son fijas y
+        # de ellas cuelga el catalogo entero. Es justo lo contrario que las
+        # fichas, que entran segun se piden.
+        for c in cats:
+            urls.append(f"{BASE_URL}/items/{c['clase_slug']}")
+            urls += [
+                f"{BASE_URL}/items/{c['clase_slug']}/{s['subclase_slug']}"
+                for s in subs[c["clase_slug"]]
+            ]
         urls += [f"{BASE_URL}/item/{p['producto_id']}" for p in paginas]
         urls += [f"{BASE_URL}/realm/{r['slug']}" for r in reinos]
 

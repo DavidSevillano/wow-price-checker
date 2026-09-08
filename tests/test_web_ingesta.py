@@ -7,6 +7,7 @@ from web.db import abrir
 from web.ingesta import (
     SIN_VARIANTE,
     filas_de_precio,
+    guardar_atributos,
     guardar_nombres,
     guardar_reinos,
     recalcular_estadisticas,
@@ -286,3 +287,73 @@ def test_avisa_cuando_una_url_deja_de_funcionar(tmp_path, caplog):
 
     assert "kazzak" in caplog.text
     assert "kazzak-renombrado" in caplog.text
+
+
+# -- Atributos de objeto -----------------------------------------------------
+#
+# Categoria, subcategoria, calidad, hueco y niveles: los filtros de la casa de
+# subastas. De la clase y la subclase salen ademas las URLs de /items, asi que
+# el slug se guarda ya calculado y no se recalcula en cada visita.
+
+
+def atributos(producto_id=271440, **cambios):
+    fila = {
+        "tipo": TIPO_OBJETO,
+        "producto_id": producto_id,
+        "clase_id": 4,
+        "clase": "Armor",
+        "subclase_id": 3,
+        "subclase": "Mail",
+        "calidad": "EPIC",
+        "hueco": "FEET",
+        "nivel": 219,
+        "nivel_requerido": 90,
+    }
+    fila.update(cambios)
+    return fila
+
+
+def test_guardar_atributos_calcula_los_slugs(tmp_path):
+    con = abrir(tmp_path / "a.db")
+    guardar_atributos(con, [atributos()])
+
+    fila = con.execute("SELECT * FROM atributo").fetchone()
+    assert fila["clase_slug"] == "armor"
+    assert fila["subclase_slug"] == "mail"
+
+
+def test_un_slug_con_espacios_y_guiones_sale_limpio(tmp_path):
+    """"One-Handed Swords" es una subclase real y va en una URL."""
+    con = abrir(tmp_path / "a.db")
+    guardar_atributos(
+        con, [atributos(clase="Weapon", subclase="One-Handed Swords")]
+    )
+
+    assert con.execute("SELECT subclase_slug FROM atributo").fetchone()[0] == (
+        "one-handed-swords"
+    )
+
+
+def test_guardar_atributos_dos_veces_no_duplica(tmp_path):
+    con = abrir(tmp_path / "a.db")
+    guardar_atributos(con, [atributos()])
+    guardar_atributos(con, [atributos(calidad="LEGENDARY")])
+
+    filas = con.execute("SELECT calidad FROM atributo").fetchall()
+    assert len(filas) == 1
+    assert filas[0][0] == "LEGENDARY"
+
+
+def test_un_producto_es_una_fila_aunque_tenga_muchos_ilvl(tmp_path):
+    """Las Grebas a 305 y a 318 son la misma armadura de malla para los pies."""
+    con = abrir(tmp_path / "a.db")
+    guardar_atributos(con, [atributos(), atributos()])
+
+    assert con.execute("SELECT count(*) FROM atributo").fetchone()[0] == 1
+
+
+def test_lo_que_no_se_equipa_se_guarda_sin_hueco(tmp_path):
+    con = abrir(tmp_path / "a.db")
+    guardar_atributos(con, [atributos(clase="Consumable", hueco=None)])
+
+    assert con.execute("SELECT hueco FROM atributo").fetchone()[0] is None

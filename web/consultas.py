@@ -66,6 +66,10 @@ HOLGURA_DEDUPE = 10
 
 IDIOMA_POR_DEFECTO = "en"
 
+# Los comodines de LIKE, neutralizados con "!" delante. Un "%" tecleado en
+# la caja de busqueda no puede convertirse en "damelo todo".
+_ESCAPAR_LIKE = str.maketrans({"!": "!!", "%": "!%", "_": "!_"})
+
 
 def ficha(
     con: sqlite3.Connection,
@@ -435,3 +439,177 @@ def resumen_del_catalogo(con: sqlite3.Connection) -> dict[str, Any]:
         "reinos": reinos,
         "generado_en": volcado[0] if volcado else None,
     }
+
+
+# -- Categorias y busqueda ---------------------------------------------------
+#
+# Estas consultas hacen dos cosas a la vez. Son los filtros de la casa de
+# subastas (armas, armadura, recetas...) y, sobre todo, son el camino de
+# rastreo que le faltaba al sitio: con 19.365 fichas y solo 4.598 enlazadas
+# desde alguna pagina de reino, tres de cada cuatro no tenian forma de ser
+# descubiertas por Google ni por nadie.
+#
+# Ninguna dice en QUE reino esta lo barato. Eso es lo que vende el Pro, y una
+# tabla de cien filas con su reino al lado lo regalaria en bloque.
+
+
+def categorias(con: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Las clases de objeto con cuantos productos en venta tiene cada una.
+
+    Se cuenta contra `estadistica` y no contra `atributo` a secas porque
+    `atributo` no se borra en cada pasada y `precio` si: un objeto que hoy no
+    esta en subastas no tiene ficha, y anunciar "Armor (3.412)" cuando 200 de
+    esos dan 404 es mentir en el indice.
+    """
+    return [
+        dict(fila)
+        for fila in con.execute(
+            "SELECT a.clase, a.clase_slug, count(DISTINCT a.producto_id) AS objetos "
+            "  FROM atributo a "
+            " WHERE EXISTS (SELECT 1 FROM estadistica e "
+            "                WHERE e.tipo = a.tipo "
+            "                  AND e.producto_id = a.producto_id) "
+            " GROUP BY a.clase, a.clase_slug "
+            " ORDER BY a.clase"
+        )
+    ]
+
+
+def subcategorias(con: sqlite3.Connection, clase_slug: str) -> list[dict[str, Any]]:
+    """Las subclases de una clase, con su cuenta. Mismo criterio que arriba."""
+    return [
+        dict(fila)
+        for fila in con.execute(
+            "SELECT a.subclase, a.subclase_slug, "
+            "       count(DISTINCT a.producto_id) AS objetos "
+            "  FROM atributo a "
+            " WHERE a.clase_slug = ? "
+            "   AND EXISTS (SELECT 1 FROM estadistica e "
+            "                WHERE e.tipo = a.tipo "
+            "                  AND e.producto_id = a.producto_id) "
+            " GROUP BY a.subclase, a.subclase_slug "
+            " ORDER BY a.subclase",
+            (clase_slug,),
+        )
+    ]
+
+
+def _filtro_categoria(
+    clase_slug: str, subclase_slug: Optional[str], calidad: Optional[str]
+) -> tuple[str, list[Any]]:
+    """El WHERE que comparten `productos_de_categoria` y `contar_categoria`.
+
+    Escrito una vez para que la cuenta y la lista no puedan discrepar: si la
+    paginacion se calcula con un criterio y las filas con otro, salen paginas
+    vacias al final y Google las ve.
+    """
+    sql = " WHERE a.clase_slug = ? "
+    args: list[Any] = [clase_slug]
+    if subclase_slug:
+        sql += " AND a.subclase_slug = ? "
+        args.append(subclase_slug)
+    if calidad:
+        sql += " AND a.calidad = ? "
+        args.append(calidad)
+    return sql, args
+
+
+def productos_de_categoria(
+    con: sqlite3.Connection,
+    clase_slug: str,
+    subclase_slug: Optional[str] = None,
+    calidad: Optional[str] = None,
+    limite: int = 100,
+    desde: int = 0,
+    idioma: str = IDIOMA_POR_DEFECTO,
+) -> list[dict[str, Any]]:
+    """Los objetos de una categoria, con desde cuanto salen en la region.
+
+    `desde` es el desplazamiento de la paginacion. Una categoria de miles de
+    objetos no cabe en una pagina, y hacen falta todas para que quede enlazado
+    el catalogo entero.
+
+    `desde` sale mas barato que parece aun siendo OFFSET: el orden es por
+    nombre y el filtro va por `atributo_por_categoria`, asi que lo que se
+    recorre es el indice y no la tabla de precios.
+    """
+    where, args = _filtro_categoria(clase_slug, subclase_slug, calidad)
+    return [
+        dict(fila)
+        for fila in con.execute(
+            "SELECT a.producto_id, n.nombre, n.icono, a.calidad, a.subclase, "
+            "       MIN(e.minimo) AS desde, MIN(e.variante) AS variante "
+            "  FROM atributo a "
+            "  JOIN nombre n ON n.tipo = a.tipo "
+            "               AND n.producto_id = a.producto_id "
+            "               AND n.idioma = ? "
+            "  JOIN estadistica e ON e.tipo = a.tipo "
+            "                    AND e.producto_id = a.producto_id "
+            + where
+            + " GROUP BY a.producto_id, n.nombre, n.icono, a.calidad, a.subclase "
+            " ORDER BY n.nombre "
+            " LIMIT ? OFFSET ?",
+            [idioma] + args + [limite, desde],
+        )
+    ]
+
+
+def contar_categoria(
+    con: sqlite3.Connection,
+    clase_slug: str,
+    subclase_slug: Optional[str] = None,
+    calidad: Optional[str] = None,
+) -> int:
+    """Cuantos objetos hay, para saber cuantas paginas enlazar."""
+    where, args = _filtro_categoria(clase_slug, subclase_slug, calidad)
+    return con.execute(
+        "SELECT count(DISTINCT a.producto_id) "
+        "  FROM atributo a "
+        "  JOIN estadistica e ON e.tipo = a.tipo "
+        "                    AND e.producto_id = a.producto_id "
+        + where,
+        args,
+    ).fetchone()[0]
+
+
+def buscar(
+    con: sqlite3.Connection,
+    texto: str,
+    limite: int,
+    idioma: str = IDIOMA_POR_DEFECTO,
+) -> list[dict[str, Any]]:
+    """Busca por trozo de nombre. Solo devuelve lo que esta en venta.
+
+    Los comodines de LIKE se escapan: un `%` tecleado por el visitante no puede
+    convertirse en "damelo todo", que ademas recorreria la tabla entera.
+
+    Una busqueda vacia devuelve nada y no el catalogo: es lo que llega cuando
+    alguien pulsa Enter en la caja sin escribir.
+
+    Sobre `nombre` no hay indice por texto, asi que esto es un recorrido. Con
+    149.386 filas sale a unos pocos milisegundos y no merece un FTS5 todavia;
+    el dia que la caja se use de verdad, ahi esta la puerta.
+    """
+    texto = texto.strip()
+    if not texto:
+        return []
+
+    # El caracter de escape es "!" y no la barra invertida: en SQLite vale
+    # cualquiera, y una barra dentro de una cadena de Python dentro de una
+    # cadena de SQL se cuela en cuanto alguien reformatea el fichero.
+    patron = "%" + texto.translate(_ESCAPAR_LIKE) + "%"
+    return [
+        dict(fila)
+        for fila in con.execute(
+            "SELECT n.producto_id, n.nombre, n.icono, "
+            "       MIN(e.minimo) AS desde "
+            "  FROM nombre n "
+            "  JOIN estadistica e ON e.tipo = n.tipo "
+            "                    AND e.producto_id = n.producto_id "
+            " WHERE n.idioma = ? AND n.nombre LIKE ? ESCAPE '!' "
+            " GROUP BY n.producto_id, n.nombre, n.icono "
+            " ORDER BY length(n.nombre), n.nombre "
+            " LIMIT ?",
+            (idioma, patron, limite),
+        )
+    ]
