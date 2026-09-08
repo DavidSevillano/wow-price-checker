@@ -5,6 +5,7 @@ from web.db import abrir
 from web.consultas import (
     REINOS_GRATIS,
     REINOS_PARA_MEDIANA,
+    TOPE_CDS,
     anotar_peticion,
     ficha,
     mejores_rebajas,
@@ -427,15 +428,37 @@ def test_sin_reinos_de_sobra_no_hay_rebajas_que_ensenar(con_rebajas):
     assert mejores_rebajas(con_rebajas, limite=10, reinos_minimos=15) == []
 
 
-def test_estar_justo_en_la_mediana_no_es_una_rebaja(con):
-    """El fixture va de 100 a 1000 con mediana 600: el reino 6 no esta rebajado.
+def test_estar_justo_en_la_mediana_no_es_una_rebaja(tmp_path):
+    """El corte es `<` y no `<=` a proposito.
 
-    El corte es `<` y no `<=` a proposito. Un reino que clava el precio normal
-    no tiene nada que ofrecer, y con noventa y dos reinos hay muchos empates.
+    Un reino que clava el precio normal no tiene nada que ofrecer, y con
+    noventa y dos reinos los empates en la mediana son muchos. Hacen falta dos
+    productos: con uno solo, una consulta rota que devolviera la lista vacia
+    por cualquier otro motivo pasaria igual.
     """
-    reinos = {f["reino"] for f in mejores_rebajas(con, limite=50, reinos_minimos=10)}
-    assert "Reino 5" in reinos
-    assert "Reino 6" not in reinos
+    c = abrir(tmp_path / "e.db")
+    guardar_reinos(c, {i: f"Reino {i}" for i in range(1, 21)})
+    guardar_nombres(
+        c,
+        [
+            (TIPO_OBJETO, 1, "en", "Todos al mismo precio", None),
+            (TIPO_OBJETO, 2, "en", "Rebajado de verdad", None),
+        ],
+    )
+    volcar(
+        c,
+        {
+            Clave(TIPO_OBJETO, 1, 305): {i: resumen(100_000) for i in range(1, 21)},
+            Clave(TIPO_OBJETO, 2, 305): {
+                1: resumen(50_000), **{i: resumen(100_000) for i in range(2, 21)}
+            },
+        },
+        generado_en=1,
+    )
+    recalcular_estadisticas(c)
+
+    filas = mejores_rebajas(c, limite=50, reinos_minimos=15)
+    assert [f["nombre"] for f in filas] == ["Rebajado de verdad"]
 
 
 def test_el_resumen_cuenta_productos_distintos_no_variantes(con):
@@ -455,3 +478,202 @@ def test_el_resumen_de_una_base_vacia_no_revienta(tmp_path):
     """Recien instalada, antes de la primera pasada."""
     vacio = resumen_del_catalogo(abrir(tmp_path / "v.db"))
     assert vacio == {"productos": 0, "reinos": 0, "generado_en": None}
+
+
+# -- Rebajas que no son rebajas ---------------------------------------------
+#
+# Con los 92 reinos de verdad la portada salia entera a "100% off" y "normally
+# 9,999,999g", que es el tope que se puede teclear en la casa de subastas. No
+# es un precio: es un "no quiero venderlo". Como esas medianas son enormes,
+# cualquier reino con un precio normal parecia la ganga del siglo y esas filas
+# copaban las doce.
+#
+# Medido sobre el volcado real (744.832 filas): 68 variantes tienen la mediana
+# clavada en el tope y 777 filas dan un descuento del 99% o mas.
+
+
+def rebajado(con, producto_id, nombre, mediana, minimo, reinos=20):
+    """Un producto que en el reino 1 esta a `minimo` y en los demas a `mediana`."""
+    guardar_nombres(con, [(TIPO_OBJETO, producto_id, "en", nombre, None)])
+    return {
+        Clave(TIPO_OBJETO, producto_id, 305): {
+            1: resumen(minimo),
+            **{i: resumen(mediana) for i in range(2, reinos + 1)},
+        }
+    }
+
+
+@pytest.fixture
+def con_region(tmp_path):
+    c = abrir(tmp_path / "region.db")
+    guardar_reinos(c, {i: f"Reino {i}" for i in range(1, 21)})
+    agregado = {}
+    # Una ganga de verdad: 100.000g que en un reino estan a 20.000g.
+    agregado.update(rebajado(c, 1, "Ganga de verdad", 100_000, 20_000))
+    # Basura: la mediana es el tope de la casa de subastas.
+    agregado.update(rebajado(c, 2, "Puesto al tope", TOPE_CDS, 5_000))
+    # Basura sin llegar al tope: 4 millones de oro que nadie paga.
+    agregado.update(rebajado(c, 3, "Precio de fantasia", 40_000_000_000, 5_000_000))
+    volcar(c, agregado, generado_en=1)
+    recalcular_estadisticas(c)
+    return c
+
+
+def test_una_mediana_en_el_tope_de_la_casa_no_es_un_precio(con_region):
+    nombres = {f["nombre"] for f in mejores_rebajas(con_region, 10, reinos_minimos=15)}
+    assert "Puesto al tope" not in nombres
+
+
+def test_un_descuento_imposible_no_se_canta(con_region):
+    """Un 99,9% no existe en un mercado real: es que la mediana esta mal."""
+    nombres = {f["nombre"] for f in mejores_rebajas(con_region, 10, reinos_minimos=15)}
+    assert "Precio de fantasia" not in nombres
+
+
+def test_la_ganga_de_verdad_si_sale(con_region):
+    """El filtro tiene que quitar la basura, no la mercancia."""
+    filas = mejores_rebajas(con_region, 10, reinos_minimos=15)
+    assert [f["nombre"] for f in filas] == ["Ganga de verdad"]
+    assert filas[0]["descuento"] == 80
+
+
+def test_el_tope_es_el_de_la_constante(con_region):
+    assert TOPE_CDS == 9_999_999 * 10_000
+
+
+def test_un_mismo_objeto_no_ocupa_la_lista_entera(tmp_path):
+    """El mismo objeto rebajado en cinco reinos son cinco filas identicas.
+
+    Con datos reales "Waterlogged Cloth Vest" salia tres veces entre las doce
+    primeras: la lista tiene doce huecos y no puede gastarlos asi.
+    """
+    c = abrir(tmp_path / "d.db")
+    guardar_reinos(c, {i: f"Reino {i}" for i in range(1, 21)})
+    guardar_nombres(
+        c,
+        [
+            (TIPO_OBJETO, 1, "en", "Repetido", None),
+            (TIPO_OBJETO, 2, "en", "El otro", None),
+        ],
+    )
+    volcar(
+        c,
+        {
+            # Rebajado en cinco reinos a la vez, con descuentos distintos.
+            Clave(TIPO_OBJETO, 1, 305): {
+                1: resumen(10_000), 2: resumen(11_000), 3: resumen(12_000),
+                4: resumen(13_000), 5: resumen(14_000),
+                **{i: resumen(100_000) for i in range(6, 21)},
+            },
+            Clave(TIPO_OBJETO, 2, 305): {
+                1: resumen(50_000), **{i: resumen(100_000) for i in range(2, 21)}
+            },
+        },
+        generado_en=1,
+    )
+    recalcular_estadisticas(c)
+
+    filas = mejores_rebajas(c, 10, reinos_minimos=15)
+    assert [f["nombre"] for f in filas] == ["Repetido", "El otro"]
+    # Y de las cinco, la mejor: 10.000 sobre 100.000 es un 90%.
+    assert filas[0]["descuento"] == 90
+    assert filas[0]["reino"] == "Reino 1"
+
+
+def test_un_producto_sin_nombre_no_sale_en_la_portada(tmp_path):
+    """La portada no puede enseñar "#183942" como si fuera un objeto."""
+    c = abrir(tmp_path / "sn.db")
+    guardar_reinos(c, {i: f"Reino {i}" for i in range(1, 21)})
+    volcar(
+        c,
+        {
+            Clave(TIPO_OBJETO, 999, 305): {
+                1: resumen(10_000), **{i: resumen(100_000) for i in range(2, 21)}
+            }
+        },
+        generado_en=1,
+    )
+    recalcular_estadisticas(c)
+    assert mejores_rebajas(c, 10, reinos_minimos=15) == []
+
+
+def test_si_la_holgura_no_llega_la_lista_sale_corta_pero_sin_repetidos(
+    tmp_path, monkeypatch
+):
+    """El precio de deduplicar en Python en vez de con ROW_NUMBER().
+
+    Se piden `limite * HOLGURA_DEDUPE` filas y se descartan las repetidas, asi
+    que un producto que acapare todas las pedidas deja la lista corta. Es el
+    trato aceptado a cambio de la mitad de tiempo (363 ms frente a 696 ms), y
+    esta escrito aqui para que se vea que la alternativa nunca es repetir.
+    """
+    import web.consultas
+
+    monkeypatch.setattr(web.consultas, "HOLGURA_DEDUPE", 1)
+
+    c = abrir(tmp_path / "h.db")
+    guardar_reinos(c, {i: f"Reino {i}" for i in range(1, 21)})
+    guardar_nombres(
+        c,
+        [
+            (TIPO_OBJETO, 1, "en", "El que acapara", None),
+            (TIPO_OBJETO, 2, "en", "El que se queda fuera", None),
+        ],
+    )
+    volcar(
+        c,
+        {
+            # Rebajado en tres reinos: con holgura 1 y limite 2 se piden dos
+            # filas, y las dos son de este producto.
+            Clave(TIPO_OBJETO, 1, 305): {
+                1: resumen(10_000), 2: resumen(11_000), 3: resumen(12_000),
+                **{i: resumen(100_000) for i in range(4, 21)},
+            },
+            Clave(TIPO_OBJETO, 2, 305): {
+                1: resumen(90_000), **{i: resumen(100_000) for i in range(2, 21)}
+            },
+        },
+        generado_en=1,
+    )
+    recalcular_estadisticas(c)
+
+    filas = mejores_rebajas(c, limite=2, reinos_minimos=15)
+    assert [f["nombre"] for f in filas] == ["El que acapara"]
+
+
+# -- La pagina de reino tiene la misma basura -------------------------------
+#
+# `productos_de_reino` hace la misma comparacion contra la mediana, asi que
+# heredaba el mismo problema: con los 92 reinos reales, Argent Dawn abria con
+# "Honorable Combatant's Leather Greaves, normally 9,999,999g, here 959g".
+
+
+def test_un_reino_no_ensena_medianas_del_tope_de_la_casa(con_region):
+    nombres = {f["nombre"] for f in productos_de_reino(con_region, 1, 10, 15)}
+    assert "Puesto al tope" not in nombres
+
+
+def test_un_reino_no_ensena_descuentos_imposibles(con_region):
+    nombres = {f["nombre"] for f in productos_de_reino(con_region, 1, 10, 15)}
+    assert "Precio de fantasia" not in nombres
+
+
+def test_un_reino_si_ensena_las_rebajas_de_verdad(con_region):
+    filas = productos_de_reino(con_region, 1, 10, 15)
+    assert [f["nombre"] for f in filas] == ["Ganga de verdad"]
+
+
+def test_un_reino_no_ensena_productos_sin_nombre(tmp_path):
+    c = abrir(tmp_path / "rsn.db")
+    guardar_reinos(c, {i: f"Reino {i}" for i in range(1, 21)})
+    volcar(
+        c,
+        {
+            Clave(TIPO_OBJETO, 999, 305): {
+                1: resumen(10_000), **{i: resumen(100_000) for i in range(2, 21)}
+            }
+        },
+        generado_en=1,
+    )
+    recalcular_estadisticas(c)
+    assert productos_de_reino(c, 1, 10, 15) == []

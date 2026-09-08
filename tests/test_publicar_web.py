@@ -4,9 +4,17 @@ from wowalerts.blizzard import AuctionSnapshot, BlizzardError
 from wowalerts.mercado import TIPO_MASCOTA, TIPO_OBJETO, Clave, ResumenReino
 from web.consultas import ficha
 from web.db import abrir
-from web.ingesta import guardar_nombres
+from web.ingesta import guardar_iconos, guardar_nombres
 
-from publicar_web import EXIT_DEMASIADOS_FALLOS, EXIT_OK, main, poblar, productos_sin_nombre
+from publicar_web import (
+    EXIT_DEMASIADOS_FALLOS,
+    EXIT_OK,
+    main,
+    pedir_nombres,
+    poblar,
+    productos_sin_icono,
+    productos_sin_nombre,
+)
 
 # Directorio del repositorio: hace falta para que `--config config.yaml` (la
 # ruta relativa por defecto de `main()`) encuentre el fichero de verdad, sin
@@ -121,6 +129,9 @@ class ClientePrueba:
     def item_names(self, item_id):
         return {"en_GB": f"Objeto {item_id}"}
 
+    def item_icon_url(self, item_id):
+        return f"https://cdn/{item_id}.jpg"
+
 
 def _snapshot(db_path):
     """Contenido de las tablas que `main()` puede tocar, para comparar antes y
@@ -208,3 +219,155 @@ def test_si_fallan_pocos_reinos_se_publica_igual(tmp_path, monkeypatch):
         assert con.execute("SELECT COUNT(*) FROM precio").fetchone()[0] == 8
     finally:
         con.close()
+
+
+# -- Iconos ------------------------------------------------------------------
+#
+# La columna `nombre.icono` existia desde el principio pero nadie la llenaba:
+# `pedir_nombres` guardaba None a proposito, con el argumento de que ninguna
+# plantilla lo leia. Ahora las tres si, y una tabla de objetos de WoW sin sus
+# iconos no se lee bien. Con el volcado real: 18.675 nombres en ingles y cero
+# iconos.
+
+
+class ClienteFalso:
+    """Solo lo que usan `pedir_nombres` y `pedir_iconos`."""
+
+    def __init__(self, iconos=None, nombres=None):
+        self.iconos = iconos if iconos is not None else {}
+        self.nombres = nombres if nombres is not None else {}
+        self.iconos_pedidos = []
+
+    def item_names(self, item_id):
+        return self.nombres.get(item_id, {"en_GB": f"Objeto {item_id}"})
+
+    def item_icon_url(self, item_id):
+        self.iconos_pedidos.append(item_id)
+        return self.iconos.get(item_id)
+
+
+def test_un_objeto_nuevo_trae_su_icono(tmp_path):
+    client = ClienteFalso(iconos={222: "https://cdn/222.jpg"})
+
+    filas = pedir_nombres(client, [(TIPO_OBJETO, 222)], max_workers=2)
+
+    assert filas, "algo tiene que salir"
+    assert {f[4] for f in filas} == {"https://cdn/222.jpg"}
+
+
+def test_el_icono_va_en_todos_los_idiomas_del_objeto(tmp_path):
+    """El icono es del producto, no del idioma, pero la tabla tiene una fila
+    por idioma: si solo se pusiera en una, la web en aleman saldria sin foto.
+    """
+    client = ClienteFalso(
+        iconos={222: "https://cdn/222.jpg"},
+        nombres={222: {"en_GB": "Boots", "de_DE": "Stiefel"}},
+    )
+
+    filas = pedir_nombres(client, [(TIPO_OBJETO, 222)], max_workers=2)
+
+    assert len(filas) == 2
+    assert all(f[4] == "https://cdn/222.jpg" for f in filas)
+
+
+def test_un_objeto_sin_icono_no_rompe_la_pasada(tmp_path):
+    """`item_icon_url` devuelve None si Blizzard no lo tiene. No es un error."""
+    client = ClienteFalso(iconos={})
+
+    filas = pedir_nombres(client, [(TIPO_OBJETO, 222)], max_workers=2)
+
+    assert filas and all(f[4] is None for f in filas)
+
+
+def test_se_rellenan_los_iconos_que_faltan_de_antes(tmp_path):
+    """Los 18.675 objetos que ya tenian nombre no vuelven a pasar por
+    `productos_sin_nombre`, asi que sin esto no verian un icono jamas.
+    """
+    con = abrir(tmp_path / "p.db")
+    guardar_nombres(
+        con,
+        [
+            (TIPO_OBJETO, 111, "en", "Con icono", "https://cdn/111.jpg"),
+            (TIPO_OBJETO, 222, "en", "Sin icono", None),
+            (TIPO_OBJETO, 333, "en", "Tambien sin icono", None),
+        ],
+    )
+
+    assert productos_sin_icono(con, limite=10) == [(TIPO_OBJETO, 222), (TIPO_OBJETO, 333)]
+
+
+def test_el_relleno_de_iconos_esta_acotado(tmp_path):
+    """Una pasada no puede irse a 18.000 peticiones extra a la API."""
+    con = abrir(tmp_path / "p.db")
+    guardar_nombres(
+        con, [(TIPO_OBJETO, i, "en", f"Objeto {i}", None) for i in range(1, 11)]
+    )
+
+    assert len(productos_sin_icono(con, limite=3)) == 3
+
+
+def test_guardar_iconos_no_toca_los_nombres(tmp_path):
+    con = abrir(tmp_path / "p.db")
+    guardar_nombres(
+        con,
+        [
+            (TIPO_OBJETO, 222, "en", "Boots", None),
+            (TIPO_OBJETO, 222, "de", "Stiefel", None),
+        ],
+    )
+
+    guardar_iconos(con, [(TIPO_OBJETO, 222, "https://cdn/222.jpg")])
+
+    filas = con.execute(
+        "SELECT idioma, nombre, icono FROM nombre ORDER BY idioma"
+    ).fetchall()
+    assert [f["nombre"] for f in filas] == ["Stiefel", "Boots"]
+    assert all(f["icono"] == "https://cdn/222.jpg" for f in filas)
+
+
+def test_un_icono_que_sigue_sin_venir_no_borra_nada(tmp_path):
+    """Blizzard puede seguir sin darlo: mejor dejarlo pendiente que escribir
+    un None encima y volver a intentarlo eternamente igual."""
+    con = abrir(tmp_path / "p.db")
+    guardar_nombres(con, [(TIPO_OBJETO, 222, "en", "Boots", "https://cdn/x.jpg")])
+
+    guardar_iconos(con, [(TIPO_OBJETO, 222, None)])
+
+    assert con.execute("SELECT icono FROM nombre").fetchone()[0] == "https://cdn/x.jpg"
+
+
+def test_solo_iconos_no_toca_los_precios(tmp_path, monkeypatch):
+    """El relleno inicial son ~18.000 iconos y no necesita bajar los 92 reinos.
+
+    Y sobre todo NO puede volcar: `volcar()` borra la tabla `precio` entera y
+    reinserta lo que se haya bajado, asi que una pasada de iconos que ademas
+    publicara dejaria la web con los precios de los reinos que se pidieran.
+    """
+    monkeypatch.chdir(RAIZ)
+    ruta = tmp_path / "p.db"
+    con = abrir(ruta)
+    guardar_nombres(con, [(TIPO_OBJETO, 271440, "en", "Boots", None)])
+    poblar(
+        con,
+        {Clave(TIPO_OBJETO, 271440, 305): {1305: resumen(500_000_000)}},
+        {1305: "Kazzak"},
+        [],
+        generado_en=1788451184,
+    )
+    con.close()
+
+    antes = _snapshot(ruta)
+    codigo = main(
+        ["--db", str(ruta), "--solo-iconos", "--iconos", "50"],
+        client=ClientePrueba(fallan=[]),
+    )
+
+    assert codigo == EXIT_OK
+    despues = _snapshot(ruta)
+    assert despues["precio"] == antes["precio"]
+    assert despues["volcado"] == antes["volcado"]
+    # Y el icono si se ha puesto.
+    con = abrir(ruta)
+    assert con.execute("SELECT icono FROM nombre").fetchone()[0] == (
+        "https://cdn/271440.jpg"
+    )

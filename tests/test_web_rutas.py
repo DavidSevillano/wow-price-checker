@@ -275,7 +275,8 @@ def ruta_grande(tmp_path):
     guardar_nombres(
         con,
         [
-            (TIPO_OBJETO, 271440, "en", "Greaves of the Noxious Depths", None),
+            (TIPO_OBJETO, 271440, "en", "Greaves of the Noxious Depths",
+             "https://cdn/greaves.jpg"),
             (TIPO_OBJETO, 100, "en", "Cosa a su precio", None),
         ],
     )
@@ -384,3 +385,74 @@ def test_un_volcado_nuevo_invalida_la_cache(cliente_grande, ruta_grande):
     con.close()
 
     assert "Greaves of the Noxious Depths" not in cliente_grande.get("/").text
+
+
+# -- Ningun enlace interno puede llevar a un 404 ----------------------------
+#
+# Este test existe porque el fallo se repitio dos veces: la marca de la
+# cabecera apuntaba a `/`, que no estaba definida, y el "See all realms" de la
+# ficha apuntaba a `/pro`, que era el plan de pago de la v3 y tampoco existia
+# --con 92 reinos y 5 visibles, salia en casi todas las fichas. Un enlace
+# muerto no lo ve nadie hasta que lo pulsa un usuario.
+
+
+def test_ningun_enlace_interno_da_404(cliente_grande):
+    import re
+
+    paginas = ["/", "/item/271440", "/realm/reino-1"]
+    vistos = set()
+    for pagina in paginas:
+        html = cliente_grande.get(pagina).text
+        for href in re.findall(r'href="(/[^"#]*)"', html):
+            if href in vistos:
+                continue
+            vistos.add(href)
+            r = cliente_grande.get(href)
+            assert r.status_code != 404, f"{pagina} enlaza a {href}, que da 404"
+
+    # Si el regex dejara de encontrar nada, el test pasaria sin comprobar nada.
+    assert "/" in vistos and any(h.startswith("/item/") for h in vistos)
+
+
+# -- Los iconos --------------------------------------------------------------
+#
+# Una tabla de objetos de WoW sin sus iconos no se lee: son el unico rasgo por
+# el que se reconoce un objeto de un vistazo, y los nombres son largos y se
+# parecen entre si ("Uncanny Combatant's Satin Belt", "...Satin Pants").
+
+
+def test_la_portada_pinta_el_icono_del_objeto(cliente_grande):
+    assert "https://cdn/greaves.jpg" in cliente_grande.get("/").text
+
+
+def test_la_ficha_pinta_el_icono_del_objeto(cliente_grande):
+    assert "https://cdn/greaves.jpg" in cliente_grande.get("/item/271440").text
+
+
+def test_la_pagina_de_reino_pinta_el_icono(cliente_grande):
+    assert "https://cdn/greaves.jpg" in cliente_grande.get("/realm/reino-1").text
+
+
+def test_un_objeto_sin_icono_no_deja_una_imagen_rota(tmp_path):
+    """Blizzard no tiene icono para todo, y `<img src="">` pide la propia
+    pagina otra vez en algunos navegadores. Sin icono, no hay etiqueta.
+    """
+    ruta = tmp_path / "si.db"
+    con = abrir(ruta)
+    guardar_reinos(con, {i: f"Reino {i}" for i in range(1, 21)})
+    guardar_nombres(con, [(TIPO_OBJETO, 1, "en", "Sin foto", None)])
+    volcar(
+        con,
+        {
+            Clave(TIPO_OBJETO, 1, 305): {
+                1: resumen(50_000), **{i: resumen(100_000) for i in range(2, 21)}
+            }
+        },
+        generado_en=1788451184,
+    )
+    recalcular_estadisticas(con)
+    con.close()
+
+    texto = TestClient(crear_app(ruta)).get("/").text
+    assert "Sin foto" in texto
+    assert 'src=""' not in texto

@@ -1294,5 +1294,32 @@ region una vez por hora:
 .venv\Scripts\python.exe publicar_web.py --db web.db
 ```
 
+De cada objeto nuevo se guardan el nombre en ocho idiomas y el icono, que es
+lo que las tres paginas ensenan al lado del nombre: una tabla de cien objetos
+de WoW sin sus iconos no se lee, porque los nombres son largos y se parecen
+entre si ("Uncanny Combatant's Satin Belt", "Uncanny Combatant's Satin
+Pants").
+
+El icono se pide con una peticion aparte por objeto, asi que solo se hace una
+vez por producto. Los que ya estaban guardados de antes (18.675 la primera
+vez, cuando el icono se dejaba siempre a None) se rellenan a plazos:
+`--iconos N` dice cuantos atrasados coger en cada pasada, 3.000 por defecto.
+Para hacerlo todo de una sentada, sin bajar subastas ni tocar los precios:
+
+```bash
+.venv\Scripts\python.exe publicar_web.py --db web.db --solo-iconos --iconos 20000
+```
+
+Va a ~60 objetos por segundo, o sea unos cinco minutos para el catalogo
+entero.
+
+**No todo lo que esta rebajado es una ganga.** La portada y las paginas de
+reino descartan dos clases de basura que salian a la vista con los 92 reinos:
+las medianas clavadas en 9.999.999 de oro, que es el maximo que deja teclear
+la casa de subastas y no un precio (`TOPE_CDS`), y los descuentos por encima
+del 95%, que en la region entera siempre son una mediana rota y no una oferta
+(`DESCUENTO_MAXIMO`). Sin eso la portada salia entera a "100% off, normally
+9,999,999g".
+
 Para desplegarla en un servidor de verdad, con systemd y nginx, esta todo en
 [`despliegue/README.md`](despliegue/README.md).

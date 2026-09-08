@@ -261,6 +261,34 @@ def guardar_reinos(con: sqlite3.Connection, nombres: Mapping[int, str]) -> None:
         )
 
 
+def guardar_iconos(
+    con: sqlite3.Connection, iconos: Iterable[tuple[str, int, str | None]]
+) -> int:
+    """Pone el icono de cada producto en TODAS sus filas de idioma.
+
+    La tabla `nombre` tiene una fila por idioma y la columna `icono` en cada
+    una, aunque el icono sea del producto y no del idioma. Si solo se pusiera
+    en la fila del ingles, la web en aleman saldria sin foto.
+
+    Los `None` se descartan en vez de escribirse: Blizzard no tiene icono para
+    todo, y un None escrito encima de un icono bueno lo borraria. Dejar la fila
+    a NULL tiene ademas la propiedad util de que el producto sigue saliendo en
+    `productos_sin_icono` y se reintenta en una pasada futura.
+
+    Devuelve cuantos productos se han actualizado de verdad.
+    """
+    filas = [(icono, tipo, pid) for tipo, pid, icono in iconos if icono]
+    if not filas:
+        return 0
+
+    with _transaccion(con):
+        con.executemany(
+            "UPDATE nombre SET icono = ? WHERE tipo = ? AND producto_id = ?",
+            filas,
+        )
+    return len(filas)
+
+
 def guardar_nombres(
     con: sqlite3.Connection,
     filas: Iterable[tuple[str, int, str, str, str | None]],

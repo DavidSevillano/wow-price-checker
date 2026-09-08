@@ -1,0 +1,15 @@
+{#- Nombre de un objeto con su icono y su ilvl, tal y como sale en una tabla.
+
+    El icono es opcional a proposito: Blizzard no lo tiene para todo, y un
+    `<img src="">` hace que algunos navegadores vuelvan a pedir la propia
+    pagina. Sin icono no se pinta la etiqueta.
+
+    `loading="lazy"` porque una pagina de reino son cien iconos del CDN de
+    Blizzard, y ninguno hace falta hasta que se llega a su fila. -#}
+<a class="objeto" href="/item/{{ producto_id }}">
+  {%- if icono %}
+  <img class="icono" src="{{ icono }}" alt="" width="28" height="28" loading="lazy">
+  {%- endif %}
+  <span>{{ nombre }}</span>
+</a>
+{%- if variante != -1 %}<span class="ilvl-et">{{ variante }}</span>{% endif %}

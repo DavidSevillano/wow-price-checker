@@ -7,6 +7,7 @@ import sqlite3
 import time
 from typing import Any, Optional
 
+from wowalerts.config import COPPER_PER_GOLD
 from web.ingesta import SIN_VARIANTE
 
 log = logging.getLogger("web.consultas")
@@ -39,6 +40,29 @@ REINOS_PARA_MEDIANA = 5
 # parámetro y no se lee dentro de las consultas para que los tests con una
 # región de juguete puedan bajarlo sin tocar el criterio real.
 REINOS_PARA_COMPARAR = 15
+
+# El maximo que se puede teclear en la casa de subastas: 9.999.999 de oro.
+# Una mediana clavada ahi no es un precio, es un "no quiero venderlo" -- y como
+# es enorme, hace que cualquier reino con un precio real parezca una ganga del
+# 99%. Medido sobre el volcado de los 92 reinos: 68 variantes de 20.138 tienen
+# la mediana en el tope, y se comian 7 de las 12 filas de la portada.
+TOPE_CDS = 9_999_999 * COPPER_PER_GOLD
+
+# El descuento mas alto que se considera creible. Por encima de esto, en la
+# region entera, no hay gangas: hay medianas rotas por objetos que alguien
+# lista a precio de fantasia en medio mundo (4.000.000g por un huevo de
+# murloc). En el volcado real son 777 filas al 99% o mas, y ninguna era una
+# oferta.
+#
+# El corte quita basura, no mercancia: por debajo de el siguen quedando 6.798
+# filas entre el 95% y el 99%, y 12.265 entre el 90% y el 95%.
+DESCUENTO_MAXIMO = 95
+
+# Cuantas filas se piden por cada hueco de la lista para poder quedarse con
+# un solo reino por producto. Ver `mejores_rebajas`: con datos reales las 12
+# filas se llenan ya con holgura 5, y subir a 20 no costaba tiempo medible
+# (385 ms frente a 363 ms), asi que 10 es holgura de sobra sin pagar nada.
+HOLGURA_DEDUPE = 10
 
 IDIOMA_POR_DEFECTO = "en"
 
@@ -175,6 +199,16 @@ def productos_de_reino(
     significa nada: ver `REINOS_PARA_COMPARAR`, que es el mismo listón que
     usa `mejores_rebajas` para la portada.
 
+    Lleva los mismos tres filtros de calidad que `mejores_rebajas`, y por la
+    misma razón: con los 92 reinos reales esta página abría con "Honorable
+    Combatant's Leather Greaves, normally 9,999,999g, here 959g". Ver
+    `TOPE_CDS` y `DESCUENTO_MAXIMO`, y el `JOIN` contra `nombre`, que aquí
+    tampoco es `LEFT`: una lista de cien filas no puede llevar "#183942".
+
+    Lo que NO comparte es el deduplicado por producto. Aquí caben cien filas y
+    no doce, y el mismo objeto a dos ilvl distintos son dos ofertas distintas
+    con dos precios distintos: la plantilla los distingue con su ilvl al lado.
+
     Coste medido en producción (92 reinos, 20.144 productos, 787.880 filas en
     `precio`): ~27 ms por vista de página de reino, frente a ~0,028 ms de las
     consultas de la página de producto. Se probó un índice en
@@ -189,18 +223,28 @@ def productos_de_reino(
     return [
         dict(fila)
         for fila in con.execute(
-            "SELECT n.nombre, p.producto_id, p.variante, p.minimo, e.mediana "
+            "SELECT n.nombre, n.icono, p.producto_id, p.variante, p.minimo, "
+            "       e.mediana "
             "  FROM precio p "
             "  JOIN estadistica e ON e.tipo = p.tipo "
             "                    AND e.producto_id = p.producto_id "
             "                    AND e.variante = p.variante "
-            "  LEFT JOIN nombre n ON n.tipo = p.tipo "
-            "                    AND n.producto_id = p.producto_id "
-            "                    AND n.idioma = ? "
+            "  JOIN nombre n ON n.tipo = p.tipo "
+            "                AND n.producto_id = p.producto_id "
+            "                AND n.idioma = ? "
             " WHERE p.reino_id = ? AND e.reinos >= ? AND p.minimo < e.mediana "
+            "   AND e.mediana < ? "
+            "   AND CAST(p.minimo AS REAL) / e.mediana >= ? "
             " ORDER BY CAST(p.minimo AS REAL) / e.mediana "
             " LIMIT ?",
-            (IDIOMA_POR_DEFECTO, reino_id, reinos_minimos, limite),
+            (
+                IDIOMA_POR_DEFECTO,
+                reino_id,
+                reinos_minimos,
+                TOPE_CDS,
+                1 - DESCUENTO_MAXIMO / 100,
+                limite,
+            ),
         )
     ]
 
@@ -264,7 +308,7 @@ def productos_mas_vistos(
     return [
         dict(fila)
         for fila in con.execute(
-            "SELECT g.tipo, g.producto_id, n.nombre, g.peticiones "
+            "SELECT g.tipo, g.producto_id, n.nombre, n.icono, g.peticiones "
             "  FROM pagina g "
             "  LEFT JOIN nombre n ON n.tipo = g.tipo "
             "                    AND n.producto_id = g.producto_id "
@@ -292,38 +336,81 @@ def mejores_rebajas(
     Por eso cada fila trae su reino y su slug: sin eso la cifra no sirve de
     nada, porque no dice adónde ir a comprarlo.
 
-    El corte es `<` y no `<=`: un reino que clava el precio normal no está
-    rebajado, y con noventa y dos reinos los empates en la mediana son
-    muchos.
+    Tres filtros que no estaban cuando esto se probó con dos reinos y que la
+    primera pasada de los 92 hizo obligatorios --la portada salía entera a
+    "100% off, normally 9,999,999g"--:
 
-    **Es cara: 271 ms medidos sobre 932.000 filas de `precio`**, contra los
-    ~23 ms de la página de reino, porque aquí no hay un `reino_id` que recorte
-    el escaneo y el `ORDER BY` se resuelve con un b-tree temporal sobre todo
-    lo que pasa el filtro. Quien la llame en una ruta tiene que cachearla; la
-    portada lo hace contra `volcado.generado_en`.
+    1. `e.mediana < TOPE_CDS`. Una mediana clavada en el máximo que deja
+       teclear la casa de subastas no es un precio.
+    2. El descuento no pasa de `DESCUENTO_MAXIMO`. Por encima de eso lo que
+       hay roto es la mediana, no el mercado.
+    3. Un producto ocupa una fila y no cinco. El mismo objeto rebajado en
+       varios reinos daba varias filas seguidas ("Waterlogged Cloth Vest"
+       salía tres veces entre las doce primeras).
+
+    Y un `JOIN` --no `LEFT JOIN`-- contra `nombre`: el 6,5% de las variantes
+    no tiene nombre en inglés, y la portada no puede enseñar "#183942" como
+    si fuera un objeto. En la ficha sí se cae al id, porque allí el usuario ya
+    ha pedido ESE producto; aquí se elige qué enseñar.
+
+    El corte de la rebaja es `<` y no `<=`: un reino que clava el precio
+    normal no está rebajado, y con noventa y dos reinos los empates en la
+    mediana son muchos.
+
+    **El deduplicado se hace aquí y no con un `ROW_NUMBER()`** aunque en SQL
+    quedaría más limpio: medido sobre las 744.832 filas del volcado real, la
+    función de ventana obliga a ordenar TODAS las filas que pasan el filtro y
+    sube la consulta de 363 ms a 696 ms. Con `ORDER BY ... LIMIT` SQLite se
+    queda con una cola acotada y no ordena el resto.
+
+    El precio de hacerlo así es que hay que pedir de más y puede quedarse
+    corto: se piden `limite * HOLGURA_DEDUPE` filas, y si un puñado de
+    productos se repartiera todas, la lista sale con menos de `limite`. Es
+    preferible a devolver el mismo objeto cinco veces, y con holgura 10 no ha
+    pasado nunca sobre datos reales (las 12 filas se llenan ya con holgura 5).
+
+    **Es cara: ~363 ms sobre el volcado real**, contra los ~23 ms de la página
+    de reino, porque aquí no hay un `reino_id` que recorte el escaneo. Quien
+    la llame en una ruta tiene que cachearla; la portada lo hace contra
+    `volcado.generado_en`.
     """
-    filas = []
+    vistos: set[int] = set()
+    filas: list[dict[str, Any]] = []
     for fila in con.execute(
-        "SELECT n.nombre, p.producto_id, p.variante, p.minimo, e.mediana, "
-        "       r.nombre AS reino, r.slug "
+        "SELECT n.nombre, n.icono, p.producto_id, p.variante, p.minimo, "
+        "       e.mediana, r.nombre AS reino, r.slug "
         "  FROM precio p "
         "  JOIN estadistica e ON e.tipo = p.tipo "
         "                    AND e.producto_id = p.producto_id "
         "                    AND e.variante = p.variante "
         "  JOIN reino r ON r.id = p.reino_id "
-        "  LEFT JOIN nombre n ON n.tipo = p.tipo "
-        "                    AND n.producto_id = p.producto_id "
-        "                    AND n.idioma = ? "
-        " WHERE e.reinos >= ? AND p.minimo < e.mediana "
+        "  JOIN nombre n ON n.tipo = p.tipo "
+        "                AND n.producto_id = p.producto_id "
+        "                AND n.idioma = ? "
+        " WHERE e.reinos >= ? "
+        "   AND p.minimo < e.mediana "
+        "   AND e.mediana < ? "
+        "   AND CAST(p.minimo AS REAL) / e.mediana >= ? "
         " ORDER BY CAST(p.minimo AS REAL) / e.mediana "
         " LIMIT ?",
-        (idioma, reinos_minimos, limite),
+        (
+            idioma,
+            reinos_minimos,
+            TOPE_CDS,
+            1 - DESCUENTO_MAXIMO / 100,
+            limite * HOLGURA_DEDUPE,
+        ),
     ):
+        if fila["producto_id"] in vistos:
+            continue
+        vistos.add(fila["producto_id"])
         rebaja = dict(fila)
         # El porcentaje se calcula aquí y no en la plantilla por lo mismo que
         # `mediana_fiable`: una cuenta escrita en Jinja no la cubre un test.
         rebaja["descuento"] = round((1 - rebaja["minimo"] / rebaja["mediana"]) * 100)
         filas.append(rebaja)
+        if len(filas) == limite:
+            break
     return filas
 
 

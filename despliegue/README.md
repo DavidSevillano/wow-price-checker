@@ -10,6 +10,49 @@ distribucion cambian los nombres de paquete, no la idea.
 
 ---
 
+## 0. Que hace falta contratar
+
+Dos cosas, y ninguna cara.
+
+**Un VPS con 2 GB de RAM.** El numero que manda no es la web --uvicorn
+sirviendo paginas se queda en decenas de MB-- sino la pasada horaria: se mide
+un **pico de 644 MB** al bajar y resumir los 92 reinos de EU, porque tiene que
+tener en memoria a la vez las subastas de varios reinos mientras las agrega.
+En una maquina de 512 MB o de 1 GB esa pasada muere por falta de memoria (y en
+1 GB moriria a veces y no siempre, que es peor). Con 2 GB sobra sitio para el
+pico, para uvicorn y para el sistema.
+
+**Disco: 10 GB de sobra.** Lo que ocupa esto de verdad, medido con la region
+entera dentro:
+
+| | |
+|---|---|
+| `web.db` (744.832 precios, 20.138 productos, 149.386 nombres) | 49 MB |
+| El entorno virtual (`.venv`) | 92 MB |
+| El repositorio | menos de 5 MB |
+
+La base **no crece con el tiempo**: `volcar()` reemplaza la tabla `precio`
+entera en cada pasada y no guarda historico, asi que 49 MB es el tamano
+estable, no el de partida.
+
+**CPU: uno o dos nucleos bastan.** La pasada pasa casi todo su tiempo
+esperando a la API de Blizzard, no calculando.
+
+Con eso, cualquier VPS de los de ~5 euros al mes vale. No hace falta nada
+gestionado: esto es un proceso de Python y un SQLite en un fichero.
+
+**Y un dominio.** Da igual cual, pero hace falta uno de verdad por dos
+motivos concretos: sin dominio no hay certificado de Let's Encrypt (apartado
+6) y por tanto no hay HTTPS, y el `sitemap.xml` tiene que llevar URLs
+absolutas con el dominio real o Google no lo acepta. Sirve cualquier registrador;
+un `.com` esta en unos 10-15 euros al ano.
+
+Lo que **no** hace falta: base de datos gestionada, CDN, Docker, ni un plan de
+copias de seguridad complicado. Si se pierde `web.db` se regenera sola en la
+siguiente pasada horaria, porque los datos de verdad estan en Blizzard.
+
+---
+
 ## 1. Usuario y clonado
 
 La web no necesita (ni debe) correr como root. Crea un usuario de sistema

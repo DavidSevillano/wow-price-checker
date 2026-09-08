@@ -6,7 +6,12 @@ EU realms. Updated hourly.{% endblock %}
 
 {% block contenido %}
 <main class="ficha">
-  <h1>{{ ficha.nombre }}</h1>
+  <h1 class="titulo">
+    {%- if ficha.icono %}
+    <img class="icono grande" src="{{ ficha.icono }}" alt="" width="44" height="44">
+    {%- endif %}
+    {{ ficha.nombre }}
+  </h1>
 
   <nav class="ilvls">
     {% for v in ficha.variantes %}
@@ -77,9 +82,13 @@ EU realms. Updated hourly.{% endblock %}
   </div>
 
   {% if actual.reinos > reinos|length %}
+  {# Sin enlace a proposito. Esto decia "See all realms" apuntando a `/pro`,
+     que es el plan de pago de la v3 y todavia no existe: con 92 reinos y
+     cinco visibles, esa linea sale en casi todas las fichas, asi que era un
+     404 en casi toda la web. La frase sigue, porque decir cuantos reinos
+     faltan es cierto y util; el enlace vuelve cuando haya adonde llevar. #}
   <p class="muro">
     {{ actual.reinos - reinos|length }} more realms ranked by price.
-    <a href="/pro">See all realms</a>
   </p>
   {% endif %}
 </main>

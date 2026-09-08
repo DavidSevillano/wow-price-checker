@@ -22,7 +22,13 @@ from typing import Sequence
 from dotenv import load_dotenv
 
 from web.db import abrir, ruta_de_entorno
-from web.ingesta import guardar_nombres, guardar_reinos, recalcular_estadisticas, volcar
+from web.ingesta import (
+    guardar_iconos,
+    guardar_nombres,
+    guardar_reinos,
+    recalcular_estadisticas,
+    volcar,
+)
 from wowalerts.blizzard import BlizzardClient, BlizzardError
 from wowalerts.config import COPPER_PER_GOLD, load_config
 from wowalerts.mercado import TIPO_OBJETO, Clave, ResumenReino, agregar, resumir_reino
@@ -39,6 +45,13 @@ EXIT_DEMASIADOS_FALLOS = 2
 # miles de objetos de dos cobres que nadie busca jamas, y la region entera no
 # cabria en memoria si se guardaran.
 PRECIO_MINIMO_ORO = 500
+
+# Cuantos iconos atrasados se rellenan por pasada. Ver `productos_sin_icono`:
+# el catalogo entero son ~18.000 peticiones extra y esto corre cada hora, asi
+# que se va cerrando el hueco a plazos. Con 3.000 por pasada el catalogo
+# queda completo en unas seis horas. `--iconos` lo sube para un relleno
+# inicial de una sentada.
+ICONOS_POR_PASADA = 3000
 
 # Los idiomas que sirve la web, guardados con el codigo de dos letras que usa
 # `web.consultas.IDIOMA_POR_DEFECTO` y que es la clave `idioma` de la tabla
@@ -86,6 +99,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--realms",
         default="",
         help="Ids de connected realm separados por comas. Vacio = toda la region.",
+    )
+    parser.add_argument(
+        "--iconos",
+        type=int,
+        default=ICONOS_POR_PASADA,
+        help=(
+            "Cuantos iconos atrasados rellenar en esta pasada. 0 los desactiva. "
+            "Subelo para el relleno inicial del catalogo entero."
+        ),
+    )
+    parser.add_argument(
+        "--solo-iconos",
+        action="store_true",
+        help=(
+            "Solo rellena iconos que falten: no baja subastas ni toca los "
+            "precios. Para el relleno inicial del catalogo."
+        ),
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     return parser
@@ -184,22 +214,69 @@ def pedir_nombres(
 
     def uno(par: tuple[str, int]):
         _, producto_id = par
-        return producto_id, client.item_names(producto_id)
+        # Dos peticiones por objeto en vez de una. Se pagan aqui, con el objeto
+        # nuevo, porque es la unica vez que se piden: el icono se guarda con el
+        # nombre y ya no se vuelve a preguntar nunca por ese producto. Lo que
+        # esto duplica es el coste de los objetos NUEVOS de cada pasada (3.924
+        # en la primera pasada completa de los 92 reinos, y bajando), no el de
+        # los 20.000 del catalogo.
+        return (
+            producto_id,
+            client.item_names(producto_id),
+            client.item_icon_url(producto_id),
+        )
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         for futuro in [pool.submit(uno, par) for par in faltan]:
-            producto_id, nombres = futuro.result()
+            producto_id, nombres, icono = futuro.result()
             for locale, codigo in IDIOMAS.items():
                 nombre = nombres.get(locale)
                 if nombre:
-                    # El icono se deja siempre en None: pedirlo es una peticion
-                    # aparte por objeto (`client.item_icon_url`), y con ~20 000
-                    # objetos en la primera pasada eso duplicaria el trabajo de
-                    # `pedir_nombres`. Ningun template de la web lo lee todavia,
-                    # asi que no hay nada que ganar por ahora.
-                    filas.append((TIPO_OBJETO, producto_id, codigo, nombre, None))
+                    filas.append((TIPO_OBJETO, producto_id, codigo, nombre, icono))
 
     return filas
+
+
+def productos_sin_icono(con, limite: int) -> list[tuple[str, int]]:
+    """Productos que ya tienen nombre pero no icono, hasta `limite`.
+
+    Hace falta porque `productos_sin_nombre` solo mira lo que NO esta en la
+    tabla: los 18.675 objetos que se guardaron cuando el icono se dejaba
+    siempre a None ya tienen su fila, asi que por ahi no vuelven a pasar y no
+    verian una foto jamas.
+
+    El limite no es decoracion: son ~18.000 peticiones extra a la API de
+    Blizzard, y meterlas de golpe en una pasada que corre cada hora es la
+    forma de que te limiten el ritmo. A `ICONOS_POR_PASADA` por vez el hueco
+    se cierra solo en unas cuantas pasadas y ninguna se alarga de mas.
+    """
+    return [
+        (fila[0], fila[1])
+        for fila in con.execute(
+            "SELECT DISTINCT tipo, producto_id FROM nombre "
+            " WHERE icono IS NULL "
+            " ORDER BY producto_id "
+            " LIMIT ?",
+            (limite,),
+        )
+    ]
+
+
+def pedir_iconos(
+    client: BlizzardClient, faltan: Sequence[tuple[str, int]], max_workers: int
+) -> list[tuple[str, int, str | None]]:
+    """Los iconos que falten, en paralelo. Igual que `pedir_nombres`.
+
+    `item_icon_url` ya se traga sus errores y devuelve None, y `guardar_iconos`
+    descarta los None, asi que un objeto que falle hoy se reintenta manana sin
+    que nadie tenga que llevar la cuenta.
+    """
+    def uno(par: tuple[str, int]):
+        tipo, producto_id = par
+        return tipo, producto_id, client.item_icon_url(producto_id)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        return [f.result() for f in [pool.submit(uno, par) for par in faltan]]
 
 
 # -- orquestacion ---------------------------------------------------------------
@@ -255,6 +332,27 @@ def main(argv=None, *, client: BlizzardClient | None = None) -> int:
             locale=config.locale,
             timeout=config.settings.request_timeout,
         )
+
+    if args.solo_iconos:
+        # Sale por aqui antes de tocar nada de subastas. No es un atajo de
+        # comodidad: `volcar()` reemplaza la tabla `precio` entera, asi que una
+        # pasada que rellenara iconos y ademas publicara dejaria la web con
+        # solo los reinos que se hubieran bajado en ese momento.
+        con = abrir(ruta_db)
+        faltan_iconos = productos_sin_icono(con, args.iconos)
+        log.info("%s productos sin icono en esta tanda", len(faltan_iconos))
+        arranque_iconos = time.monotonic()
+        puestos = guardar_iconos(
+            con, pedir_iconos(client, faltan_iconos, config.settings.max_workers)
+        )
+        log.info(
+            "Listo: %s iconos de %s pedidos en %.0f s. Quedan %s por rellenar.",
+            puestos,
+            len(faltan_iconos),
+            time.monotonic() - arranque_iconos,
+            len(productos_sin_icono(con, 1_000_000)),
+        )
+        return EXIT_OK
 
     realm_ids = (
         [int(r) for r in args.realms.split(",") if r.strip()]
@@ -319,13 +417,32 @@ def main(argv=None, *, client: BlizzardClient | None = None) -> int:
     generado_en = int(time.time())
     filas = poblar(con, agregado, nombres_reino, nombres_producto, generado_en)
 
+    # Los iconos atrasados van DESPUES de publicar: si esto falla o se corta a
+    # medias, el volcado de precios ya esta escrito y la web ya sirve datos
+    # nuevos. Una foto que falta es un defecto cosmetico, y no vale la pena
+    # arriesgar la pasada entera por ella.
+    sin_icono = productos_sin_icono(con, args.iconos) if args.iconos else []
+    puestos = 0
+    if sin_icono:
+        arranque_iconos = time.monotonic()
+        puestos = guardar_iconos(
+            con, pedir_iconos(client, sin_icono, config.settings.max_workers)
+        )
+        log.info(
+            "%s iconos de %s pedidos en %.0f s",
+            puestos,
+            len(sin_icono),
+            time.monotonic() - arranque_iconos,
+        )
+
     log.info(
         "Listo: %s reinos, %s productos, %s filas de precio, %s productos con "
-        "nombre nuevo.",
+        "nombre nuevo, %s iconos nuevos.",
         len(nombres_reino),
         len(agregado),
         filas,
         len(faltan),
+        puestos,
     )
     return EXIT_OK
 

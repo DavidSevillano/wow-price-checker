@@ -45,10 +45,10 @@ hourly.{% endblock %}
     </thead>
     <tbody>
       {% for r in rebajas %}
+      {% set producto_id, nombre, icono, variante = r.producto_id, r.nombre, r.icono, r.variante %}
       <tr>
-        <td>
-          <a href="/item/{{ r.producto_id }}">{{ r.nombre or "#" ~ r.producto_id }}</a>
-          {% if r.variante != -1 %}<span class="ilvl-et">{{ r.variante }}</span>{% endif %}
+        <td class="txt">
+          {% include "_objeto.html" with context %}
         </td>
         <td class="txt"><a href="/realm/{{ r.slug }}">{{ r.reino }}</a></td>
         <td class="opcional">{{ r.mediana | oro }}g</td>
@@ -78,7 +78,8 @@ hourly.{% endblock %}
   <div class="pastillas">
     {% for p in vistos %}
     <a class="pastilla" href="/item/{{ p.producto_id }}">
-      {{ p.nombre or "#" ~ p.producto_id }}
+      {%- if p.icono %}<img class="icono" src="{{ p.icono }}" alt="" width="20" height="20" loading="lazy">{% endif -%}
+      <span>{{ p.nombre or "#" ~ p.producto_id }}</span>
     </a>
     {% endfor %}
   </div>

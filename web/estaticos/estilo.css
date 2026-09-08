@@ -78,3 +78,18 @@ td a:hover { color: var(--gold); text-decoration: underline; }
   .ficha { padding: 16px; }
   th, td { padding: 9px 10px; }
 }
+
+/* Los iconos de objeto, que vienen del CDN de Blizzard. El borde y el radio
+   son los de la propia interfaz del juego, y el fondo tapa el hueco mientras
+   la imagen no ha llegado: cien filas cargando a la vez daban un parpadeo de
+   agujeros blancos. */
+.icono {
+  border-radius: 4px; border: 1px solid var(--line);
+  background: var(--ground); flex: none; object-fit: cover;
+}
+.icono.grande { border-radius: 6px; }
+/* Nombre e icono van juntos y se alinean por el centro; si el nombre parte en
+   dos lineas, el icono se queda arriba y no en mitad del hueco. */
+.objeto { display: inline-flex; align-items: center; gap: 9px; vertical-align: middle; }
+.pastilla { display: inline-flex; align-items: center; gap: 7px; }
+.titulo { display: flex; align-items: center; gap: 12px; }
