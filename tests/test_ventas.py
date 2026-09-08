@@ -764,3 +764,128 @@ def test_un_zombi_que_lleva_dos_pasadas_sin_aparecer_se_suelta():
 
     assert ventas == []
     assert seguidas == {}
+
+
+# -- Cancelaciones que todavia no han llegado de una maquina ----------------
+#
+# El 2026-09-07 salieron ocho ventas falsas de Dbardan, Mbarlin,
+# Ebardan y Ebarmar. Las cancelaste en la Steam Deck y su volcado se corto
+# a mitad de sesion: su ultima exportacion fue de Obarbar a las 22:36 UTC y
+# las subastas desaparecieron en el volcado de las 23:23. La espera de dos
+# horas vencia sola y las cantaba igual, asi que ahora se mira otra cosa: si
+# alguna maquina estaba jugando cuando la subasta desaparecio y todavia no ha
+# vuelto a hablar, no hay veredicto.
+
+
+def test_no_se_canta_mientras_una_maquina_que_jugaba_no_ha_vuelto_a_hablar():
+    previa = vigilada(caduca=T0 + timedelta(hours=5), desaparecida_at=T0)
+    # La Deck exporto media hora antes de que la subasta desapareciera.
+    actividad = {"deck": T0 - timedelta(minutes=30)}
+
+    ventas, seguidas, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5, actividad=actividad
+    )
+
+    assert ventas == []
+    assert seguidas[1].desaparecida_at == T0
+
+
+def test_la_espera_no_vence_sola_por_mucho_que_pase_el_tiempo():
+    """Lo que rompio el 2026-09-07: el plazo se agotaba y cantaba la venta.
+
+    Una maquina que dejo de sincronizar no se vuelve fiable porque pasen horas.
+    """
+    previa = vigilada(caduca=T0 + timedelta(days=2), desaparecida_at=T0)
+    actividad = {"deck": T0 - timedelta(minutes=30)}
+
+    ventas, seguidas, _ = revisar_reino(
+        {1: previa},
+        [],
+        [],
+        1,
+        T0 + timedelta(days=1),
+        None,
+        12,
+        5,
+        actividad=actividad,
+    )
+
+    assert ventas == []
+    assert seguidas[1].desaparecida_at == T0
+
+
+def test_si_ninguna_maquina_estaba_jugando_se_canta_la_venta():
+    """No estabas jugando, luego no pudiste cancelarla: se vendio.
+
+    Es el caso de Obarfel, la venta buena de aquella tanda: desaparecio casi
+    ocho horas despues de que la ultima maquina diera senales de vida.
+    """
+    previa = vigilada(caduca=T0 + timedelta(hours=5), desaparecida_at=T0)
+    actividad = {"deck": T0 - timedelta(hours=8), "pc": T0 - timedelta(hours=11)}
+
+    ventas, _, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5, actividad=actividad
+    )
+
+    assert len(ventas) == 1
+
+
+def test_cuando_la_maquina_vuelve_a_hablar_se_decide():
+    """Un volcado posterior a la desaparicion que no la lista como cancelada."""
+    previa = vigilada(caduca=T0 + timedelta(hours=5), desaparecida_at=T0)
+    actividad = {"deck": T0 + timedelta(minutes=20)}
+
+    ventas, _, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5, actividad=actividad
+    )
+
+    assert len(ventas) == 1
+
+
+def test_basta_con_que_hable_la_maquina_que_estaba_jugando():
+    """Las demas no tienen nada que decir: no estaban encendidas."""
+    previa = vigilada(caduca=T0 + timedelta(hours=5), desaparecida_at=T0)
+    actividad = {
+        "deck": T0 + timedelta(minutes=20),
+        "pc": T0 - timedelta(hours=11),
+    }
+
+    ventas, _, _ = revisar_reino(
+        {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5, actividad=actividad
+    )
+
+    assert len(ventas) == 1
+
+
+def test_una_cancelacion_conocida_no_espera_a_nadie():
+    """Si el addon ya ha dicho que la cancelaste, el caso esta cerrado."""
+    previa = vigilada(caduca=T0 + timedelta(hours=5), desaparecida_at=T0)
+    actividad = {"deck": T0 - timedelta(minutes=30)}
+
+    ventas, quedan, _ = revisar_reino(
+        {1: previa},
+        [],
+        [],
+        1,
+        UNA_HORA_DESPUES,
+        None,
+        12,
+        5,
+        canceladas={1},
+        actividad=actividad,
+    )
+
+    assert ventas == []
+    assert quedan == {}
+
+
+def test_la_espera_por_una_maquina_callada_se_deja_por_escrito(caplog):
+    previa = vigilada(caduca=T0 + timedelta(hours=5), desaparecida_at=T0)
+    actividad = {"deck": T0 - timedelta(minutes=30)}
+
+    with caplog.at_level("INFO"):
+        revisar_reino(
+            {1: previa}, [], [], 1, UNA_HORA_DESPUES, None, 12, 5, actividad=actividad
+        )
+
+    assert "deck" in caplog.text

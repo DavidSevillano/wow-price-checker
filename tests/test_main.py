@@ -7,7 +7,7 @@ nada a Discord de verdad.
 import json
 import logging
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -1182,3 +1182,135 @@ def test_un_nombre_que_no_llega_se_reintenta_la_proxima_vez(tmp_path):
     assert cli.nombres_vigilados(cliente, cli.JsonMapCache(ruta, "nombres"), [5000]) == {
         "Greaves"
     }
+
+
+# -- Una maquina que se calla a mitad de sesion -------------------------------
+#
+# El 2026-09-07 salieron ocho ventas falsas: las cancelaste en la Steam Deck y
+# su volcado se corto a mitad de la ronda de personajes. Blizzard solo dice que
+# la subasta ya no esta; quien puede decir que la cancelaste es esa maquina.
+
+
+def _sembrar_una_desaparecida(state_dir, desaparecida_at, ahora):
+    from wowalerts.state import SeguimientoVentas
+    from wowalerts.ventas import SubastaVigilada, UltimoVolcado
+
+    memoria = SeguimientoVentas(Path(state_dir) / "ventas.json")
+    memoria.actualizar_reino(
+        1305,
+        {
+            77: SubastaVigilada(
+                auction_id=77,
+                item_id=5000,
+                item_name="Greaves of the Noxious Depths",
+                ilvl=311,
+                buyout_copper=200_000 * 10_000,
+                quantity=1,
+                character="Pepe",
+                realm="Dun Modr",
+                account=2,
+                # Aun no podia caducar: lo unico que queda por decidir es si se
+                # vendio o si la cancelaste.
+                no_caduca_antes_de=ahora + timedelta(hours=5),
+                visto_at=desaparecida_at - timedelta(hours=1),
+                desaparecida_at=desaparecida_at,
+            )
+        },
+        UltimoVolcado(desaparecida_at, 1000),
+    )
+    memoria.save()
+
+
+def _pasada_con_una_desaparecida(entorno, tmp_path, exporto_hace):
+    """Una pasada en la que la subasta 77 lleva una hora sin aparecer.
+
+    `exporto_hace` es cuanto hace que la maquina dio su ultima senal de vida.
+    """
+    from wowalerts.misubastas import MyAuction, escribir_snapshot
+
+    ahora = datetime.now(timezone.utc)
+    desaparecida_at = ahora - timedelta(hours=1)
+
+    subastas = tmp_path / "subastas"
+    subastas.mkdir()
+    (tmp_path / "roster").mkdir()
+    (tmp_path / "ventas").mkdir()
+    escribir_snapshot(
+        subastas / "deck.json",
+        [
+            MyAuction(
+                auction_id=99,
+                item_id=5000,
+                item_name="Greaves of the Noxious Depths",
+                ilvl=311,
+                buyout_copper=200_000 * 10_000,
+                quantity=1,
+                character="Pepe",
+                realm="Dun Modr",
+                realm_slug="dun-modr",
+                account=2,
+                bonus_ids=(12843,),
+                exported_at=int((ahora - exporto_hace).timestamp()),
+            )
+        ],
+    )
+    _sembrar_una_desaparecida(entorno["state"], desaparecida_at, ahora)
+
+    entorno["mock"].get(
+        f"{BASE}/realm/dun-modr",
+        json={"connected_realm": {"href": f"{BASE}/connected-realm/1305"}},
+    )
+    entorno["mock"].post(
+        "https://discord.com/api/webhooks/2/undercut", json={"id": "1"}
+    )
+    entorno["mock"].get(
+        "https://discord.com/api/webhooks/2/undercut", json={"id": "1"}
+    )
+    entorno["mock"].get(
+        f"{BASE}/realm/dun-modr",
+        json={"connected_realm": {"href": f"{BASE}/connected-realm/1305"}},
+    )
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": [subasta(99, 200_000 * 10_000)]},
+    )
+
+    return ejecutar(
+        entorno,
+        "--undercut",
+        "--ventas",
+        "--mis-subastas",
+        str(subastas),
+        "--personajes",
+        str(tmp_path / "roster"),
+        "--mis-ventas",
+        str(tmp_path / "ventas"),
+    )
+
+
+def test_no_se_canta_la_venta_si_la_maquina_jugaba_y_sigue_callada(
+    entorno, tmp_path, caplog
+):
+    with caplog.at_level(logging.INFO):
+        assert (
+            _pasada_con_una_desaparecida(
+                entorno, tmp_path, exporto_hace=timedelta(minutes=90)
+            )
+            == cli.EXIT_OK
+        )
+
+    assert "💰" not in caplog.text
+    assert "deck" in caplog.text
+
+
+def test_se_canta_la_venta_si_no_habia_nadie_jugando(entorno, tmp_path, caplog):
+    """La otra mitad: sin sesion cerca, una desaparicion si es una venta."""
+    with caplog.at_level(logging.INFO):
+        assert (
+            _pasada_con_una_desaparecida(
+                entorno, tmp_path, exporto_hace=timedelta(hours=6)
+            )
+            == cli.EXIT_OK
+        )
+
+    assert "💰 1 venta(s)" in caplog.text

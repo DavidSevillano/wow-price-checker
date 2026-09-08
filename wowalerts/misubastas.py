@@ -400,6 +400,30 @@ def leer_snapshots(origen: str | Path) -> list[MyAuction]:
     )
 
 
+def actividad_por_maquina(origen: str | Path) -> dict[str, datetime]:
+    """Cuando exporto por ultima vez cada maquina, por el nombre de su fichero.
+
+    Es la ultima senal de vida que tengo de ella. La deteccion de ventas la usa
+    para saber si estabas jugando cuando una subasta desaparecio: solo se puede
+    cancelar una subasta jugando, y solo se puede saber si la cancelaste cuando
+    esa maquina vuelve a exportar.
+
+    Las subastas sin `exportedAt` no cuentan: son de volcados anteriores a que
+    existiera el campo, y una hora inventada es peor que no tenerla.
+    """
+    origen = Path(origen)
+    ficheros = [origen] if origen.is_file() else sorted(origen.glob("*.json"))
+
+    actividad: dict[str, datetime] = {}
+    for fichero in ficheros:
+        marcas = [s.exported_at for s in leer_snapshot(fichero) if s.exported_at]
+        if marcas:
+            actividad[fichero.stem] = datetime.fromtimestamp(
+                max(marcas), tz=timezone.utc
+            )
+    return actividad
+
+
 def separar_por_frescura(
     subastas: Sequence[MyAuction], ahora: datetime, max_horas: int
 ) -> tuple[list[MyAuction], list[MyAuction]]:

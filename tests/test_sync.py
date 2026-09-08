@@ -3,10 +3,12 @@
 import json
 import re
 from dataclasses import replace
+from datetime import datetime, timezone
 
 from sync_subastas import detectar_wow_root, nombre_de_maquina
 from wowalerts.misubastas import (
     MyAuction,
+    actividad_por_maquina,
     escribir_snapshot,
     leer_snapshot,
     leer_snapshots,
@@ -244,3 +246,45 @@ def test_un_cerrojo_viejo_se_da_por_muerto(tmp_path):
 
     with sync.en_exclusiva(tmp_path) as mio:
         assert mio is True
+
+
+# -- Cuando exporto por ultima vez cada maquina -----------------------------
+
+
+def test_la_actividad_es_lo_ultimo_que_exporto_cada_maquina(tmp_path):
+    """La hora de la ultima senal de vida de cada maquina, por su nombre.
+
+    Es lo que permite saber si estabas jugando cuando una subasta desaparecio:
+    una maquina que exporto hace un rato pudo cancelarla sin que me haya
+    llegado, y hasta que no vuelva a hablar no hay veredicto.
+    """
+    escribir_snapshot(
+        tmp_path / "pc.json",
+        [replace(una(1), exported_at=1000), replace(una(2), exported_at=3000)],
+    )
+    escribir_snapshot(tmp_path / "deck.json", [replace(una(3), exported_at=2000)])
+
+    assert actividad_por_maquina(tmp_path) == {
+        "pc": datetime.fromtimestamp(3000, tz=timezone.utc),
+        "deck": datetime.fromtimestamp(2000, tz=timezone.utc),
+    }
+
+
+def test_una_maquina_sin_hora_de_exportacion_no_cuenta(tmp_path):
+    """Los volcados viejos no la llevaban: de esos no se puede afirmar nada."""
+    escribir_snapshot(tmp_path / "pc.json", [una(1)])
+
+    assert actividad_por_maquina(tmp_path) == {}
+
+
+def test_sin_carpeta_no_hay_actividad(tmp_path):
+    assert actividad_por_maquina(tmp_path / "no-existe") == {}
+
+
+def test_un_fichero_suelto_tambien_da_actividad(tmp_path):
+    path = tmp_path / "mis.json"
+    escribir_snapshot(path, [replace(una(1), exported_at=1500)])
+
+    assert actividad_por_maquina(path) == {
+        "mis": datetime.fromtimestamp(1500, tz=timezone.utc)
+    }

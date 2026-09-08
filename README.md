@@ -749,6 +749,59 @@ La espera se corta en cuanto hay respuesta, por cualquiera de los dos lados:
 Dos horas caben de sobra antes de que el volcado del addon se pase de las horas
 que dura un listado, que es cuando la subasta se soltaria sin veredicto.
 
+Esa espera sigue ahi, pero **ya no es la ultima palabra**: por encima de ella
+manda la regla del apartado siguiente, que no vence con el tiempo.
+
+### Ninguna maquina que estuviera jugando se queda sin hablar
+
+Las dos horas de arriba tenian un fallo de fondo: **se median desde la
+desaparicion, asi que vencian solas**. Una maquina que ha dejado de sincronizar
+no se vuelve fiable porque pasen horas, y el razonamiento "si no ha escrito nada
+en dos horas es que no has jugado" solo vale si el sync esta vivo.
+
+El 2026-09-07 costo **ocho ventas falsas** de Dbardan, Mbarlin,
+Ebardan y Ebarmar, casi 1,4 millones de oro que nunca llegaron al buzon:
+
+```
+00:31  la Deck exporta Adannor    -> el sync lo sube
+00:33  la Deck exporta Mbargor  -> el sync lo sube
+00:36  la Deck exporta Obarbar     -> el sync lo sube, y ahi se corta
+00:4x  sigues la ronda: Dbardan, Mbarlin, Ebardan, Ebarmar
+01:23  volcado de Blizzard: sus subastas ya no estan
+09:25  se cantan como vendidas
+```
+
+Las cancelaciones de esos cuatro se quedaron **dentro de la Deck**. El PC, que
+era quien las habia exportado por ultima vez, no sabia nada de ellas, y su lista
+de canceladas jamas las iba a tener. Las tres primeras si se taparon: de esas el
+sync habia llegado a subir la cancelacion.
+
+Ahora la espera **no vence**: dura hasta que esa maquina vuelve a hablar. En
+cada pasada se mira la ultima senal de vida de cada volcado (`pc.json`,
+`deck.json`) y, si cae dentro de las dos horas anteriores a la desaparicion, esa
+maquina estaba jugando y podria tener una cancelacion que no me ha llegado:
+
+```
+⏳ Dbardan de Grebas de las profundidades nocivas: sin noticias de deck
+   desde que desaparecio, y ahi se estaba jugando. No la juzgo hasta que vuelva
+   a exportar.
+```
+
+Cuando la maquina sincroniza otra vez, el caso se cierra solo y bien: con su
+lista de cancelaciones al dia, lo que cancelaste se calla y lo que se vendio se
+anuncia, con la hora en la que desaparecio de verdad.
+
+**Coste: una venta de verdad ocurrida justo despues de jugar no se anuncia hasta
+que vuelvas a entrar en esa maquina.** En aquella tanda le paso a las dos ventas
+buenas de Nbarbar (02:23, una hora y media despues de la ultima senal de la
+Deck), que habrian esperado. La de Obarfel (08:23, casi ocho horas despues)
+salio en su hora, porque a esas alturas ya no habia nadie jugando.
+
+Es el cambio que hace que los avisos de venta no mientan nunca: **si no estabas
+jugando no pudiste cancelarla, y si estabas jugando no se decide sin ti**. El
+margen esta en `MARGEN_DE_SESION`, en `wowalerts/ventas.py`; bajarlo da avisos
+mas rapidos y sube el riesgo de volver a colar una cancelacion como venta.
+
 ### El volcado viejo del addon no manda sobre Blizzard
 
 Si una maquina lleva sin exportar mas horas de las que dura un listado, lo que

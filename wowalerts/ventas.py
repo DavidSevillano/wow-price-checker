@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from types import MappingProxyType
 from typing import AbstractSet, Mapping, Sequence
 
 from .config import COPPER_PER_GOLD
@@ -44,6 +45,26 @@ TIEMPO_MINIMO_RESTANTE = {
 # addon se pase de las horas que dura un listado, que es cuando la subasta se
 # soltaria sin veredicto.
 ESPERA_TRAS_UN_ADELANTAMIENTO = timedelta(hours=2)
+
+
+# Cuanto se considera que sigue en marcha una partida despues de la ultima vez
+# que una maquina exporto. Cancelar una subasta exige estar jugando, asi que una
+# maquina que dio senales de vida hace menos de esto pudo cancelarla y todavia
+# no habermelo contado.
+#
+# El 2026-09-07 esto costo ocho ventas falsas: la Steam Deck exporto Obarbar a
+# las 22:36 UTC, siguio la ronda por Dbardan, Mbarlin, Ebardan y
+# Ebarmar, y su sincronizacion se corto ahi. Las cancelaciones de esos cuatro
+# se quedaron dentro de la Deck, sus subastas desaparecieron del volcado de las
+# 23:23 y se cantaron como vendidas.
+#
+# Lo que fallaba no era el plazo, era medirlo desde la desaparicion: la espera
+# vencia sola y decidia igual. Una maquina que ha dejado de sincronizar no se
+# vuelve fiable porque pasen horas, asi que ahora la espera no vence: dura hasta
+# que esa maquina vuelve a hablar. El precio es que una venta de verdad ocurrida
+# justo despues de jugar no se anuncia hasta que vuelvas a entrar en esa
+# maquina; a cambio, ninguna cancelacion se cuela como venta.
+MARGEN_DE_SESION = timedelta(hours=2)
 
 
 @dataclass(frozen=True)
@@ -163,6 +184,7 @@ def revisar_reino(
     canceladas: AbstractSet[int] = frozenset(),
     decidir: bool = True,
     olvidar: AbstractSet[int] = frozenset(),
+    actividad: Mapping[str, datetime] = MappingProxyType({}),
 ) -> tuple[list[Venta], dict[int, SubastaVigilada], UltimoVolcado]:
     """Las ventas de este reino, el seguimiento actualizado y su foto nueva.
 
@@ -178,6 +200,10 @@ def revisar_reino(
     Con `decidir` a False (la ventana de silencio) se sigue el rastro igual,
     pero no se cierra ningun caso: lo que falte se queda pendiente y se resuelve
     al despertar, con la hora en la que desaparecio de verdad.
+
+    `actividad` dice cuando exporto por ultima vez cada maquina. Una que estaba
+    jugando cuando la subasta desaparecio pudo cancelarla, y hasta que no vuelve
+    a hablar no hay forma de saberlo: ver MARGEN_DE_SESION.
 
     `olvidar` son subastas cuya maquina lleva tanto sin exportar que ya no se
     puede afirmar nada de ellas. Se sueltan SIN veredicto, pero solo las que
@@ -293,6 +319,20 @@ def revisar_reino(
             )
             continue
 
+        calladas = _maquinas_por_hablar(vigilada.desaparecida_at, actividad)
+        if calladas:
+            # Estabas jugando ahi cuando la subasta se fue, asi que pudiste
+            # cancelarla. Solo esa maquina puede decirlo, y aun no ha vuelto.
+            log.info(
+                "⏳ %s de %s: sin noticias de %s desde que desaparecio, y ahi se "
+                "estaba jugando. No la juzgo hasta que vuelva a exportar.",
+                vigilada.character,
+                vigilada.item_name,
+                ", ".join(calladas),
+            )
+            nuevas[auction_id] = vigilada
+            continue
+
         if vigilada.adelantada and _falta_por_hablar_el_addon(
             vigilada, dump_at, exportado_por_pj
         ):
@@ -337,6 +377,28 @@ def revisar_reino(
 
     ventas.sort(key=lambda v: v.neto_copper, reverse=True)
     return ventas, nuevas, UltimoVolcado(dump_at, max_auction_id)
+
+
+def _maquinas_por_hablar(
+    desaparecida_at: datetime, actividad: Mapping[str, datetime]
+) -> list[str]:
+    """Las maquinas que estaban jugando al irse la subasta y siguen calladas.
+
+    Una maquina solo puede haber cancelado algo si estaba encendida y jugando, y
+    solo puede contarmelo exportando despues. Mientras la ultima senal de vida
+    que tengo de ella caiga en la ventana de la desaparicion, lo que ha pasado
+    es indistinguible de una cancelacion suya que no me ha llegado.
+
+    Con el volcado al dia esto no retiene nada: en cuanto la maquina exporta
+    despues de la desaparicion deja de estar callada. Solo muerde cuando una
+    maquina se calla justo despues de jugar, que es exactamente cuando las
+    cancelaciones se pierden.
+    """
+    return sorted(
+        maquina
+        for maquina, ultima in actividad.items()
+        if desaparecida_at - MARGEN_DE_SESION <= ultima <= desaparecida_at
+    )
 
 
 def _falta_por_hablar_el_addon(

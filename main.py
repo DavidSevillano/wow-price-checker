@@ -41,6 +41,7 @@ from wowalerts.items import (
 from wowalerts.journalator import leer_resumenes, ranking
 from wowalerts.misubastas import (
     MisSubastasError,
+    actividad_por_maquina,
     leer_canceladas,
     leer_snapshots,
     separar_por_frescura,
@@ -517,6 +518,10 @@ def run_mis_subastas(
     canceladas = leer_canceladas(mis_subastas_path) if hacer_ventas else set()
     if canceladas:
         log.info("🚫 %s cancelacion(es) conocidas del addon.", len(canceladas))
+    # La ultima senal de vida de cada maquina. Es lo que dice si estabas jugando
+    # cuando una subasta desaparecio, y por tanto si pudiste cancelarla sin que
+    # me haya llegado todavia.
+    actividad = actividad_por_maquina(mis_subastas_path) if hacer_ventas else {}
 
     if hacer_ventas:
         # Un reino donde queda algo por resolver se mira aunque el volcado del
@@ -580,6 +585,7 @@ def run_mis_subastas(
                 canceladas,
                 not callado,
                 olvidar=olvidar,
+                actividad=actividad,
             )
             ventas.extend(del_reino)
             seguimiento.actualizar_reino(realm_id, seguidas, ultimo)
