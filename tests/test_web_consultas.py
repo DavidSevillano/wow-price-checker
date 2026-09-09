@@ -22,6 +22,7 @@ from web.consultas import (
     reinos_publicados,
     resumen_del_catalogo,
     subcategorias,
+    sugerencias,
 )
 from web.ingesta import (
     guardar_atributos,
@@ -917,3 +918,100 @@ def test_la_ficha_trae_la_calidad(con_catalogo):
 def test_una_ficha_sin_clasificar_no_revienta(con):
     """El fixture `con` no tiene tabla `atributo` poblada."""
     assert ficha(con, TIPO_OBJETO, 271440)["calidad"] is None
+
+
+# -- Autocompletar -----------------------------------------------------------
+#
+# La caja de la cabecera no adivinaba nada: habia que teclear el nombre entero
+# y pulsar Enter para llegar a una pagina de resultados. Con nombres como
+# "Uncanny Combatant's Satin Belt" eso es pedirle al visitante que sepa de
+# memoria lo que ha venido a buscar.
+#
+# `sugerencias` es `buscar` con otra prioridad. El buscador ordena por nombre
+# corto porque quien pulsa Enter quiere la lista entera; el autocompletar
+# ordena por PREFIJO porque quien teclea "sword" esta escribiendo el principio
+# del nombre, no un trozo de en medio.
+
+
+@pytest.fixture
+def con_espadas(tmp_path):
+    c = abrir(tmp_path / "esp.db")
+    guardar_reinos(c, {i: f"Reino {i}" for i in range(1, 21)})
+    espadas = [
+        (1, "Bloodfang Sword"),             # contiene, pero no empieza
+        (2, "Sword of a Thousand Truths"),  # empieza, y es el mas largo
+        (3, "Swordfish"),                   # empieza, y es el mas corto
+    ]
+    guardar_nombres(
+        c, [(TIPO_OBJETO, i, "en", n, f"https://cdn/{i}.jpg") for i, n in espadas]
+    )
+    volcar(
+        c,
+        {
+            Clave(TIPO_OBJETO, i, 305): {
+                1: resumen(10_000 * i),
+                **{r: resumen(100_000 * i) for r in range(2, 21)},
+            }
+            for i, _ in espadas
+        },
+        generado_en=1788451184,
+    )
+    recalcular_estadisticas(c)
+    return c
+
+
+def test_el_autocompletar_pone_delante_lo_que_empieza_igual(con_espadas):
+    """Quien teclea "sword" esta escribiendo el principio de un nombre.
+
+    Ordenando solo por longitud --que es lo que hace el buscador-- "Bloodfang
+    Sword" (15) se colaria delante de "Sword of a Thousand Truths" (26), y la
+    segunda sugerencia no empezaria por lo tecleado.
+    """
+    nombres = [f["nombre"] for f in sugerencias(con_espadas, "sword", limite=10)]
+    assert nombres == ["Swordfish", "Sword of a Thousand Truths", "Bloodfang Sword"]
+
+
+def test_el_autocompletar_no_devuelve_el_catalogo_sin_texto(con_espadas):
+    assert sugerencias(con_espadas, "   ", limite=10) == []
+
+
+def test_el_autocompletar_ignora_los_comodines_de_sql(con_espadas):
+    """Un `%` tecleado en la caja no puede convertirse en "damelo todo"."""
+    assert sugerencias(con_espadas, "%", limite=10) == []
+
+
+def test_el_autocompletar_solo_ofrece_lo_que_esta_en_venta(con_espadas):
+    """Sugerir algo que no esta en subasta lleva a una ficha sin precios."""
+    guardar_nombres(con_espadas, [(TIPO_OBJETO, 98, "en", "Sword Fantasma", None)])
+    assert "Sword Fantasma" not in {
+        f["nombre"] for f in sugerencias(con_espadas, "sword", limite=10)
+    }
+
+
+def test_el_autocompletar_respeta_el_limite(con_espadas):
+    assert len(sugerencias(con_espadas, "sword", limite=2)) == 2
+
+
+def test_cada_sugerencia_trae_con_que_pintarse(con_catalogo):
+    """Icono y calidad: sin ellos la lista desplegable es texto gris."""
+    fila = sugerencias(con_catalogo, "mail boots", limite=5)[0]
+    assert fila["nombre"] == "Mail Boots"
+    assert fila["icono"] == "https://cdn/1.jpg"
+    assert fila["calidad"] == "EPIC"
+    assert fila["desde"] == 10_000
+
+
+def test_las_subcategorias_se_pueden_contar_por_calidad(con_catalogo):
+    """Con un filtro de calidad puesto, la lista de tipos tiene que hablar de
+    ESA calidad: cuantos hay y, sobre todo, cuales existen.
+
+    En `armor` hay Mail y Plate, pero lo unico raro esta en Mail. Ofrecer
+    Plate con el filtro Rare puesto lleva a una categoria vacia.
+    """
+    subs = subcategorias(con_catalogo, "armor", calidad="RARE")
+    assert [(s["subclase"], s["objetos"]) for s in subs] == [("Mail", 1)]
+
+
+def test_sin_calidad_las_subcategorias_son_todas(con_catalogo):
+    subs = subcategorias(con_catalogo, "armor")
+    assert [(s["subclase"], s["objetos"]) for s in subs] == [("Mail", 2), ("Plate", 1)]

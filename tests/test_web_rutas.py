@@ -620,19 +620,26 @@ def test_el_sitemap_lleva_las_categorias(cliente_catalogo):
 def test_ningun_enlace_de_las_categorias_da_404(cliente_catalogo):
     import re
 
-    for pagina in ("/items", "/items/armor", "/items/armor/mail", "/search?q=mail"):
+    paginas = (
+        "/items", "/items/armor", "/items/armor/mail", "/search?q=mail",
+        # Filtrada: con una calidad puesta, los enlaces de tipo se la llevan,
+        # y no todos los tipos tienen esa calidad.
+        "/items/armor?quality=RARE",
+    )
+    for pagina in paginas:
         for href in set(re.findall(r'href="(/[^"#]*)"', cliente_catalogo.get(pagina).text)):
             assert cliente_catalogo.get(href).status_code != 404, f"{pagina} -> {href}"
 
 
 def test_la_subcategoria_abierta_se_ve_marcada(cliente_catalogo):
-    """Sin esto las pastillas salen todas iguales y no se sabe cual esta puesta.
+    """Sin esto las opciones salen todas iguales y no se sabe cual esta puesta.
 
-    El modificador `activo` vivia solo en `.ilvl`, que es la pastilla de la
-    ficha; las de categoria comparten el estilo base pero no lo tenian.
+    Antes eran pastillas y el modificador `activo` vivia solo en `.ilvl`, la
+    pastilla de la ficha. Ahora son opciones dentro del desplegable, pero la
+    marca tiene que seguir estando: al abrirlo se ve cual es la de ahora.
     """
     texto = cliente_catalogo.get("/items/armor/mail").text
-    assert 'class="pastilla activo"' in texto
+    assert 'class="op activo"' in texto
 
 
 # -- Canonical y tarjetas sociales -------------------------------------------
@@ -784,3 +791,133 @@ def test_un_objeto_sin_calidad_no_deja_una_clase_rota(cliente_grande):
 
 def test_la_ficha_colorea_su_titulo(cliente_catalogo):
     assert 'class="titulo q-epic"' in cliente_catalogo.get("/item/1").text
+
+
+# -- El autocompletar de la caja ---------------------------------------------
+#
+# Hasta aqui la caja era un formulario a pelo: escribir el nombre entero y
+# pulsar Enter para caer en /search. `/suggest` es lo que la convierte en un
+# buscador de verdad -- devuelve JSON y la cabecera lo pinta debajo del campo,
+# sin cambiar de pagina.
+#
+# Sigue siendo un anadido: sin JavaScript el formulario funciona igual que
+# antes, y por eso el GET a /search no se toca.
+
+
+def test_el_autocompletar_responde_json(cliente_catalogo):
+    r = cliente_catalogo.get("/suggest?q=mail")
+    assert r.status_code == 200
+    # "Mail Helm" (9) antes que "Mail Boots" (10): los dos empiezan por lo
+    # tecleado, asi que desempata el nombre mas corto.
+    assert [s["nombre"] for s in r.json()["resultados"]] == ["Mail Helm", "Mail Boots"]
+
+
+def test_cada_sugerencia_llega_lista_para_pintarse(cliente_catalogo):
+    """Icono, calidad y precio: la fila del desplegable se pinta sin volver."""
+    fila = cliente_catalogo.get("/suggest?q=mail+boots").json()["resultados"][0]
+    assert fila == {
+        "producto_id": 1,
+        "nombre": "Mail Boots",
+        "icono": "https://cdn/1.jpg",
+        "calidad": "EPIC",
+        # Ya en oro y con sus separadores: el cobre es de la base de datos y
+        # formatearlo en JavaScript seria escribir `_oro` dos veces.
+        "desde": "1",
+    }
+
+
+def test_el_autocompletar_sin_texto_no_devuelve_el_catalogo(cliente_catalogo):
+    r = cliente_catalogo.get("/suggest?q=")
+    assert r.status_code == 200 and r.json()["resultados"] == []
+
+
+def test_el_autocompletar_tampoco_dice_en_que_reino(cliente_catalogo):
+    """La misma linea que el buscador y las categorias: donde esta barato es
+    justo lo que vende el Pro (spec v3)."""
+    assert "Reino" not in cliente_catalogo.get("/suggest?q=mail").text
+
+
+def test_el_autocompletar_no_se_indexa(cliente_catalogo):
+    """No es una pagina; es la trastienda de la caja."""
+    r = cliente_catalogo.get("/suggest?q=mail")
+    assert "noindex" in r.headers["x-robots-tag"]
+
+
+def test_la_caja_autocompleta_en_todas_las_paginas(cliente_catalogo):
+    for ruta in ("/", "/items", "/items/armor", "/item/1", "/realm/reino-1"):
+        texto = cliente_catalogo.get(ruta).text
+        assert 'role="combobox"' in texto, ruta
+        assert "/estaticos/interfaz.js" in texto, ruta
+
+
+def test_sin_javascript_la_busqueda_sigue_siendo_un_formulario(cliente_catalogo):
+    """El autocompletar es un anadido, no un requisito."""
+    assert 'action="/search"' in cliente_catalogo.get("/").text
+    assert cliente_catalogo.get("/search?q=mail").status_code == 200
+
+
+# -- Los filtros, en la propia pagina ----------------------------------------
+#
+# Eran tres filas de pastillas sueltas: con las 12 subclases de Armor o las 20
+# de Weapon, el panel media mas que la tabla que filtraba. Ahora es un
+# desplegable por criterio, que se abre encima de la pagina y no lleva a
+# ninguna otra.
+
+
+def test_los_filtros_se_abren_ahi_mismo(cliente_catalogo):
+    """`<details>` y no una pagina de filtros: se abre y se cierra en el sitio.
+
+    Nativo del navegador a proposito -- sin JavaScript los filtros siguen
+    abriendose, que es lo que ve un rastreador y quien tenga el JS caido.
+    """
+    texto = cliente_catalogo.get("/items/armor").text
+    assert texto.count("<details") >= 2
+    assert "<summary" in texto
+
+
+def test_el_desplegable_dice_lo_que_hay_puesto_sin_abrirlo(cliente_catalogo):
+    """Un filtro que no dice como esta puesto no es un filtro, es un boton."""
+    texto = cliente_catalogo.get("/items/armor/mail?quality=EPIC").text
+    assert 'class="puesto">Mail<' in texto
+    assert 'class="puesto">Epic<' in texto
+
+
+def test_sin_filtrar_los_desplegables_dicen_que_estan_todos(cliente_catalogo):
+    texto = cliente_catalogo.get("/items/armor").text
+    assert texto.count('class="puesto">All<') == 2
+
+
+def test_se_cambia_de_categoria_sin_pasar_por_el_indice(cliente_catalogo):
+    """Ir a /items para elegir otra categoria es salir de la pagina a filtrar,
+    que es justo lo que el desplegable evita."""
+    texto = cliente_catalogo.get("/items/armor").text
+    assert 'href="/items/weapon"' in texto
+    assert 'href="/items/recipe"' in texto
+
+
+def test_el_script_de_la_interfaz_se_sirve(cliente_catalogo):
+    """La cabecera lo pide en todas las paginas; una ruta mal escrita es un
+    404 que no se ve --la pagina se pinta igual-- y deja la caja muda."""
+    r = cliente_catalogo.get("/estaticos/interfaz.js")
+    assert r.status_code == 200
+    assert "sugerencias" in r.text
+
+
+def test_el_desplegable_de_tipo_no_ofrece_callejones_sin_salida(cliente_catalogo):
+    """Con Rare puesto, cada tipo del menu se lleva el `?quality=RARE`. Plate
+    no tiene nada raro, asi que ese enlace es un 404 -- y un filtro no puede
+    ofrecer una opcion que rompe la pagina.
+
+    Salio rastreando la base de verdad: `/items/weapon/miscellaneous` y
+    `/items/weapon/thrown` con `?quality=EPIC` daban 404 desde el propio panel.
+    """
+    texto = cliente_catalogo.get("/items/armor?quality=RARE").text
+    assert "/items/armor/mail?quality=RARE" in texto
+    assert "/items/armor/plate?quality=RARE" not in texto
+
+
+def test_el_desplegable_de_tipo_cuenta_lo_que_hay_de_esa_calidad(cliente_catalogo):
+    """Mail tiene dos objetos, pero raro solo uno: con Rare puesto, decir "2"
+    es prometer una lista que no existe."""
+    texto = cliente_catalogo.get("/items/armor?quality=RARE").text
+    assert "Mail <span class=\"cuenta\">1</span>" in texto

@@ -41,8 +41,19 @@
     {# GET y no POST a proposito: asi cada busqueda es una URL que se puede
        compartir, marcar y --si algun dia interesa-- indexar. #}
     <form class="buscar" action="/search" method="get" role="search">
+      {# `role="combobox"` y sus tres `aria-` son lo que hace que un lector de
+         pantalla anuncie las sugerencias; sin ellos la lista existe pero solo
+         para quien la ve. `autocomplete="off"` es para el del navegador, que
+         taparia la nuestra con su propio historial. #}
       <input type="search" name="q" placeholder="Search items"
-             aria-label="Search items" value="{{ q or '' }}">
+             aria-label="Search items" value="{{ q or '' }}"
+             role="combobox" autocomplete="off"
+             aria-autocomplete="list" aria-expanded="false"
+             aria-controls="sugerencias">
+      {# Vacia y `hidden`: la rellena `interfaz.js`. Sin JavaScript no aparece
+         y el formulario sigue siendo el GET a /search de siempre. #}
+      <ul class="sugerencias" id="sugerencias" role="listbox"
+          aria-label="Suggestions" hidden></ul>
     </form>
     <a class="nav-enlace" href="/items">Browse</a>
   </nav>
@@ -51,5 +62,8 @@
     Prices from the EU auction house, refreshed hourly.
     Not affiliated with Blizzard Entertainment.
   </footer>
+  {# `defer` y al final: la pagina se pinta y se lee sin esperar al script,
+     que solo anade el autocompletar y el cierre de los desplegables. #}
+  <script src="/estaticos/interfaz.js" defer></script>
 </body>
 </html>

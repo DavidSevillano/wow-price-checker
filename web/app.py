@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -34,6 +39,7 @@ from web.consultas import (
     reinos_publicados,
     resumen_del_catalogo,
     subcategorias,
+    sugerencias,
 )
 from web.db import VARIABLE_DB, abrir, ruta_de_entorno
 
@@ -60,6 +66,11 @@ POR_PAGINA = 100
 # Cuantos resultados devuelve la caja de busqueda. No hay paginacion aqui a
 # proposito: quien busca quiere encontrar, no pasear.
 RESULTADOS_BUSQUEDA = 50
+
+# Cuantas sugerencias se pintan mientras se teclea. Ocho y no cincuenta: es
+# una lista que se lee de un vistazo sin bajar la vista de la caja, y si lo
+# que se busca no esta ahi, Enter lleva a los cincuenta de /search.
+SUGERENCIAS = 8
 
 # Los meses a mano en vez de `%B`, que saca el nombre en la locale del
 # sistema: la página está en inglés y el VPS no tiene por qué estarlo, así que
@@ -364,6 +375,22 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
             nombre_clase = next(
                 (s["subclase"] for s in subs if s["subclase_slug"] == subclase), None
             )
+            # Las 13 clases, para que el desplegable de categoria deje saltar
+            # a otra sin pasar por /items -- que era irse de la pagina a
+            # filtrarla, justo lo que el panel viene a quitar.
+            #
+            # Cuesta 30 ms medidos sobre la base real, sobre los ~130 ms que
+            # ya cuesta la pagina (89 de `productos_de_categoria`, 25 de
+            # `subcategorias`, 11 de contar). Se paga: es la misma consulta
+            # que /items y no hay ninguna pagina de categoria en el camino
+            # caliente --la portada, que si lo es, tiene su propia cache. Si
+            # algun dia estorba, la puerta es la de `cache_rebajas`: esto solo
+            # cambia cuando cambia el volcado.
+            todas = categorias(con)
+            # Los tipos que ofrece el menu, ya sin los que no tienen nada de
+            # la calidad puesta: sus enlaces se llevan el `?quality=` y serian
+            # un 404 salido del propio panel de filtros.
+            tipos = subcategorias(con, clase, quality) if quality else subs
         finally:
             con.close()
 
@@ -388,7 +415,8 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
                 "titulo": nombre_clase or clase.replace("-", " ").title(),
                 "clase_slug": clase,
                 "subclase": subclase,
-                "subcategorias": subs,
+                "subcategorias": tipos,
+                "todas": todas,
                 "productos": productos,
                 "total": total,
                 "pagina": p,
@@ -420,6 +448,54 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
                 "noindex": True,
                 "q": q,
                 "productos": productos,
+            },
+        )
+
+    @app.get("/suggest")
+    def autocompletar(q: str = ""):
+        """Lo que la caja pinta debajo mientras se teclea.
+
+        JSON y no HTML porque lo consume `interfaz.js`, que es quien monta la
+        lista; devolver el fragmento ya pintado ataria la plantilla al script.
+
+        No dice en que reino esta lo barato, igual que el buscador y las
+        paginas de categoria: es lo que vende el Pro (spec v3).
+        """
+        # Sin texto no se abre conexion: la caja pide en cuanto se teclea, y
+        # el primer caracter que se borra no tiene por que costar una consulta.
+        if not q.strip():
+            filas = []
+        else:
+            con = conexion()
+            try:
+                filas = sugerencias(con, q, limite=SUGERENCIAS)
+            finally:
+                con.close()
+
+        return JSONResponse(
+            {
+                "q": q,
+                "resultados": [
+                    {
+                        "producto_id": f["producto_id"],
+                        "nombre": f["nombre"],
+                        "icono": f["icono"],
+                        "calidad": f["calidad"],
+                        # En oro ya desde aqui: `_oro` es la unica conversion
+                        # del sitio y repetirla en JavaScript es la forma de
+                        # que un dia digan cosas distintas.
+                        "desde": _oro(f["desde"]),
+                    }
+                    for f in filas
+                ],
+            },
+            headers={
+                # Los precios solo cambian con la pasada horaria, y quien
+                # teclea borra y vuelve a escribir lo mismo todo el rato.
+                "Cache-Control": "public, max-age=300",
+                # No es una pagina: es la trastienda de la caja. Sin esto
+                # entra en el indice como contenido fino, igual que /search.
+                "X-Robots-Tag": "noindex",
             },
         )
 

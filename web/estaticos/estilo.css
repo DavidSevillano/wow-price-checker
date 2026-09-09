@@ -58,7 +58,11 @@ body {
   color: var(--gold); font-weight: 700; letter-spacing: .06em;
   text-decoration: none; font-size: 13px; white-space: nowrap;
 }
-.buscar { flex: 1 1 240px; margin: 0; display: flex; max-width: 480px; }
+/* `position: relative` porque la lista de sugerencias cuelga de aqui. */
+.buscar {
+  flex: 1 1 240px; margin: 0; display: flex; max-width: 480px;
+  position: relative;
+}
 .buscar input {
   width: 100%; padding: 8px 13px; border-radius: 8px; font: inherit;
   border: 1px solid var(--line); background: var(--ground); color: var(--ink);
@@ -72,6 +76,34 @@ body {
   font-weight: 500;
 }
 .nav-enlace:hover { color: var(--gold); }
+
+/* -- Las sugerencias de la caja -------------------------------------------- */
+/* Cuelgan de `.buscar`, tapando lo que haya debajo. Van dentro del `<form>`,
+   que esta dentro de `.nav` (z-index 10), asi que no hace falta pelearse con
+   el resto de la pagina: la cabecera entera ya va por encima. */
+
+.sugerencias {
+  position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 1;
+  margin: 0; padding: 5px; list-style: none;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: 0 6px 20px rgba(23, 26, 33, .13);
+  max-height: 60vh; overflow-y: auto;
+}
+.sug {
+  display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+  border-radius: 7px; cursor: pointer; color: var(--q, inherit);
+}
+/* `.elegida` y no `:hover` a secas: la senala igual la flecha del teclado que
+   el raton, y las dos tienen que verse igual. */
+.sug:hover, .sug.elegida { background: var(--fila); }
+.sug-n {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 500;
+}
+.sug-p {
+  color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums;
+  flex: none;
+}
 
 /* -- Estructura ------------------------------------------------------------ */
 
@@ -134,7 +166,9 @@ h1 { font-size: 28px; line-height: 1.2; margin: 0 0 14px; letter-spacing: -.01em
    hereda el mismo en su borde por la variable --q. */
 .titulo-n { color: var(--q, inherit); }
 
-/* -- Pastillas: ilvl, subcategorias, calidades, paginas -------------------- */
+/* -- Pastillas: ilvl y paginas --------------------------------------------- */
+/* Las de subcategoria y calidad se fueron a los desplegables de filtros; estas
+   son las variantes de ilvl de la ficha y los numeros de pagina. */
 
 .ilvls, .pastillas {
   display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 16px;
@@ -150,10 +184,6 @@ h1 { font-size: 28px; line-height: 1.2; margin: 0 0 14px; letter-spacing: -.01em
   border-color: var(--gold); color: var(--gold); font-weight: 600;
   box-shadow: inset 0 0 0 1px var(--gold);
 }
-.cuenta {
-  font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums;
-}
-.pastilla.activo .cuenta { color: var(--gold); }
 .ilvl-et {
   color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums;
   border: 1px solid var(--line); border-radius: 4px; padding: 0 5px;
@@ -161,18 +191,20 @@ h1 { font-size: 28px; line-height: 1.2; margin: 0 0 14px; letter-spacing: -.01em
 }
 
 /* -- El panel de filtros --------------------------------------------------- */
-/* Antes eran pastillas sueltas colgando bajo el titulo y no se leian como un
-   control: nadie las pulsaba porque nada decia que fueran filtros. Ahora es
-   una caja con su rotulo, una fila por criterio y un "Clear all". */
+/* Empezo siendo pastillas sueltas colgando bajo el titulo: nadie las pulsaba
+   porque nada decia que fueran filtros. Luego fueron filas etiquetadas, y con
+   las 12 subclases de Armor --o las 15 de Weapon-- el panel media mas que la
+   tabla que filtraba. Ahora es un desplegable por criterio: se lee de un
+   vistazo lo que hay puesto, y las opciones solo ocupan sitio al abrirlas. */
 
 .filtros {
   background: var(--surface); border: 1px solid var(--line);
-  border-radius: 12px; padding: 14px 16px 4px; margin-bottom: 6px;
+  border-radius: 12px; padding: 14px 16px; margin-bottom: 18px;
   box-shadow: var(--sombra);
 }
 .filtros-cab {
   display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 11px;
 }
 .filtros-t {
   font-size: 11px; text-transform: uppercase; letter-spacing: .09em;
@@ -180,14 +212,56 @@ h1 { font-size: 28px; line-height: 1.2; margin: 0 0 14px; letter-spacing: -.01em
 }
 .limpiar { font-size: 13px; color: var(--gold); text-decoration: none; }
 .limpiar:hover { text-decoration: underline; }
-.filtro-fila {
-  display: flex; gap: 14px; align-items: baseline; margin-bottom: 10px;
+.filtro-fila { display: flex; gap: 10px; flex-wrap: wrap; }
+
+.desplegable { position: relative; }
+.desplegable > summary {
+  display: flex; align-items: baseline; gap: 8px; cursor: pointer;
+  padding: 8px 13px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--ground); list-style: none; user-select: none;
 }
+/* El triangulito propio de `<details>`, fuera: se pinta uno detras del texto
+   para que quede a la derecha y no delante de la etiqueta. */
+.desplegable > summary::-webkit-details-marker { display: none; }
+.desplegable > summary::after {
+  content: "▾"; color: var(--muted); font-size: 11px; margin-left: 2px;
+}
+.desplegable > summary:hover { border-color: var(--gold); }
+.desplegable[open] > summary { border-color: var(--gold); background: var(--surface); }
 .filtro-et {
-  flex: none; width: 58px; font-size: 12.5px; color: var(--muted);
-  font-weight: 600; padding-top: 6px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--muted); font-weight: 600;
 }
-.filtro-fila .pastillas { margin-bottom: 0; }
+/* Lo que hay puesto, del color de su calidad cuando la tiene: el `--q` lo
+   deja el `q-epic` del propio `<details>`. */
+.puesto { font-weight: 600; font-size: 14px; color: var(--q, var(--ink)); }
+
+.menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 5;
+  min-width: 210px; max-width: min(340px, calc(100vw - 34px));
+  padding: 5px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(23, 26, 33, .13);
+  max-height: 340px; overflow-y: auto;
+  /* El `<details>` de calidad lleva el `q-epic` de lo que hay puesto para
+     pintar su rotulo, y `--q` se hereda: sin esto el "All" del menu saldria
+     tambien morado. Las opciones con su propia clase se lo vuelven a poner. */
+  --q: var(--ink);
+}
+.op {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px; padding: 7px 10px; border-radius: 7px;
+  color: var(--q, var(--ink)); text-decoration: none; font-size: 14px;
+  white-space: nowrap;
+}
+.op:hover { background: var(--fila); }
+.op.activo { background: var(--fila); font-weight: 700; }
+/* La marca de la que esta puesta. Va de `--gold` y no del color de la calidad:
+   dice "esta es la de ahora", que no es lo mismo que decir de que calidad es. */
+.op.activo::after { content: "✓"; color: var(--gold); font-weight: 700; }
+.cuenta {
+  font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
 
 /* -- Baldosas de cifras ---------------------------------------------------- */
 
@@ -273,6 +347,16 @@ td a:hover { color: var(--gold); text-decoration: underline; }
   .ficha { padding: 20px 14px 36px; }
   h1 { font-size: 23px; }
   th, td { padding: 10px 11px; }
-  .filtro-fila { flex-direction: column; gap: 6px; }
-  .filtro-et { width: auto; padding-top: 0; }
+  /* Los tres desplegables no caben en una linea de 375px, pero apilarlos del
+     todo desperdicia el ancho: envuelven, y el que sobra cae a la segunda. */
+  .filtro-fila { gap: 8px; position: relative; }
+  .desplegable > summary { padding: 7px 11px; }
+  /* El menu cuelga de la fila entera y no de su boton. Medido en un movil de
+     375px: el de "Type", que empieza en x=203, se salia 38px por la derecha y
+     esos 38px no habia forma de verlos --la pagina no hace scroll lateral, se
+     quedaban cortados. Asi ocupa el ancho del panel, que ademas es lo comodo
+     con el pulgar. Solo hay uno abierto a la vez, de eso se encarga
+     `interfaz.js`. */
+  .desplegable { position: static; }
+  .menu { left: 0; right: 0; min-width: 0; max-width: none; }
 }

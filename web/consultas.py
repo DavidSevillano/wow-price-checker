@@ -489,21 +489,39 @@ def categorias(con: sqlite3.Connection) -> list[dict[str, Any]]:
     ]
 
 
-def subcategorias(con: sqlite3.Connection, clase_slug: str) -> list[dict[str, Any]]:
-    """Las subclases de una clase, con su cuenta. Mismo criterio que arriba."""
+def subcategorias(
+    con: sqlite3.Connection,
+    clase_slug: str,
+    calidad: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Las subclases de una clase, con su cuenta. Mismo criterio que arriba.
+
+    Con `calidad`, solo las que tienen algo de esa calidad, y la cuenta es la
+    de esa calidad. No es un adorno: el menu de tipos arrastra el filtro que
+    haya puesto, asi que ofrecer un tipo sin nada de esa calidad es ofrecer un
+    404. Salio rastreando la base de verdad --`/items/weapon/thrown` y
+    `/items/weapon/miscellaneous` con `?quality=EPIC`-- y la lista sin filtrar
+    ademas mentia en la cuenta: prometia los 172 objetos del tipo cuando lo
+    que iba a salir eran los de la calidad puesta.
+    """
+    sql = " WHERE a.clase_slug = ? "
+    args: list[Any] = [clase_slug]
+    if calidad:
+        sql += " AND a.calidad = ? "
+        args.append(calidad)
     return [
         dict(fila)
         for fila in con.execute(
             "SELECT a.subclase, a.subclase_slug, "
             "       count(DISTINCT a.producto_id) AS objetos "
             "  FROM atributo a "
-            " WHERE a.clase_slug = ? "
-            "   AND EXISTS (SELECT 1 FROM estadistica e "
+            + sql
+            + "   AND EXISTS (SELECT 1 FROM estadistica e "
             "                WHERE e.tipo = a.tipo "
             "                  AND e.producto_id = a.producto_id) "
             " GROUP BY a.subclase, a.subclase_slug "
             " ORDER BY a.subclase",
-            (clase_slug,),
+            args,
         )
     ]
 
@@ -630,6 +648,58 @@ def buscar(
         )
     ]
 
+
+
+def sugerencias(
+    con: sqlite3.Connection,
+    texto: str,
+    limite: int,
+    idioma: str = IDIOMA_POR_DEFECTO,
+) -> list[dict[str, Any]]:
+    """Lo que se pinta debajo de la caja mientras se teclea.
+
+    Es `buscar` con otra prioridad, y por eso son dos funciones y no una con
+    un parametro. Quien pulsa Enter quiere la lista entera y le sirve el orden
+    por nombre corto; quien esta tecleando esta escribiendo el PRINCIPIO de un
+    nombre, y espera verlo arriba. Con "sword", ordenar solo por longitud
+    cuela "Bloodfang Sword" (15) delante de "Sword of a Thousand Truths" (26).
+
+    El `LIKE` va dos veces a proposito: uno filtra por "lo contiene" y el otro
+    --el del ORDER BY, con el comodin solo detras-- decide quien sube. SQLite
+    no reusa el resultado de un LIKE entre WHERE y ORDER BY, pero son ocho
+    filas de salida y el recorrido de `nombre` ya se paga una vez.
+
+    Cuesta 15-20 ms sobre la base real (149.386 nombres, de los que 18.675 son
+    los ingleses), y esto se pide una vez por pausa al teclear. Un indice
+    `nombre (idioma, nombre)` parece la cura obvia --recorreria un octavo de la
+    tabla-- y esta medido que la EMPEORA a 50 ms: SQLite lo usa como indice
+    cubriente y luego tiene que ir a buscar el `icono` de cada coincidencia en
+    una tabla WITHOUT ROWID, o sea una busqueda por clave primaria entera por
+    fila. El dia que esto se quede corto la puerta es FTS5, no un indice.
+    """
+    texto = texto.strip()
+    if not texto:
+        return []
+
+    escapado = texto.translate(_ESCAPAR_LIKE)
+    return [
+        dict(fila)
+        for fila in con.execute(
+            "SELECT n.producto_id, n.nombre, n.icono, a.calidad, "
+            "       MIN(e.minimo) AS desde "
+            "  FROM nombre n "
+            "  JOIN estadistica e ON e.tipo = n.tipo "
+            "                    AND e.producto_id = n.producto_id "
+            "  LEFT JOIN atributo a ON a.tipo = n.tipo "
+            "                     AND a.producto_id = n.producto_id "
+            " WHERE n.idioma = ? AND n.nombre LIKE ? ESCAPE '!' "
+            " GROUP BY n.producto_id, n.nombre, n.icono, a.calidad "
+            " ORDER BY (n.nombre LIKE ? ESCAPE '!') DESC, "
+            "          length(n.nombre), n.nombre "
+            " LIMIT ?",
+            (idioma, f"%{escapado}%", f"{escapado}%", limite),
+        )
+    ]
 
 # El orden del juego: primero lo bueno. Un ORDER BY alfabetico pondria COMMON
 # antes que EPIC, que no es como lo lee nadie que juegue.

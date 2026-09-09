@@ -16,9 +16,15 @@ it costs across all 92 realms. Updated hourly.{% endblock %}
 
   <h1>{{ titulo }}</h1>
 
-  {# Un panel con su titulo y sus dos filas etiquetadas. Antes eran pastillas
-     sueltas colgando bajo el h1 y no se leian como un control: nadie las
-     pulsaba porque nada decia que fueran filtros. #}
+  {# Un desplegable por criterio y no tres filas de pastillas sueltas: con las
+     12 subclases de Armor --o las 15 de Weapon-- el panel media mas que la
+     tabla que filtraba, y aun asi habia que irse a /items para cambiar de
+     categoria. Ahora los tres se abren encima de la propia pagina.
+
+     `<details>` nativo a proposito: sin JavaScript se abren igual, y cada
+     opcion sigue siendo un enlace a una URL de verdad, que es lo que se puede
+     compartir y lo que rastrea Google. El script solo se encarga de cerrarlos
+     al abrir otro o al pulsar fuera. #}
   <section class="filtros" aria-label="Filters">
     <div class="filtros-cab">
       <span class="filtros-t">Filters</span>
@@ -27,37 +33,66 @@ it costs across all 92 realms. Updated hourly.{% endblock %}
       {% endif %}
     </div>
 
-    {% if subcategorias %}
     <div class="filtro-fila">
-      <span class="filtro-et">Type</span>
-      <div class="pastillas">
-        <a class="pastilla {% if not subclase %}activo{% endif %}"
-           href="/items/{{ clase_slug }}{{ '?' ~ cola if cola }}">All</a>
-        {% for s in subcategorias %}
-        <a class="pastilla {% if s.subclase_slug == subclase %}activo{% endif %}"
-           href="/items/{{ clase_slug }}/{{ s.subclase_slug }}{{ '?' ~ cola if cola }}">
-          {{ s.subclase }} <span class="cuenta">{{ "{:,}".format(s.objetos) }}</span>
-        </a>
-        {% endfor %}
-      </div>
-    </div>
-    {% endif %}
+      <details class="desplegable">
+        <summary>
+          <span class="filtro-et">Category</span>
+          <span class="puesto">{{ clase_nombre }}</span>
+        </summary>
+        <div class="menu">
+          {% for c in todas %}
+          <a class="op {% if c.clase_slug == clase_slug %}activo{% endif %}"
+             href="/items/{{ c.clase_slug }}">
+            {{ c.clase }} <span class="cuenta">{{ "{:,}".format(c.objetos) }}</span>
+          </a>
+          {% endfor %}
+        </div>
+      </details>
 
-    {% if calidades %}
-    <div class="filtro-fila">
-      <span class="filtro-et">Quality</span>
-      <div class="pastillas">
-        <a class="pastilla {% if not calidad %}activo{% endif %}"
-           href="{{ base_url }}">All</a>
-        {% for c in calidades %}
-        <a class="pastilla q-{{ c.calidad | lower }} {% if c.calidad == calidad %}activo{% endif %}"
-           href="{{ base_url }}?quality={{ c.calidad }}">
-          {{ c.calidad | capitalize }} <span class="cuenta">{{ "{:,}".format(c.objetos) }}</span>
-        </a>
-        {% endfor %}
-      </div>
+      {% if subcategorias %}
+      <details class="desplegable">
+        <summary>
+          <span class="filtro-et">Type</span>
+          <span class="puesto">{% if subclase %}{{ titulo }}{% else %}All{% endif %}</span>
+        </summary>
+        <div class="menu">
+          <a class="op {% if not subclase %}activo{% endif %}"
+             href="/items/{{ clase_slug }}{{ '?' ~ cola if cola }}">All</a>
+          {% for s in subcategorias %}
+          <a class="op {% if s.subclase_slug == subclase %}activo{% endif %}"
+             href="/items/{{ clase_slug }}/{{ s.subclase_slug }}{{ '?' ~ cola if cola }}">
+            {{ s.subclase }} <span class="cuenta">{{ "{:,}".format(s.objetos) }}</span>
+          </a>
+          {% endfor %}
+        </div>
+      </details>
+      {% endif %}
+
+      {% if calidades %}
+      {# La clase de calidad va en el `<details>` y no en el `<span>`: `--q` se
+         hereda, asi que el rotulo sale del color de lo que hay puesto --morado
+         si es Epic, como en el juego-- y de paso lo tiene el menu, que lo
+         vuelve a fijar a `--ink` para que su "All" no salga morado tambien. #}
+      <details class="desplegable{% if calidad %} q-{{ calidad | lower }}{% endif %}">
+        <summary>
+          <span class="filtro-et">Quality</span>
+          <span class="puesto">
+            {%- if calidad %}{{ calidad | capitalize }}{% else %}All{% endif -%}
+          </span>
+        </summary>
+        <div class="menu">
+          <a class="op {% if not calidad %}activo{% endif %}"
+             href="{{ base_url }}">All</a>
+          {% for c in calidades %}
+          <a class="op q-{{ c.calidad | lower }} {% if c.calidad == calidad %}activo{% endif %}"
+             href="{{ base_url }}?quality={{ c.calidad }}">
+            {{ c.calidad | capitalize }} <span class="cuenta">{{ "{:,}".format(c.objetos) }}</span>
+          </a>
+          {% endfor %}
+        </div>
+      </details>
+      {% endif %}
     </div>
-    {% endif %}
   </section>
 
   <p class="conteo">
