@@ -1,9 +1,10 @@
 """Sube tus subastas al repositorio para que el vigilante las conozca.
 
 Lee lo que el addon ha volcado en SavedVariables, lo escribe normalizado en
-mis_subastas.json y, si ha cambiado algo, lo commitea y lo empuja. Pensado para
-ejecutarse desatendido desde una tarea programada, asi que cuando no hay nada
-que hacer no hace nada.
+mis_subastas.json y, si ha cambiado algo, lo publica en la rama 'subastas'
+--nunca en main, que se llenaba de veinte commits por tarde de juego. Pensado
+para ejecutarse desatendido desde una tarea programada, asi que cuando no hay
+nada que hacer no hace nada.
 
 Uso:
 
@@ -19,6 +20,7 @@ import logging
 import os
 import platform
 import re
+import shutil
 import subprocess
 import time
 from contextlib import contextmanager
@@ -150,10 +152,11 @@ def build_parser() -> argparse.ArgumentParser:
 SIN_VENTANA = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
-def git(*args: str) -> subprocess.CompletedProcess:
+def git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
     """Ejecuta git capturando la salida, para que el log sea legible."""
     return subprocess.run(
         ["git", *args],
+        cwd=cwd,
         capture_output=True,
         text=True,
         check=False,
@@ -161,45 +164,142 @@ def git(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-def subir(ficheros: list[str], push: bool) -> int:
-    """Commitea lo que haya cambiado y, si toca, lo sube."""
-    add = git("add", *ficheros)
+# Los volcados no van a main. Son un commit cada vez que sales al selector de
+# personajes --unas veinte veces por tarde de juego-- y ahi tapaban el historial
+# de verdad: 765 de los primeros 954 commits del proyecto eran esto. GitHub,
+# ademas, solo cuenta como contribucion lo que cae en la rama por defecto, asi
+# que fuera de main dejan tambien de contarse como trabajo del dia.
+RAMA_DATOS = "subastas"
+
+# Con quien se firman. Un correo que no esta ligado a ninguna cuenta de GitHub,
+# para que no cuenten como contribucion ni aunque algun dia acaben en main.
+AUTOR_DATOS = ("volcado", "volcado@wow-alerts.local")
+
+MENSAJE_DATOS = "Actualiza el volcado de mis subastas"
+
+
+def _preparar_rama(raiz: Path, copia: Path, push: bool) -> int:
+    """Deja `copia` con lo que hay publicado ahora mismo en la rama de datos.
+
+    Es un repositorio aparte, dentro de .state, para no tener que cambiar de
+    rama en la carpeta del proyecto: esto corre desatendido mientras juegas y
+    mientras editas codigo, y un checkout por debajo seria intolerable.
+    """
+    if not (copia / ".git").is_dir():
+        copia.mkdir(parents=True, exist_ok=True)
+        arranque = git("init", "-q", "-b", RAMA_DATOS, cwd=copia)
+        if arranque.returncode != 0:
+            log.error("No he podido preparar %s: %s", copia, arranque.stderr.strip())
+            return EXIT_ERROR
+
+    if not push:
+        # Sin subir no hace falta el remoto, y asi --no-push sigue funcionando
+        # con el portatil sin cobertura.
+        git("checkout", "-q", "-B", RAMA_DATOS, cwd=copia)
+        return EXIT_OK
+
+    url = git("remote", "get-url", "origin", cwd=raiz).stdout.strip()
+    if not url:
+        log.error("El repositorio no tiene remoto 'origin': no se donde subir.")
+        return EXIT_ERROR
+    if git("remote", "set-url", "origin", url, cwd=copia).returncode != 0:
+        git("remote", "add", "origin", url, cwd=copia)
+
+    # Partir de lo que haya publicado la otra maquina: cada una escribe solo su
+    # fichero, y como al publicar se rehace la rama entera, subir sin mirar
+    # antes borraria el volcado de la otra.
+    #
+    # Con --exit-code para distinguir las dos formas de no encontrar la rama:
+    # 2 es que aun no existe, y es normal la primera vez; cualquier otra cosa es
+    # que no hay manera de saberlo (sin red, credenciales caducadas) y entonces
+    # mas vale no tocar nada.
+    hay = git("ls-remote", "--exit-code", "origin", RAMA_DATOS, cwd=copia)
+    if hay.returncode == 2:
+        log.info("La rama %r aun no existe; la creo.", RAMA_DATOS)
+        git("checkout", "-q", "-B", RAMA_DATOS, cwd=copia)
+        return EXIT_OK
+    if hay.returncode != 0:
+        log.error(
+            "No he podido consultar la rama %r: %s\n"
+            "No subo nada: rehacerla a ciegas borraria el volcado de la otra "
+            "maquina.",
+            RAMA_DATOS,
+            hay.stderr.strip(),
+        )
+        return EXIT_ERROR
+
+    # Profundidad 1: de esa rama solo interesa como esta ahora, no como llego.
+    traer = git("fetch", "-q", "--depth=1", "origin", RAMA_DATOS, cwd=copia)
+    if traer.returncode != 0:
+        log.error("No he podido traerme %r: %s", RAMA_DATOS, traer.stderr.strip())
+        return EXIT_ERROR
+
+    ponerse = git("checkout", "-q", "-B", RAMA_DATOS, "FETCH_HEAD", cwd=copia)
+    if ponerse.returncode != 0:
+        log.error("No he podido situarme en %r: %s", RAMA_DATOS, ponerse.stderr.strip())
+        return EXIT_ERROR
+    return EXIT_OK
+
+
+def subir(ficheros: list[str], push: bool, raiz: Path | None = None) -> int:
+    """Publica el volcado en la rama de datos, fuera del historial de main."""
+    raiz = raiz or Path(__file__).resolve().parent
+    copia = raiz / ".state" / "rama-datos"
+
+    if _preparar_rama(raiz, copia, push) != EXIT_OK:
+        return EXIT_ERROR
+
+    for relativo in ficheros:
+        destino = copia / relativo
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(raiz / relativo, destino)
+
+    add = git("add", "-A", cwd=copia)
     if add.returncode != 0:
         log.error("git add ha fallado: %s", add.stderr.strip())
         return EXIT_ERROR
 
-    commit = git("commit", "-m", "Actualiza el volcado de mis subastas")
+    # Se compara aqui, contra lo que hay publicado, y no despues: el commit se
+    # hace huerfano y contra un huerfano todo parece nuevo siempre.
+    if git("diff", "--cached", "--quiet", cwd=copia).returncode == 0:
+        log.info("Nada que publicar: la rama ya tiene esto mismo.")
+        return EXIT_OK
+
+    # Cada publicacion es un commit sin padre, y la rama se queda siempre en
+    # uno. Un volcado son 100 KB que se reescriben enteros: guardando el
+    # historial, el repositorio engordaria un par de MB al dia para siempre, y
+    # de esa rama no interesa como llego, solo como esta.
+    huerfano = git("checkout", "-q", "--orphan", "_publicando", cwd=copia)
+    if huerfano.returncode != 0:
+        log.error("No he podido empezar de cero: %s", huerfano.stderr.strip())
+        return EXIT_ERROR
+
+    nombre, correo = AUTOR_DATOS
+    commit = git(
+        "-c", f"user.name={nombre}",
+        "-c", f"user.email={correo}",
+        "commit", "-q", "-m", MENSAJE_DATOS,
+        cwd=copia,
+    )
     if commit.returncode != 0:
-        # Sin cambios que commitear es un caso normal, no un fallo.
-        if "nothing to commit" in commit.stdout:
-            log.info("Nada que commitear.")
-            return EXIT_OK
         log.error(
             "git commit ha fallado: %s",
             commit.stderr.strip() or commit.stdout.strip(),
         )
         return EXIT_ERROR
 
-    log.info("Commit hecho.")
+    renombrar = git("branch", "-q", "-M", RAMA_DATOS, cwd=copia)
+    if renombrar.returncode != 0:
+        log.error("No he podido dejarlo en %r: %s", RAMA_DATOS, renombrar.stderr.strip())
+        return EXIT_ERROR
+
+    log.info("Volcado preparado en la rama %r.", RAMA_DATOS)
     if not push:
         return EXIT_OK
 
-    # Antes de subir, traerse lo que haya subido la otra maquina. Sin esto, el
-    # primer push de la Steam Deck rebota en cuanto el PC haya subido algo.
-    #
-    # Con --autostash porque esto corre desatendido: si te has dejado algo a
-    # medias en la carpeta, el rebase se negaria a empezar y la sincronizacion
-    # se quedaria parada sin que te enteres.
-    traer = git("pull", "--rebase", "--autostash")
-    if traer.returncode != 0:
-        log.error(
-            "git pull --rebase ha fallado: %s\n"
-            "Resuelvelo a mano en la carpeta del proyecto y vuelve a intentarlo.",
-            traer.stderr.strip(),
-        )
-        return EXIT_ERROR
-
-    empuje = git("push")
+    # Con --force porque la rama se rehace entera: lo que hubiera arriba es
+    # justo lo que acabamos de traernos y reemplazar.
+    empuje = git("push", "-q", "--force", "origin", RAMA_DATOS, cwd=copia)
     if empuje.returncode != 0:
         log.error(
             "git push ha fallado: %s\n"
@@ -209,7 +309,7 @@ def subir(ficheros: list[str], push: bool) -> int:
         )
         return EXIT_ERROR
 
-    log.info("Subido a GitHub.")
+    log.info("Subido a GitHub, a la rama %r.", RAMA_DATOS)
     return EXIT_OK
 
 

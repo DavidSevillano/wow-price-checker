@@ -288,3 +288,142 @@ def test_un_fichero_suelto_tambien_da_actividad(tmp_path):
     assert actividad_por_maquina(path) == {
         "mis": datetime.fromtimestamp(1500, tz=timezone.utc)
     }
+
+
+# ---------------------------------------------------------------------------
+#  Publicar el volcado sin ensuciar el historial
+# ---------------------------------------------------------------------------
+#
+#  El vigilante sincroniza cada vez que sales al selector de personajes, unas
+#  veinte veces por tarde de juego. Mientras eso fue a main, tapaba el historial
+#  de verdad --765 de los primeros 954 commits del proyecto eran volcados-- y
+#  GitHub los contaba a todos como trabajo del dia. Ahora van a una rama aparte,
+#  que ademas se rehace entera en cada pasada para que no crezca sin fin.
+
+import subprocess as sp
+
+
+def git_en(carpeta, *args):
+    """git con una identidad fija, que en CI no hay ninguna configurada."""
+    return sp.run(
+        [
+            "git",
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            *args,
+        ],
+        cwd=carpeta,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def repo_de_trabajo(tmp_path, nombre="repo"):
+    """Un repositorio con algo en main, como la carpeta del proyecto."""
+    raiz = tmp_path / nombre
+    raiz.mkdir(parents=True)
+    git_en(raiz, "init", "-q", "-b", "main")
+    (raiz / "main.py").write_text("# codigo de verdad\n", encoding="utf-8")
+    # Como en el proyecto: los volcados viven en la carpeta pero main no los
+    # sigue, que para eso se fueron a su rama.
+    (raiz / ".gitignore").write_text(
+        ".state/\nmis_subastas/\nmis_personajes/\nmis_ventas/\n", encoding="utf-8"
+    )
+    git_en(raiz, "add", "-A")
+    git_en(raiz, "commit", "-q", "-m", "El codigo")
+    return raiz
+
+
+def escribir_volcado(raiz, maquina, contenido):
+    fichero = raiz / "mis_subastas" / f"{maquina}.json"
+    fichero.parent.mkdir(parents=True, exist_ok=True)
+    fichero.write_text(contenido, encoding="utf-8")
+    return f"mis_subastas/{maquina}.json"
+
+
+def test_el_volcado_no_deja_ni_un_commit_en_main(tmp_path):
+    """Lo que se quiso arreglar: main no se entera de que esto ha pasado."""
+    raiz = repo_de_trabajo(tmp_path)
+    antes = git_en(raiz, "rev-parse", "main").stdout
+
+    relativo = escribir_volcado(raiz, "pc", '{"subastas": 1}')
+    assert sync.subir([relativo], push=False, raiz=raiz) == sync.EXIT_OK
+
+    assert git_en(raiz, "rev-parse", "main").stdout == antes
+    # Y tampoco se queda a medias, con el volcado preparado para el commit
+    # siguiente: main no lo tiene ni en el indice.
+    assert git_en(raiz, "status", "--short").stdout.strip() == ""
+
+
+def test_el_volcado_llega_a_la_rama_de_datos(tmp_path):
+    raiz = repo_de_trabajo(tmp_path)
+    relativo = escribir_volcado(raiz, "pc", '{"subastas": 1}')
+
+    sync.subir([relativo], push=False, raiz=raiz)
+
+    copia = raiz / ".state" / "rama-datos"
+    guardado = git_en(copia, "show", f"{sync.RAMA_DATOS}:{relativo}").stdout
+    assert guardado == '{"subastas": 1}'
+
+
+def test_una_pasada_sin_cambios_no_commitea(tmp_path):
+    raiz = repo_de_trabajo(tmp_path)
+    relativo = escribir_volcado(raiz, "pc", "igual")
+    sync.subir([relativo], push=False, raiz=raiz)
+
+    copia = raiz / ".state" / "rama-datos"
+    antes = git_en(copia, "rev-parse", sync.RAMA_DATOS).stdout
+
+    assert sync.subir([relativo], push=False, raiz=raiz) == sync.EXIT_OK
+    assert git_en(copia, "rev-parse", sync.RAMA_DATOS).stdout == antes
+
+
+def remoto_vacio(tmp_path):
+    bare = tmp_path / "remoto.git"
+    bare.mkdir()
+    git_en(bare, "init", "-q", "--bare", "-b", "main")
+    return bare
+
+
+def test_la_rama_no_crece_por_muchas_pasadas_que_haya(tmp_path):
+    """Un volcado son 100 KB reescritos enteros; con historial, el repositorio
+    engordaria un par de MB al dia para siempre."""
+    raiz = repo_de_trabajo(tmp_path)
+    git_en(raiz, "remote", "add", "origin", str(remoto_vacio(tmp_path)))
+
+    for vuelta in range(3):
+        relativo = escribir_volcado(raiz, "pc", f'{{"vuelta": {vuelta}}}')
+        assert sync.subir([relativo], push=True, raiz=raiz) == sync.EXIT_OK
+
+    copia = raiz / ".state" / "rama-datos"
+    assert git_en(copia, "rev-list", "--count", sync.RAMA_DATOS).stdout.strip() == "1"
+
+
+def test_no_borra_el_volcado_de_la_otra_maquina(tmp_path):
+    """El PC y la Steam Deck publican en la misma rama, cada uno su fichero."""
+    bare = remoto_vacio(tmp_path)
+
+    deck = repo_de_trabajo(tmp_path, "deck")
+    git_en(deck, "remote", "add", "origin", str(bare))
+    sync.subir([escribir_volcado(deck, "deck", "de la deck")], push=True, raiz=deck)
+
+    pc = repo_de_trabajo(tmp_path, "pc")
+    git_en(pc, "remote", "add", "origin", str(bare))
+    sync.subir([escribir_volcado(pc, "pc", "del pc")], push=True, raiz=pc)
+
+    salida = git_en(bare, "ls-tree", "-r", "--name-only", sync.RAMA_DATOS).stdout
+    assert "mis_subastas/deck.json" in salida
+    assert "mis_subastas/pc.json" in salida
+
+
+def test_sin_red_no_publica_nada(tmp_path):
+    """Publicar rehace la rama entera. Si no se puede mirar antes que hay en
+    ella, empujar borraria el volcado de la otra maquina."""
+    raiz = repo_de_trabajo(tmp_path)
+    git_en(raiz, "remote", "add", "origin", str(tmp_path / "no-existe.git"))
+    relativo = escribir_volcado(raiz, "pc", "algo")
+
+    assert sync.subir([relativo], push=True, raiz=raiz) == sync.EXIT_ERROR

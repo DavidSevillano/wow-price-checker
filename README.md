@@ -487,6 +487,23 @@ Crea una tarea de Windows que cada 15 minutos mira si el volcado ha cambiado y,
 si si, lo sube a GitHub. A partir de ahi el vigilante funciona **aunque apagues
 el PC**.
 
+Lo sube a la rama **`subastas`**, no a `main`. Son cuatro carpetas de JSON que
+se reescriben enteras cada vez que sales al selector de personajes --unas veinte
+veces por tarde de juego-- y en `main` tapaban el historial de verdad: de los
+primeros 954 commits del proyecto, 765 eran volcados. Ademas GitHub solo cuenta
+como contribucion lo que cae en la rama por defecto, asi que ahi tampoco salen
+como trabajo del dia.
+
+Esa rama **no guarda historial**: cada publicacion es un commit sin padre que
+reemplaza al anterior, y siempre tiene exactamente uno. Con 100 KB reescritos
+veinte veces al dia, guardarlo habria engordado el repositorio un par de MB
+diarios para siempre, y de esa rama solo interesa como esta ahora.
+
+Antes de publicar se trae lo que haya en ella, porque el PC y la Steam Deck
+comparten rama y cada uno escribe solo su fichero. Si no se puede consultar
+--sin red, credenciales caducadas-- no sube nada: rehacer la rama a ciegas
+borraria el volcado de la otra maquina.
+
 **No te va a saltar ninguna ventana.** La tarea corre con `pythonw.exe`, que no
 tiene consola, y las llamadas a `git` van con `CREATE_NO_WINDOW`. Sin eso se
 abrian cuatro consolas de un parpadeo cada quince minutos, en mitad de la
@@ -1081,8 +1098,8 @@ que buscas y por ausencia no se ve.
 
 Lee tres cosas de este mismo repositorio, con un token tuyo:
 
-- `mis_subastas/*.json` y `mis_personajes/*.json`, de `main`. Es lo que sube
-  `sync_subastas.py` desde cada maquina.
+- `mis_subastas/*.json` y `mis_personajes/*.json`, de la rama **`subastas`**.
+  Es lo que sube `sync_subastas.py` desde cada maquina.
 - `catalogo.json` y `precios.json`, de la rama **`datos`**, que publica el
   workflow en cada pasada.
 

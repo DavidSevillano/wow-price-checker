@@ -48,6 +48,31 @@ jobs:
       - name: Descargar repositorio
         uses: actions/checkout@v7
 
+      - name: Traer mis volcados
+        # Lo que sube sync_subastas.py desde el PC y la Steam Deck: que tienes
+        # a la venta, con que personajes y que has vendido. Vive en la rama
+        # 'subastas' y no en main porque se publica cada vez que sales al
+        # selector de personajes, y en main eran veinte commits por tarde.
+        #
+        # Que la rama no exista todavia no es un error: es el dia uno, o una
+        # maquina que aun no ha volcado nada. Sin esos ficheros, la pasada se
+        # limita a no vigilar tus subastas, y los chollos siguen saliendo.
+        run: |
+          if ! git fetch -q --depth=1 origin subastas; then
+            echo "La rama 'subastas' aun no existe; sigo sin ellos."
+            exit 0
+          fi
+          # Una por una: que falte la de ventas no es motivo para quedarse sin
+          # las subastas, y un checkout de varias rutas falla entero si una no
+          # esta en la rama.
+          for carpeta in mis_subastas mis_personajes mis_ventas; do
+            if git checkout -q FETCH_HEAD -- "$carpeta" 2>/dev/null; then
+              echo "Traido: $carpeta."
+            else
+              echo "Sin $carpeta en la rama todavia."
+            fi
+          done
+
       - name: Instalar Python
         uses: actions/setup-python@v7
         with:

@@ -31,6 +31,11 @@ object Repositorio {
     // no ensuciar el historial de main con un commit por hora.
     private const val RAMA_DATOS = "datos"
 
+    // Y el volcado de cada maquina en otra, por lo mismo: sync_subastas.py
+    // publica cada vez que sales al selector de personajes, y en main eso
+    // eran veinte commits por tarde de juego.
+    private const val RAMA_SUBASTAS = "subastas"
+
     const val REPO_POR_DEFECTO = "DavidSevillano/wow-price-checker"
 
     private fun prefs(context: Context) =
@@ -101,8 +106,9 @@ object Repositorio {
         runCatching {
             val subastas = JSONArray()
             var exportado = 0L
-            for (nombre in listar(repo, "mis_subastas", token)) {
-                val fichero = JSONObject(leer(repo, "mis_subastas/$nombre", token))
+            for (nombre in listar(repo, "mis_subastas", token, RAMA_SUBASTAS)) {
+                val fichero =
+                    JSONObject(leer(repo, "mis_subastas/$nombre", token, RAMA_SUBASTAS))
                 val array = fichero.optJSONArray("auctions") ?: JSONArray()
                 for (i in 0 until array.length()) {
                     val subasta = array.getJSONObject(i)
@@ -112,8 +118,9 @@ object Repositorio {
             }
 
             val personajes = JSONArray()
-            for (nombre in listar(repo, "mis_personajes", token)) {
-                val fichero = JSONObject(leer(repo, "mis_personajes/$nombre", token))
+            for (nombre in listar(repo, "mis_personajes", token, RAMA_SUBASTAS)) {
+                val fichero =
+                    JSONObject(leer(repo, "mis_personajes/$nombre", token, RAMA_SUBASTAS))
                 val array = fichero.optJSONArray("characters") ?: JSONArray()
                 for (i in 0 until array.length()) personajes.put(array.getJSONObject(i))
             }
@@ -144,9 +151,15 @@ object Repositorio {
         }
     }
 
-    private fun listar(repo: String, carpeta: String, token: String): List<String> {
+    private fun listar(
+        repo: String,
+        carpeta: String,
+        token: String,
+        rama: String? = null,
+    ): List<String> {
         val cuerpo = peticion(
-            "https://api.github.com/repos/$repo/contents/$carpeta",
+            "https://api.github.com/repos/$repo/contents/$carpeta" +
+                if (rama != null) "?ref=$rama" else "",
             token,
             "application/vnd.github+json",
         )
