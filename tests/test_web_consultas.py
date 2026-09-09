@@ -23,6 +23,7 @@ from web.consultas import (
     resumen_del_catalogo,
     subcategorias,
     sugerencias,
+    version_del_volcado,
 )
 from web.ingesta import (
     guardar_atributos,
@@ -1015,3 +1016,19 @@ def test_las_subcategorias_se_pueden_contar_por_calidad(con_catalogo):
 def test_sin_calidad_las_subcategorias_son_todas(con_catalogo):
     subs = subcategorias(con_catalogo, "armor")
     assert [(s["subclase"], s["objetos"]) for s in subs] == [("Mail", 2), ("Plate", 1)]
+
+
+# -- La version del volcado --------------------------------------------------
+#
+# El numero contra el que se cachea lo que solo cambia con la pasada horaria.
+# `resumen_del_catalogo` ya lo devuelve, pero de propina con dos cuentas mas
+# que no hacen falta para saber si algo caduco.
+
+
+def test_la_version_del_volcado_es_cuando_se_genero(con_catalogo):
+    assert version_del_volcado(con_catalogo) == 1788451184
+
+
+def test_una_base_sin_volcado_no_tiene_version(tmp_path):
+    """Es el estado normal hasta que termina la primera pasada."""
+    assert version_del_volcado(abrir(tmp_path / "v.db")) is None

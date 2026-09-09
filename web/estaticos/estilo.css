@@ -263,6 +263,30 @@ h1 { font-size: 28px; line-height: 1.2; margin: 0 0 14px; letter-spacing: -.01em
   font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums;
 }
 
+/* El menu de categorias de la cabecera. Es el mismo control que los filtros de
+   la pagina de categoria --mismo `<details>`, mismo boton, mismo cierre al
+   pulsar fuera-- y eso es deliberado: lo que sirve para elegir que objetos ver
+   tiene el mismo aspecto en toda la web. Aqui solo cambia donde cae el menu.
+
+   Sustituye al enlace "Browse", que abria una pagina cuyo unico contenido era
+   elegir; ahora se elige desde donde estes. */
+.menu-nav > summary { padding: 7px 13px; }
+/* Se alinea por la derecha: es lo ultimo de la barra, y colgando por la
+   izquierda se saldria de la pantalla en cuanto la ventana se estreche. */
+.menu-nav .menu {
+  left: auto; right: 0;
+  /* Mas alto que el de los filtros: son 13 categorias mas el indice, y un menu
+     que hay que desplazar para ver la mitad de lo que ofrece no ensena lo que
+     ofrece. */
+  max-height: min(70vh, 540px);
+}
+/* "All items" no es una de las trece: es el indice del que cuelgan todas. Una
+   raya y el color del texto secundario lo dicen sin escribirlo. */
+.op-indice {
+  border-top: 1px solid var(--line); margin-top: 4px; padding-top: 9px;
+  color: var(--muted);
+}
+
 /* -- Baldosas de cifras ---------------------------------------------------- */
 
 .baldosas {
@@ -358,5 +382,5 @@ td a:hover { color: var(--gold); text-decoration: underline; }
      con el pulgar. Solo hay uno abierto a la vez, de eso se encarga
      `interfaz.js`. */
   .desplegable { position: static; }
-  .menu { left: 0; right: 0; min-width: 0; max-width: none; }
+  .menu, .menu-nav .menu { left: 0; right: 0; min-width: 0; max-width: none; }
 }

@@ -40,6 +40,7 @@ from web.consultas import (
     resumen_del_catalogo,
     subcategorias,
     sugerencias,
+    version_del_volcado,
 )
 from web.db import VARIABLE_DB, abrir, ruta_de_entorno
 
@@ -203,6 +204,29 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
     # precalculada que haya que escribir e invalidar en la pasada.
     cache_rebajas: dict[str, Any] = {"generado_en": _SIN_CALCULAR, "filas": []}
 
+    # Las 13 categorias salen en la cabecera de TODAS las paginas: es el menu
+    # con el que se elige que objetos ver sin irse a /items, que era abrir otra
+    # pagina cuyo unico contenido es elegir.
+    #
+    # Cuesta 30 ms medidos sobre la base real, y en todas las paginas eso ya no
+    # es un detalle. Se cachea igual que las rebajas y por el mismo motivo: son
+    # las categorias que hay, y solo cambian cuando la pasada horaria mete
+    # objetos de una nueva.
+    cache_menu: dict[str, Any] = {"generado_en": _SIN_CALCULAR, "filas": []}
+
+    def menu_categorias(con: sqlite3.Connection) -> list[dict[str, Any]]:
+        """Las categorias de la cabecera, cacheadas contra el volcado.
+
+        Recibe la conexion que ya tiene abierta la ruta en vez de abrir otra:
+        un `abrir()` cuesta ~0,9 ms, que sobre una pagina cacheada seria casi
+        todo el coste.
+        """
+        version = version_del_volcado(con)
+        if cache_menu["generado_en"] != version:
+            cache_menu["filas"] = categorias(con)
+            cache_menu["generado_en"] = version
+        return cache_menu["filas"]
+
     @app.get("/", response_class=HTMLResponse)
     def portada(request: Request):
         """La entrada al sitio, y el destino del enlace de la marca.
@@ -229,6 +253,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
             # piden son las que de verdad interesan. Las demás llegan por
             # búsqueda, que es para lo que está el sitemap.
             vistos = productos_mas_vistos(con, limite=20)
+            menu = menu_categorias(con)
         finally:
             con.close()
 
@@ -242,6 +267,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
                 "rebajas": cache_rebajas["filas"],
                 "reinos": reinos,
                 "vistos": vistos,
+                "menu": menu,
             },
         )
 
@@ -275,6 +301,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
                 limite=REINOS_GRATIS,
             )
             anotar_peticion(con, TIPO_OBJETO, producto_id)
+            menu = menu_categorias(con)
         finally:
             con.close()
 
@@ -289,6 +316,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
                 "ficha": datos,
                 "actual": actual,
                 "reinos": filas,
+                "menu": menu,
             },
         )
 
@@ -300,6 +328,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
             if reino is None:
                 raise HTTPException(status_code=404, detail="Realm not found")
             filas = productos_de_reino(con, reino["id"], limite=100)
+            menu = menu_categorias(con)
         finally:
             con.close()
 
@@ -310,6 +339,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
                 "canonical": f"/realm/{slug}",
                 "reino": reino,
                 "productos": filas,
+                "menu": menu,
             },
         )
 
@@ -323,7 +353,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
         """
         con = conexion()
         try:
-            cats = categorias(con)
+            cats = menu_categorias(con)
         finally:
             con.close()
 
@@ -333,6 +363,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
             context={
                 "canonical": "/items",
                 "categorias": cats,
+                "menu": cats,
                 "total": sum(c["objetos"] for c in cats),
             },
         )
@@ -386,7 +417,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
             # caliente --la portada, que si lo es, tiene su propia cache. Si
             # algun dia estorba, la puerta es la de `cache_rebajas`: esto solo
             # cambia cuando cambia el volcado.
-            todas = categorias(con)
+            todas = menu_categorias(con)
             # Los tipos que ofrece el menu, ya sin los que no tienen nada de
             # la calidad puesta: sus enlaces se llevan el `?quality=` y serian
             # un 404 salido del propio panel de filtros.
@@ -416,7 +447,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
                 "clase_slug": clase,
                 "subclase": subclase,
                 "subcategorias": tipos,
-                "todas": todas,
+                "menu": todas,
                 "productos": productos,
                 "total": total,
                 "pagina": p,
@@ -435,6 +466,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
         con = conexion()
         try:
             productos = buscar(con, q, limite=RESULTADOS_BUSQUEDA) if q else []
+            menu = menu_categorias(con)
         finally:
             con.close()
 
@@ -448,6 +480,7 @@ def crear_app(ruta_db: Path | str | None = None) -> FastAPI:
                 "noindex": True,
                 "q": q,
                 "productos": productos,
+                "menu": menu,
             },
         )
 

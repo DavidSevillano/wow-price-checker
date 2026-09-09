@@ -921,3 +921,61 @@ def test_el_desplegable_de_tipo_cuenta_lo_que_hay_de_esa_calidad(cliente_catalog
     es prometer una lista que no existe."""
     texto = cliente_catalogo.get("/items/armor?quality=RARE").text
     assert "Mail <span class=\"cuenta\">1</span>" in texto
+
+
+# -- Elegir que objetos ver, desde donde sea ---------------------------------
+#
+# Los filtros de categoria solo existian dentro de /items/<clase>, y para
+# llegar habia que pulsar "Browse", que abre otra pagina cuyo unico contenido
+# es elegir. O sea: salir de donde estas para poder filtrar. Ahora el menu vive
+# en la cabecera y se despliega encima de la pagina que estes viendo.
+
+
+def test_se_elige_categoria_desde_cualquier_pagina(cliente_catalogo):
+    for ruta in ("/", "/item/1", "/realm/reino-1", "/search?q=mail",
+                 "/items", "/items/armor", "/items/armor/mail"):
+        texto = cliente_catalogo.get(ruta).text
+        assert 'class="desplegable menu-nav"' in texto, ruta
+        assert 'href="/items/weapon"' in texto, ruta
+        assert 'href="/items/recipe"' in texto, ruta
+
+
+def test_el_menu_de_la_cabecera_se_abre_ahi_mismo(cliente_catalogo):
+    """`<details>`, como los filtros de categoria: se abre encima y no lleva a
+    ninguna pagina intermedia."""
+    texto = cliente_catalogo.get("/").text
+    assert texto.index("<details") < texto.index("</nav>")
+
+
+def test_el_indice_de_categorias_sigue_existiendo(cliente_catalogo):
+    """No se quita /items: de esa pagina cuelga el catalogo entero para
+    Googlebot. Lo que se quita es la obligacion de pasar por ella."""
+    assert cliente_catalogo.get("/items").status_code == 200
+    assert 'href="/items"' in cliente_catalogo.get("/").text
+
+
+def test_el_menu_de_la_cabecera_no_se_recalcula_en_cada_visita(
+    cliente_catalogo, monkeypatch
+):
+    """Sale en todas las paginas y cuesta 30 ms medidos sobre la base real.
+
+    Se cachea contra `volcado.generado_en`, igual que las rebajas de la
+    portada: las categorias solo cambian cuando la pasada horaria mete objetos
+    nuevos.
+    """
+    import web.app
+
+    veces = []
+    original = web.app.categorias
+
+    def contando(*args, **kwargs):
+        veces.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(web.app, "categorias", contando)
+
+    cliente_catalogo.get("/")
+    cliente_catalogo.get("/item/1")
+    cliente_catalogo.get("/items/armor")
+
+    assert len(veces) == 1

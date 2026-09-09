@@ -40,7 +40,7 @@ it costs across all 92 realms. Updated hourly.{% endblock %}
           <span class="puesto">{{ clase_nombre }}</span>
         </summary>
         <div class="menu">
-          {% for c in todas %}
+          {% for c in menu %}
           <a class="op {% if c.clase_slug == clase_slug %}activo{% endif %}"
              href="/items/{{ c.clase_slug }}">
             {{ c.clase }} <span class="cuenta">{{ "{:,}".format(c.objetos) }}</span>

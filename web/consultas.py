@@ -432,6 +432,24 @@ def mejores_rebajas(
     return filas
 
 
+def version_del_volcado(con: sqlite3.Connection) -> Optional[int]:
+    """Cuando se genero lo que hay ahora mismo en `precio`.
+
+    Es el numero contra el que se cachea todo lo que solo cambia con la pasada
+    horaria: mientras no se mueva, el resultado es literalmente el mismo. No
+    es un TTL a ojo, no sirve nada caducado y no hay nada que afinar.
+
+    `resumen_del_catalogo` ya lo devuelve, pero de propina con dos cuentas mas
+    que no hacen falta para saber si algo caduco. Esto es una fila de una tabla
+    de una fila.
+
+    None con la base recien creada, que es el estado normal hasta que termina
+    la primera pasada.
+    """
+    fila = con.execute("SELECT generado_en FROM volcado").fetchone()
+    return fila[0] if fila else None
+
+
 def resumen_del_catalogo(con: sqlite3.Connection) -> dict[str, Any]:
     """Cuánto cubre el sitio y de cuándo son los datos, para la portada.
 

@@ -55,7 +55,26 @@
       <ul class="sugerencias" id="sugerencias" role="listbox"
           aria-label="Suggestions" hidden></ul>
     </form>
-    <a class="nav-enlace" href="/items">Browse</a>
+    {# El menu con el que se elige que objetos ver. Antes era un enlace a
+       /items, o sea otra pagina cuyo unico contenido es elegir: habia que
+       salir de donde estabas para poder filtrar. Ahora se despliega encima.
+
+       Mismo `<details>` que los filtros de categoria, y por eso comparte
+       clase: `interfaz.js` ya sabe cerrarlos al pulsar fuera, y sin
+       JavaScript se abre igual. #}
+    <details class="desplegable menu-nav">
+      <summary>Categories</summary>
+      <div class="menu">
+        {% for c in menu %}
+        <a class="op" href="/items/{{ c.clase_slug }}">
+          {{ c.clase }} <span class="cuenta">{{ "{:,}".format(c.objetos) }}</span>
+        </a>
+        {% endfor %}
+        {# /items sigue existiendo: de esa pagina cuelga el catalogo entero
+           para Googlebot. Lo que se quita es la obligacion de pasar por ella. #}
+        <a class="op op-indice" href="/items">All items</a>
+      </div>
+    </details>
   </nav>
   {% block contenido %}{% endblock %}
   <footer class="pie">
