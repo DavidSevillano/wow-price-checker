@@ -586,6 +586,7 @@ def run_mis_subastas(
                 not callado,
                 olvidar=olvidar,
                 actividad=actividad,
+                bonus_ilvl_map=config.bonus_ilvl_map,
             )
             ventas.extend(del_reino)
             seguimiento.actualizar_reino(realm_id, seguidas, ultimo)

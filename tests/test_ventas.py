@@ -889,3 +889,179 @@ def test_la_espera_por_una_maquina_callada_se_deja_por_escrito(caplog):
         )
 
     assert "deck" in caplog.text
+
+
+# -- Reposteos hechos desde una maquina que no sincroniza -------------------
+#
+# El 2026-09-09 salieron catorce ventas falsas de Mbargor, Dbardan y
+# Ebarmar. Las cancelaste y las volviste a poner desde la Steam Deck entre las
+# 21:21 y las 22:21 UTC, pero su sincronizacion llevaba parada desde el dia 7:
+# las cancelaciones no llegaron nunca, y la Deck no contaba como maquina
+# jugando porque su ultima senal de vida era de tres dias antes. Lo que si se
+# veia era el reposteo: en el mismo volcado en que faltaba cada subasta
+# aparecia otra nueva del mismo objeto y al mismo precio.
+
+FOTO = UltimoVolcado(dump_at=T0, max_auction_id=500)
+
+
+def recien_puesta(auction_id=600, oro=9000, ilvl=311, bonus=(), item_id=ITEM):
+    """Una subasta del volcado que no estaba en la foto anterior."""
+    item = {"id": item_id, "bonus_lists": list(bonus)}
+    if ilvl is not None:
+        item["item_level"] = ilvl
+    return {"id": auction_id, "item": item, "buyout": oro * ORO, "time_left": "VERY_LONG"}
+
+
+def test_desaparecer_con_otra_igual_recien_puesta_no_es_venta():
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+
+    ventas, seguidas, _ = revisar_reino(
+        {1: previa}, [], [recien_puesta()], 1, UNA_HORA_DESPUES, FOTO, 12, 5
+    )
+
+    assert ventas == []
+    # Se cierra ya, como una cancelacion conocida: no queda nada que esperar.
+    assert seguidas == {}
+
+
+def test_un_reposteo_mas_barato_tampoco_es_venta():
+    """Lo normal al repostear tras un undercut es bajar el precio."""
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+
+    ventas, seguidas, _ = revisar_reino(
+        {1: previa}, [], [recien_puesta(oro=7000)], 1, UNA_HORA_DESPUES, FOTO, 12, 5
+    )
+
+    assert ventas == []
+    assert seguidas == {}
+
+
+def test_ni_una_maquina_callada_retiene_un_reposteo():
+    """El caso del 2026-09-09 tal cual: el PC habia jugado justo antes."""
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+    actividad = {"pc": T0 - timedelta(minutes=30), "deck": T0 - timedelta(days=3)}
+
+    ventas, seguidas, _ = revisar_reino(
+        {1: previa},
+        [],
+        [recien_puesta()],
+        1,
+        UNA_HORA_DESPUES,
+        FOTO,
+        12,
+        5,
+        actividad=actividad,
+    )
+
+    assert ventas == []
+    assert seguidas == {}
+
+
+def test_en_silencio_un_reposteo_se_cierra_igual():
+    """Solo se puede ver en el volcado en que falta: despues ya no es nueva."""
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+
+    ventas, seguidas, _ = revisar_reino(
+        {1: previa},
+        [],
+        [recien_puesta()],
+        1,
+        UNA_HORA_DESPUES,
+        FOTO,
+        12,
+        5,
+        decidir=False,
+    )
+
+    assert ventas == []
+    assert seguidas == {}
+
+
+def _se_vende_con(nueva, anterior=FOTO, previa=None, **kw):
+    """Desaparece con `nueva` en el volcado y sigue sin aparecer una pasada mas."""
+    previa = previa or vigilada(caduca=T0 + timedelta(hours=5))
+    _, pendientes, foto = revisar_reino(
+        {1: previa}, [], [nueva], 1, UNA_HORA_DESPUES, anterior, 12, 5, **kw
+    )
+    ventas, _, _ = revisar_reino(
+        pendientes, [], [nueva], 1, DOS_HORAS_DESPUES, foto, 12, 5, **kw
+    )
+    return ventas
+
+
+def test_una_nueva_mas_cara_no_tapa_la_venta():
+    """Quien revende lo que te ha comprado lo pone mas caro, no mas barato."""
+    assert len(_se_vende_con(recien_puesta(oro=9001))) == 1
+
+
+def test_otro_ilvl_no_es_un_reposteo():
+    assert len(_se_vende_con(recien_puesta(ilvl=298))) == 1
+
+
+def test_otro_objeto_no_es_un_reposteo():
+    assert len(_se_vende_con(recien_puesta(item_id=ITEM + 1))) == 1
+
+
+def test_una_que_ya_estaba_en_la_foto_anterior_no_es_un_reposteo():
+    """Un rival que ya estaba antes de que faltara la tuya no la ha sustituido."""
+    assert len(_se_vende_con(recien_puesta(auction_id=400))) == 1
+
+
+def test_sin_foto_anterior_no_se_puede_afirmar_un_reposteo():
+    """Sin saber que habia antes, no hay forma de decir que una es nueva."""
+    assert len(_se_vende_con(recien_puesta(), anterior=None)) == 1
+
+
+def test_sin_ilvl_basta_con_que_coincidan_los_bonus():
+    """La misma regla que decide quien te hace undercut."""
+    previa = vigilada(caduca=T0 + timedelta(hours=5), bonus_ids=(6652, 12842))
+    nueva = recien_puesta(ilvl=None, bonus=(12842, 6652))
+
+    assert _se_vende_con(nueva, previa=previa) == []
+
+
+def test_sin_ilvl_y_con_otros_bonus_no_es_un_reposteo():
+    previa = vigilada(caduca=T0 + timedelta(hours=5), bonus_ids=(6652, 12842))
+    nueva = recien_puesta(ilvl=None, bonus=(6652, 12835))
+
+    assert len(_se_vende_con(nueva, previa=previa)) == 1
+
+
+def test_el_ilvl_del_reposteo_sale_tambien_del_mapa_de_bonus():
+    previa = vigilada(caduca=T0 + timedelta(hours=5), ilvl=308)
+    nueva = recien_puesta(ilvl=None, bonus=(12842,))
+
+    assert _se_vende_con(nueva, previa=previa, bonus_ilvl_map={12842: 308}) == []
+
+
+def test_un_reposteo_se_deja_por_escrito(caplog):
+    import logging
+
+    previa = vigilada(caduca=T0 + timedelta(hours=5))
+    with caplog.at_level(logging.INFO, logger="wowalerts.ventas"):
+        revisar_reino(
+            {1: previa}, [], [recien_puesta()], 1, UNA_HORA_DESPUES, FOTO, 12, 5
+        )
+
+    assert "volviste a poner" in caplog.text
+    assert "Pepe" in caplog.text
+
+
+def test_los_bonus_se_copian_de_la_subasta_del_addon():
+    from dataclasses import replace
+
+    con_bonus = replace(mia(), bonus_ids=(6652, 12842))
+    _, seguidas, _ = revisar_reino({}, [con_bonus], [viva()], 1, T0, None, 12, 5)
+
+    assert seguidas[1].bonus_ids == (6652, 12842)
+
+
+def test_los_bonus_sobreviven_al_disco(tmp_path):
+    path = tmp_path / "ventas.json"
+    memoria = SeguimientoVentas(path)
+    memoria.actualizar_reino(
+        1, {1: vigilada(bonus_ids=(6652, 12842))}, UltimoVolcado(T0, 900)
+    )
+    memoria.save(ahora=T0)
+
+    assert SeguimientoVentas(path).del_reino(1)[1].bonus_ids == (6652, 12842)

@@ -411,6 +411,7 @@ def _vigilada_a_json(vigilada: SubastaVigilada) -> dict:
         "item_id": vigilada.item_id,
         "item_name": vigilada.item_name,
         "ilvl": vigilada.ilvl,
+        "bonus_ids": list(vigilada.bonus_ids),
         "buyout": vigilada.buyout_copper,
         "quantity": vigilada.quantity,
         "character": vigilada.character,
@@ -471,6 +472,15 @@ def _leer_seguimiento(raw: Any) -> dict[str, SubastaVigilada]:
                 visto_at=visto,
                 adelantada=bool(entrada.get("adelantada", False)),
                 desaparecida_at=_fecha(entrada.get("desaparecida_at")),
+                # Las entradas de antes de guardarlos no los tienen: sin bonus,
+                # solo se reconoce un reposteo cuyo ilvl se pueda deducir.
+                bonus_ids=tuple(
+                    b
+                    for b in entrada.get("bonus_ids") or ()
+                    if isinstance(b, int) and not isinstance(b, bool)
+                )
+                if isinstance(entrada.get("bonus_ids"), list)
+                else (),
             )
         except (KeyError, TypeError, ValueError):
             log.debug("Entrada de seguimiento ilegible, la descarto: %r", entrada)

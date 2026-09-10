@@ -21,6 +21,7 @@ from types import MappingProxyType
 from typing import AbstractSet, Mapping, Sequence
 
 from .config import COPPER_PER_GOLD
+from .ilvl import int_list, resolve_ilvl
 from .misubastas import MyAuction
 
 log = logging.getLogger(__name__)
@@ -117,6 +118,9 @@ class SubastaVigilada:
     # la cancelaste tu: el volcado de Blizzard se entera de tus cancelaciones
     # antes que el addon, que solo escribe a disco al hacer /reload.
     desaparecida_at: datetime | None = None
+    # La version exacta del objeto, como la exporta el addon. Hace falta para
+    # reconocer un reposteo cuando Blizzard no dice el ilvl de la subasta nueva.
+    bonus_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -168,7 +172,43 @@ def _vigilada_de(mia: MyAuction, dump_at: datetime) -> SubastaVigilada:
         account=mia.account,
         no_caduca_antes_de=dump_at,
         visto_at=dump_at,
+        bonus_ids=mia.bonus_ids,
     )
+
+
+def _la_han_repuesto(
+    vigilada: SubastaVigilada,
+    recien_puestas: Sequence[Mapping],
+    bonus_ilvl_map: Mapping[int, int],
+) -> bool:
+    """Si en el volcado en que falta hay otra igual recien publicada.
+
+    Es la huella de un reposteo, y la unica que queda cuando la maquina desde
+    la que cancelaste no sincroniza: el 2026-09-09 la Steam Deck llevaba tres
+    dias sin subir nada y catorce reposteos suyos se cantaron como ventas.
+
+    Cuenta la misma version del objeto, con la regla de undercut._compite_con
+    (mismo ilvl si se puede deducir, mismos bonus si no), a su precio o por
+    debajo. Mas cara no cuenta: es lo que haria quien te la ha comprado para
+    revenderla.
+
+    El precio de esta regla: si alguien pone ese mismo objeto mas barato justo
+    en la hora en que se vende el tuyo, esa venta no se anuncia.
+    """
+    for auction in recien_puestas:
+        precio = auction.get("buyout")
+        if not isinstance(precio, int) or isinstance(precio, bool) or precio <= 0:
+            continue
+        if precio > vigilada.buyout_copper:
+            continue
+        item = auction.get("item") or {}
+        ilvl = resolve_ilvl(item, bonus_ilvl_map).value
+        if ilvl is not None:
+            if ilvl == vigilada.ilvl:
+                return True
+        elif frozenset(int_list(item.get("bonus_lists"))) == frozenset(vigilada.bonus_ids):
+            return True
+    return False
 
 
 def revisar_reino(
@@ -185,6 +225,7 @@ def revisar_reino(
     decidir: bool = True,
     olvidar: AbstractSet[int] = frozenset(),
     actividad: Mapping[str, datetime] = MappingProxyType({}),
+    bonus_ilvl_map: Mapping[int, int] = MappingProxyType({}),
 ) -> tuple[list[Venta], dict[int, SubastaVigilada], UltimoVolcado]:
     """Las ventas de este reino, el seguimiento actualizado y su foto nueva.
 
@@ -210,6 +251,11 @@ def revisar_reino(
     Blizzard tampoco lista: si sigue viva en el volcado, es real y se sigue
     vigilando. Lo que hay que evitar son los ids zombis --los que el addon aun
     canta y Blizzard ya no tiene--, porque son los que se inventan ventas.
+
+    `bonus_ilvl_map` sirve para deducir el ilvl de las subastas nuevas del
+    volcado: una igual a la tuya publicada justo cuando la tuya falta es un
+    reposteo, y se cierra en el acto como una cancelacion conocida, tambien en
+    silencio. Ver _la_han_repuesto.
     """
     mias_por_id = {m.auction_id: m for m in mis_subastas}
 
@@ -226,6 +272,10 @@ def revisar_reino(
     # que hace fiable la cota de nacimiento.
     vivas: dict[int, str] = {}
     max_auction_id = 0
+    # De paso se apartan las publicadas desde la foto anterior de los objetos
+    # que sigo: son las candidatas a reposteo de lo que falte en este volcado.
+    objetos_seguidos = {v.item_id for v in seguidas.values()}
+    recien_puestas: dict[int, list[Mapping]] = {}
     for auction in auctions:
         auction_id = auction.get("id")
         if not isinstance(auction_id, int) or isinstance(auction_id, bool):
@@ -233,6 +283,11 @@ def revisar_reino(
         max_auction_id = max(max_auction_id, auction_id)
         if auction_id in mias_por_id or auction_id in seguidas:
             vivas[auction_id] = str(auction.get("time_left", ""))
+        if anterior is not None and auction_id > anterior.max_auction_id:
+            item = auction.get("item")
+            item_id = item.get("id") if isinstance(item, Mapping) else None
+            if item_id in objetos_seguidos:
+                recien_puestas.setdefault(item_id, []).append(auction)
 
     # Se sueltan las de volcado viejo, pero solo las que unicamente sostiene el
     # addon. Lo que Blizzard avala se sigue vigilando: ver _la_avala_blizzard.
@@ -286,6 +341,19 @@ def revisar_reino(
         if auction_id in canceladas:
             log.info(
                 "↩️  %s de %s: la cancelaste tu, asi que no la cuento como venta.",
+                vigilada.character,
+                vigilada.item_name,
+            )
+            continue
+
+        # Solo en el volcado en que falta por primera vez: es el unico en el que
+        # "publicada desde la foto anterior" quiere decir "a la vez que se fue".
+        if vigilada.desaparecida_at is None and _la_han_repuesto(
+            vigilada, recien_puestas.get(vigilada.item_id, ()), bonus_ilvl_map
+        ):
+            log.info(
+                "↩️  %s de %s: ha salido otra igual en el mismo volcado en que "
+                "falta esta, asi que la volviste a poner. No la cuento como venta.",
                 vigilada.character,
                 vigilada.item_name,
             )
