@@ -95,9 +95,6 @@ local function quitarEntrada(auctionID)
     end
 end
 
--- El panel se dibuja en la Task 7; hasta entonces no hay nada que refrescar.
-function R.refrescarPanel() end
-
 -- ---------------------------------------------------------------------------
 --  La busqueda
 -- ---------------------------------------------------------------------------
@@ -531,6 +528,79 @@ function R.Siguiente()
 end
 
 -- ---------------------------------------------------------------------------
+--  El panel
+-- ---------------------------------------------------------------------------
+--  Un boton debajo de la casa o del buzon que dice que va a hacer la tecla.
+--  Pulsarlo es lo mismo que pulsar la tecla asignada.
+
+BINDING_HEADER_WOWALERTS = "WoW Alerts"
+BINDING_NAME_WOWALERTS_SIGUIENTE = "Reposteo: siguiente paso"
+
+local function contar(estadoBuscado)
+    local n = 0
+    for _, e in ipairs(cola()) do
+        if e.estado == estadoBuscado then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+function R.Estado()
+    if confirmacion then
+        return "Confirmar posteo"
+    end
+    if casaAbierta() then
+        if not buscadoEnEstaVisita then
+            if subastasListas() then
+                return "Buscar undercuts"
+            end
+            return "Leyendo tus subastas..."
+        end
+        if buscando() then
+            return ("Buscando %s/%s..."):format(siguienteGrupo, #ordenGrupos)
+        end
+    end
+    local porCancelar = contar("cancelar")
+    local devueltas = contar("devuelta")
+    if porCancelar + devueltas + contar("cancelando") == 0 then
+        return "Nada que repostear"
+    end
+    return ("Siguiente · %s por cancelar · %s por postear"):format(porCancelar, devueltas)
+end
+
+local boton = nil
+
+local function colocarBoton(padre)
+    if not padre then
+        return
+    end
+    if not boton then
+        boton = CreateFrame("Button", "WowAlertsReposteoBoton", padre, "UIPanelButtonTemplate")
+        boton:SetSize(280, 24)
+        boton:SetScript("OnClick", function()
+            R.Siguiente()
+        end)
+    end
+    boton:SetParent(padre)
+    boton:ClearAllPoints()
+    boton:SetPoint("TOP", padre, "BOTTOM", 0, -4)
+    boton:Show()
+end
+
+function R.refrescarPanel()
+    if not boton then
+        return
+    end
+    boton:SetText(R.Estado())
+    if buscando() then
+        boton:Disable()
+    else
+        boton:Enable()
+    end
+end
+
+-- ---------------------------------------------------------------------------
 --  Eventos
 -- ---------------------------------------------------------------------------
 
@@ -553,6 +623,12 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
         repasadas = {}
         confirmadas = {}
         reiniciarBusqueda()
+        colocarBoton(AuctionHouseFrame)
+        -- Pasada la espera no llega ningun evento: se refresca a mano para que
+        -- el boton deje de decir "Leyendo tus subastas...".
+        C_Timer.After(SEGUNDOS_PARA_FIARSE, function()
+            R.refrescarPanel()
+        end)
     elseif evento == "AUCTION_HOUSE_CLOSED" then
         abiertaEn = nil
         confirmacion = nil
@@ -577,6 +653,9 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
         end
     elseif evento == "MAIL_SHOW" or evento == "MAIL_CLOSED" or evento == "MAIL_INBOX_UPDATE" then
         tomadas = {}
+        if evento == "MAIL_SHOW" then
+            colocarBoton(MailFrame)
+        end
     end
     R.refrescarPanel()
 end)

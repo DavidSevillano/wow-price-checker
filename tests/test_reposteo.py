@@ -1182,3 +1182,119 @@ def test_una_copia_ligada_en_la_bolsa_no_frena_la_carta():
     abrir_buzon(lua)
 
     assert pulsar(lua) == "recoger"
+
+
+# -- Panel, tecla y garantias ----------------------------------------------------
+
+
+def estado(lua):
+    return lua.globals().WowAlertsReposteo.Estado()
+
+
+def test_el_panel_dice_que_toca():
+    lua = runtime()
+    abrir_casa(lua, esperar=False)
+    assert estado(lua) == "Leyendo tus subastas..."
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 5
+    assert estado(lua) == "Buscar undercuts"
+
+    adelantadas(lua, 10, 12)
+    assert estado(lua) == "Siguiente · 2 por cancelar · 0 por postear"
+
+
+def test_mientras_busca_el_panel_lo_dice():
+    lua = runtime(subastas=[mia(10, 100_000), mia(20, 50_000, ilvl=298)])
+    abrir_casa(lua)
+    pulsar(lua)
+
+    assert estado(lua) == "Buscando 1/2..."
+
+
+def test_sin_nada_que_repostear_el_panel_lo_dice():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    assert estado(lua) == "Nada que repostear"
+
+
+def test_con_una_confirmacion_pendiente_el_panel_la_pide():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+    pulsar(lua)
+
+    assert estado(lua) == "Confirmar posteo"
+
+
+def test_las_entradas_de_mas_de_48_horas_se_descartan():
+    lua = runtime()
+    devolver(lua, 10)
+    lua.globals().AHORA = lua.globals().AHORA + 49 * 3600
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+
+    assert cola(lua) == []
+    assert pulsar(lua) is None
+
+
+def test_el_boton_hace_lo_mismo_que_la_tecla():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    abrir_casa(lua)
+
+    lua.eval("WowAlertsReposteoBoton.script_OnClick")()
+    assert lua.globals().BUSCADAS == 1
+
+
+def test_la_tecla_asignable_llama_a_siguiente():
+    import xml.etree.ElementTree as ET
+
+    arbol = ET.parse(CARPETA / "Bindings.xml")
+    [binding] = arbol.getroot().findall("Binding")
+    assert binding.get("name") == "WOWALERTS_SIGUIENTE"
+    assert binding.text.strip() == "WowAlertsReposteo.Siguiente()"
+
+    lua = runtime()
+    assert lua.globals().BINDING_NAME_WOWALERTS_SIGUIENTE
+    assert lua.globals().BINDING_HEADER_WOWALERTS
+
+
+def test_ninguna_pulsacion_llama_a_mas_de_una_funcion_protegida():
+    """La regla que mantiene esto dentro de lo que el juego permite."""
+    lua = runtime()
+
+    def pulsar_contando(veces):
+        for _ in range(veces):
+            antes = len(llamadas(lua))
+            pulsar(lua)
+            assert len(llamadas(lua)) - antes <= 1
+
+    adelantadas(lua, 10, 12)
+    pulsar_contando(3)
+    for i in (10, 12):
+        lua.globals().DISPARAR("AUCTION_CANCELED", i)
+    poner(lua, "SUBASTAS", [])
+    lua.globals().CASA_ABIERTA = False
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+
+    poner(lua, "CORREO", [carta(), carta()])
+    abrir_buzon(lua)
+    pulsar_contando(3)
+
+    lua.globals().BUZON_ABIERTO = False
+    en_la_bolsa(lua, 3, 4)
+    lua.globals().NECESITA_CONFIRMAR = True
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    abrir_casa(lua)
+    pulsar_contando(1)
+    responder_todo(lua)
+    pulsar_contando(5)
+
+    assert [c[0] for c in llamadas(lua)] == [
+        "CancelAuction", "CancelAuction",
+        "TakeInboxItem", "TakeInboxItem",
+        "PostItem", "ConfirmPostItem", "PostItem", "ConfirmPostItem",
+    ]
