@@ -362,24 +362,29 @@ local function cartaPorRecoger()
             local _, _, _, asunto, _, _, _, tieneObjeto = GetInboxHeaderInfo(i)
             if tieneObjeto and asunto and asunto:match(patron) then
                 local _, itemID = GetInboxItem(i, 1)
-                local ilvl = GetDetailedItemLevelInfo(GetInboxItemLink(i, 1))
-                local clave = claveObjeto(itemID, ilvl)
+                -- El enlace del adjunto puede no estar cargado todavia: sin el
+                -- no se sabe el ilvl, y esa carta se deja para otra pulsacion.
+                local enlace = GetInboxItemLink(i, 1)
+                local ilvl = enlace and GetDetailedItemLevelInfo(enlace)
+                if itemID and ilvl then
+                    local clave = claveObjeto(itemID, ilvl)
 
-                local devueltas = 0
-                for _, e in ipairs(cola()) do
-                    if e.estado == "devuelta" and claveObjeto(e.itemID, e.ilvl) == clave then
-                        devueltas = devueltas + 1
+                    local devueltas = 0
+                    for _, e in ipairs(cola()) do
+                        if e.estado == "devuelta" and claveObjeto(e.itemID, e.ilvl) == clave then
+                            devueltas = devueltas + 1
+                        end
                     end
-                end
-                local pedidas = 0
-                for _, otra in pairs(tomadas) do
-                    if otra == clave then
-                        pedidas = pedidas + 1
+                    local pedidas = 0
+                    for _, otra in pairs(tomadas) do
+                        if otra == clave then
+                            pedidas = pedidas + 1
+                        end
                     end
-                end
 
-                if devueltas > copiasEnBolsa(itemID, ilvl) + pedidas then
-                    return i, clave
+                    if devueltas > copiasEnBolsa(itemID, ilvl) + pedidas then
+                        return i, clave
+                    end
                 end
             end
         end

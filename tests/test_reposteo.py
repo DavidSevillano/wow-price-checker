@@ -717,6 +717,9 @@ def test_con_la_casa_saturada_de_consultas_no_cancela():
 
     assert pulsar(lua) is None
     assert llamadas(lua) == []
+    assert cola(lua)[0]["estado"] == "cancelar"
+    lua.globals().SISTEMA_LISTO = True
+    assert pulsar(lua) == "cancelar"
 
 
 # -- El correo -------------------------------------------------------------------
@@ -814,4 +817,71 @@ def test_funciona_con_el_asunto_en_castellano():
     poner(lua, "CORREO", [carta(asunto="Subasta cancelada: Grebas de las profundidades nocivas")])
     abrir_buzon(lua)
 
+    assert pulsar(lua) == "recoger"
+
+
+def test_una_carta_sin_datos_del_objeto_todavia_no_rompe_la_tecla():
+    """El enlace de un adjunto puede no estar cargado aun."""
+    lua = runtime()
+    devolver(lua, 10)
+    lua.execute(
+        """
+        local original = GetDetailedItemLevelInfo
+        GetDetailedItemLevelInfo = function(enlace)
+            assert(enlace ~= nil, "enlace nil")
+            return original(enlace)
+        end
+        """
+    )
+    sin_enlace = carta()
+    del sin_enlace["enlace"]
+    poner(lua, "CORREO", [sin_enlace])
+    abrir_buzon(lua)
+
+    assert pulsar(lua) is None
+    assert llamadas(lua) == []
+
+
+def test_una_copia_de_otro_ilvl_en_la_bolsa_no_frena_la_carta():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    poner(lua, "BOLSA", {"0:1": {"itemID": GREBAS, "hyperlink": "[Grebas]ilvl298", "isLocked": False}})
+    abrir_buzon(lua)
+
+    assert pulsar(lua) == "recoger"
+
+
+def test_cuenta_las_copias_de_todas_las_bolsas():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    poner(lua, "BOLSA", {"4:16": {"itemID": GREBAS, "hyperlink": "[Grebas]ilvl311", "isLocked": False}})
+    abrir_buzon(lua)
+
+    assert pulsar(lua) is None
+
+
+def test_no_recoge_para_una_que_aun_no_se_ha_cancelado():
+    lua = runtime()
+    adelantadas(lua, 10)
+    lua.globals().CASA_ABIERTA = False
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    poner(lua, "CORREO", [carta()])
+    abrir_buzon(lua)
+
+    assert pulsar(lua) is None
+    assert llamadas(lua) == []
+
+
+def test_cerrar_y_abrir_el_buzon_permite_reintentar():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    abrir_buzon(lua)
+    assert pulsar(lua) == "recoger"
+
+    lua.globals().BUZON_ABIERTO = False
+    lua.globals().DISPARAR("MAIL_CLOSED")
+    abrir_buzon(lua)
     assert pulsar(lua) == "recoger"
