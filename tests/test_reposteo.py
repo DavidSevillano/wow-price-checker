@@ -160,6 +160,21 @@ C_Container = {
 }
 ItemLocation = {}
 function ItemLocation:CreateFromBagAndSlot(bolsa, hueco) return { bagID = bolsa, slotIndex = hueco } end
+
+local function enHueco(loc) return BOLSA[loc.bagID .. ":" .. loc.slotIndex] end
+C_Item = {
+    DoesItemExist = function(loc) return enHueco(loc) ~= nil end,
+    GetItemID = function(loc) local h = enHueco(loc); return h and h.itemID end,
+    GetCurrentItemLevel = function(loc)
+        local h = enHueco(loc)
+        return h and GetDetailedItemLevelInfo(h.hyperlink)
+    end,
+    IsBound = function(loc) local h = enHueco(loc); return h ~= nil and h.isBound == true end,
+}
+C_AuctionHouse.IsSellItemValid = function(loc)
+    local h = enHueco(loc)
+    return h ~= nil and h.isBound ~= true
+end
 """
 
 VIGILADOS = """
@@ -1031,3 +1046,139 @@ def test_con_la_casa_saturada_de_consultas_no_postea():
     assert llamadas(lua) == []
     lua.globals().SISTEMA_LISTO = True
     assert pulsar(lua) == "postear"
+
+
+def test_cerrar_la_casa_olvida_la_confirmacion_pendiente():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+    assert pulsar(lua) == "postear"
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    abrir_casa(lua)
+    assert pulsar(lua) == "buscar"
+    assert [c[0] for c in llamadas(lua)] == ["PostItem"]
+
+
+def test_una_confirmacion_no_se_repite():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+    pulsar(lua)
+    assert pulsar(lua) == "confirmar"
+
+    assert pulsar(lua) is None
+    assert [c[0] for c in llamadas(lua)].count("ConfirmPostItem") == 1
+
+
+def test_si_la_busqueda_no_repasa_el_precio_no_se_postea():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    abrir_casa(lua)
+    assert pulsar(lua) == "buscar"
+    lua.globals().VENCER_TEMPORIZADORES()  # la respuesta no llega
+
+    assert pulsar(lua) is None
+    assert llamadas(lua) == []
+
+
+def test_el_precio_repasado_no_vale_para_la_visita_siguiente():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+
+    abrir_casa(lua)
+    assert pulsar(lua) == "buscar"
+    lua.globals().VENCER_TEMPORIZADORES()  # esta vez la respuesta no llega
+
+    assert pulsar(lua) is None
+    assert llamadas(lua) == []
+
+
+def test_postea_con_la_duracion_de_vigilados():
+    lua = runtime()
+    lua.execute("WowAlertsVigilados.duracion = 2")
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+
+    pulsar(lua)
+    assert llamadas(lua)[-1][3] == 2
+
+
+def test_si_el_objeto_cambia_de_hueco_antes_de_confirmar_no_se_confirma():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+    assert pulsar(lua) == "postear"
+
+    # Se ordena la bolsa: en el hueco 3 queda otra cosa y las grebas pasan al 4.
+    poner(
+        lua,
+        "BOLSA",
+        {
+            "0:3": {"itemID": 999, "hyperlink": "[Otra]ilvl311", "isLocked": False},
+            "0:4": {"itemID": GREBAS, "hyperlink": "[Grebas]ilvl311", "isLocked": False},
+        },
+    )
+    assert pulsar(lua) is None
+    assert "ConfirmPostItem" not in [c[0] for c in llamadas(lua)]
+
+    assert pulsar(lua) == "postear"
+    assert llamadas(lua)[-1][:3] == ("PostItem", 0, 4)
+
+
+def test_con_la_casa_saturada_la_confirmacion_espera():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+    pulsar(lua)
+    lua.globals().SISTEMA_LISTO = False
+
+    assert pulsar(lua) is None
+    assert "ConfirmPostItem" not in [c[0] for c in llamadas(lua)]
+    lua.globals().SISTEMA_LISTO = True
+    assert pulsar(lua) == "confirmar"
+
+
+def test_no_postea_una_copia_que_no_se_puede_vender():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(
+        lua,
+        "BOLSA",
+        {
+            "0:3": {"itemID": GREBAS, "hyperlink": "[Grebas]ilvl311", "isLocked": False, "isBound": True},
+            "0:4": {"itemID": GREBAS, "hyperlink": "[Grebas]ilvl311", "isLocked": False},
+        },
+    )
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+
+    assert pulsar(lua) == "postear"
+    assert llamadas(lua)[-1][:3] == ("PostItem", 0, 4)
+
+
+def test_una_copia_ligada_en_la_bolsa_no_frena_la_carta():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    poner(
+        lua,
+        "BOLSA",
+        {"0:1": {"itemID": GREBAS, "hyperlink": "[Grebas]ilvl311", "isLocked": False, "isBound": True}},
+    )
+    abrir_buzon(lua)
+
+    assert pulsar(lua) == "recoger"

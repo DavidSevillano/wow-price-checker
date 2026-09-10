@@ -343,10 +343,22 @@ local function enLaBolsa(itemID, ilvl, fn)
     end
 end
 
+-- Si esa copia se puede poner a la venta. Una copia ligada tiene el mismo
+-- objeto e ilvl pero no se puede subastar: contarla o elegirla dejaria la
+-- entrada atascada. La funcion se consulta solo si existe.
+local function sePuedeVender(bolsa, hueco)
+    if C_Item and C_Item.IsBound then
+        return not C_Item.IsBound(ItemLocation:CreateFromBagAndSlot(bolsa, hueco))
+    end
+    return true
+end
+
 local function copiasEnBolsa(itemID, ilvl)
     local n = 0
-    enLaBolsa(itemID, ilvl, function()
-        n = n + 1
+    enLaBolsa(itemID, ilvl, function(bolsa, hueco)
+        if sePuedeVender(bolsa, hueco) then
+            n = n + 1
+        end
     end)
     return n
 end
@@ -409,16 +421,20 @@ local function primeraPorCancelar()
     return nil
 end
 
--- La primera devuelta con el precio al dia en esta visita y una copia libre en
--- la bolsa, y donde esta esa copia.
+-- La primera devuelta con el precio al dia en esta visita y una copia libre y
+-- vendible en la bolsa, y donde esta esa copia.
 local function paraPostear()
     for _, e in ipairs(cola()) do
         if e.estado == "devuelta" and repasadas[e.auctionID] and e.precio then
             local sitio = nil
             enLaBolsa(e.itemID, e.ilvl, function(bolsa, hueco, info)
-                if not info.isLocked then
-                    sitio = ItemLocation:CreateFromBagAndSlot(bolsa, hueco)
-                    return true
+                if not info.isLocked and sePuedeVender(bolsa, hueco) then
+                    local candidato = ItemLocation:CreateFromBagAndSlot(bolsa, hueco)
+                    if not C_AuctionHouse.IsSellItemValid
+                        or C_AuctionHouse.IsSellItemValid(candidato, false) then
+                        sitio = candidato
+                        return true
+                    end
                 end
             end)
             if sitio then
@@ -434,6 +450,17 @@ end
 -- propia pulsacion.
 local confirmacion = nil
 
+-- Si en el hueco guardado sigue el mismo objeto. Entre postear y confirmar se
+-- puede ordenar la bolsa, y confirmar leeria lo que haya ahora en ese hueco.
+local function sigueEnSuSitio(c)
+    if not (C_Item and C_Item.DoesItemExist) then
+        return true
+    end
+    return C_Item.DoesItemExist(c.sitio)
+        and C_Item.GetItemID(c.sitio) == c.itemID
+        and C_Item.GetCurrentItemLevel(c.sitio) == c.ilvl
+end
+
 -- Hace UNA accion y devuelve cual ("buscar", "cancelar", "recoger", "postear",
 -- "confirmar"), o nil si no habia nada que hacer. Nunca llama a mas de una
 -- funcion protegida.
@@ -441,11 +468,20 @@ function R.Siguiente()
     local hecho = nil
     if casaAbierta() then
         if confirmacion then
-            local c = confirmacion
-            confirmacion = nil
-            C_AuctionHouse.ConfirmPostItem(c.sitio, c.duracion, 1, nil, c.precio)
-            quitarEntrada(c.auctionID)
-            hecho = "confirmar"
+            if C_AuctionHouse.IsThrottledMessageSystemReady() then
+                local c = confirmacion
+                confirmacion = nil
+                if sigueEnSuSitio(c) then
+                    C_AuctionHouse.ConfirmPostItem(c.sitio, c.duracion, 1, nil, c.precio)
+                    quitarEntrada(c.auctionID)
+                    if StaticPopup_Hide then
+                        -- La casa de Blizzard abre su propio aviso de precio;
+                        -- ya confirmado, sobra.
+                        StaticPopup_Hide("AUCTION_HOUSE_POST_WARNING")
+                    end
+                    hecho = "confirmar"
+                end
+            end
         elseif not buscadoEnEstaVisita then
             if subastasListas() then
                 empezarBusqueda()
@@ -472,6 +508,8 @@ function R.Siguiente()
                             duracion = duracion,
                             precio = d.precio,
                             auctionID = d.auctionID,
+                            itemID = d.itemID,
+                            ilvl = d.ilvl,
                         }
                     else
                         quitarEntrada(d.auctionID)
