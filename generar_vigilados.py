@@ -23,7 +23,7 @@ from typing import Mapping, Sequence
 
 from dotenv import load_dotenv
 
-from wowalerts.blizzard import BlizzardClient
+from wowalerts.blizzard import BlizzardAuthError, BlizzardClient, BlizzardError
 from wowalerts.config import ConfigError, ItemRule, load_config
 from wowalerts.items import ItemResolutionError, resolve_item_ids
 from wowalerts.state import ItemIdCache
@@ -65,7 +65,13 @@ def objetos_a_repostear(reglas: Mapping[int, ItemRule]) -> dict[int, str]:
 
 
 def _cadena_lua(texto: str) -> str:
-    return '"' + texto.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    escapado = (
+        texto.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
+    return '"' + escapado + '"'
 
 
 def a_lua(objetos: Mapping[int, str], personajes: Sequence[str], duracion: int) -> str:
@@ -113,12 +119,25 @@ def main(argv: list[str] | None = None) -> int:
     cache = ItemIdCache(Path(args.state_dir) / "item_ids.json")
     try:
         reglas = resolve_item_ids(client, config, cache)
-    except ItemResolutionError as exc:
+    except (BlizzardAuthError, BlizzardError, ItemResolutionError) as exc:
         log.error("❌ %s", exc)
         return EXIT_ERROR
     cache.save()
 
-    texto = a_lua(objetos_a_repostear(reglas), config.orden_personajes, duracion)
+    objetos = objetos_a_repostear(reglas)
+    esperados = {
+        r.name for r in config.items if r.avisar_undercut and not r.es_mascota
+    }
+    faltan = esperados - set(objetos.values())
+    if faltan:
+        log.error(
+            "❌ No se ha resuelto el id de: %s. Anade 'item_id' a mano en "
+            "config.yaml para cada uno de esos objetos.",
+            ", ".join(sorted(faltan)),
+        )
+        return EXIT_ERROR
+
+    texto = a_lua(objetos, config.orden_personajes, duracion)
     salida = Path(args.salida)
     if salida.is_file() and salida.read_text(encoding="utf-8") == texto:
         log.info("Vigilados.lua ya estaba al dia.")
