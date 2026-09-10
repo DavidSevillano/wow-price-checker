@@ -885,3 +885,149 @@ def test_cerrar_y_abrir_el_buzon_permite_reintentar():
     lua.globals().DISPARAR("MAIL_CLOSED")
     abrir_buzon(lua)
     assert pulsar(lua) == "recoger"
+
+
+# -- Postear ---------------------------------------------------------------------
+
+
+def en_la_bolsa(lua, *huecos, ilvl=311):
+    poner(
+        lua,
+        "BOLSA",
+        {
+            f"0:{h}": {"itemID": GREBAS, "hyperlink": f"[Grebas]ilvl{ilvl}", "isLocked": False}
+            for h in huecos
+        },
+    )
+
+
+def volver_a_la_casa(lua, filas):
+    """Con lo devuelto ya recogido, vuelves a la casa y pulsas para buscar."""
+    lua.globals().BUZON_ABIERTO = False
+    lua.globals().DISPARAR("MAIL_CLOSED")
+    en_la_casa(lua, filas)
+    detectar(lua)
+    poner(lua, "LLAMADAS", [])
+
+
+def test_postea_lo_devuelto_al_precio_del_rival():
+    lua = runtime()
+    devolver(lua, 10, precio=100_000, rival=90_000)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+
+    assert pulsar(lua) == "postear"
+    assert llamadas(lua) == [("PostItem", 0, 3, 1, 1, 90_000)]
+    assert cola(lua) == []
+
+
+def test_si_el_rival_ha_bajado_se_iguala_su_precio_nuevo():
+    lua = runtime()
+    devolver(lua, 10, precio=100_000, rival=90_000)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 85_000)])
+
+    pulsar(lua)
+    assert llamadas(lua)[-1][-1] == 85_000
+
+
+def test_si_el_rival_ya_no_esta_se_repostea_al_precio_anterior():
+    lua = runtime()
+    devolver(lua, 10, precio=100_000, rival=90_000)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [])
+
+    pulsar(lua)
+    assert llamadas(lua)[-1][-1] == 100_000
+
+
+def test_un_rival_mas_caro_que_tu_precio_anterior_no_sube_el_precio():
+    lua = runtime()
+    devolver(lua, 10, precio=100_000, rival=90_000)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 150_000)])
+
+    pulsar(lua)
+    assert llamadas(lua)[-1][-1] == 100_000
+
+
+def test_sin_buscar_en_esta_visita_no_postea():
+    """El precio de lo devuelto se recalcula en cada visita antes de postear."""
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    abrir_casa(lua)
+
+    assert pulsar(lua) == "buscar"
+    responder_todo(lua)
+    assert pulsar(lua) == "postear"
+
+
+def test_sin_el_objeto_en_la_bolsa_no_postea():
+    lua = runtime()
+    devolver(lua, 10)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+
+    assert pulsar(lua) is None
+    assert llamadas(lua) == []
+
+
+def test_una_copia_bloqueada_no_se_usa():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    lua.execute('BOLSA["0:3"].isLocked = true')
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+
+    assert pulsar(lua) is None
+
+
+def test_con_dos_devueltas_postea_dos_con_dos_pulsaciones():
+    lua = runtime()
+    devolver(lua, 10, 12)
+    en_la_bolsa(lua, 3, 4)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+
+    pulsar(lua)
+    pulsar(lua)
+    assert [(c[0], c[2]) for c in llamadas(lua)] == [("PostItem", 3), ("PostItem", 4)]
+
+
+def test_si_el_juego_pide_confirmacion_la_siguiente_pulsacion_confirma():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+
+    assert pulsar(lua) == "postear"
+    assert len(cola(lua)) == 1
+
+    assert pulsar(lua) == "confirmar"
+    assert llamadas(lua)[-1] == ("ConfirmPostItem", 0, 3, 1, 1, 90_000)
+    assert cola(lua) == []
+
+
+def test_cancelar_va_antes_que_postear():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    poner(lua, "SUBASTAS", [mia(20, 100_000)])
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+
+    assert pulsar(lua) == "cancelar"
+    assert pulsar(lua) == "postear"
+
+
+def test_con_la_casa_saturada_de_consultas_no_postea():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().SISTEMA_LISTO = False
+
+    assert pulsar(lua) is None
+    assert llamadas(lua) == []
+    lua.globals().SISTEMA_LISTO = True
+    assert pulsar(lua) == "postear"

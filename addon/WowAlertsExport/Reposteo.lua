@@ -409,22 +409,75 @@ local function primeraPorCancelar()
     return nil
 end
 
--- Hace UNA accion y devuelve cual ("buscar", "cancelar", "recoger"), o nil si
--- no habia nada que hacer. Nunca llama a mas de una funcion protegida.
+-- La primera devuelta con el precio al dia en esta visita y una copia libre en
+-- la bolsa, y donde esta esa copia.
+local function paraPostear()
+    for _, e in ipairs(cola()) do
+        if e.estado == "devuelta" and repasadas[e.auctionID] and e.precio then
+            local sitio = nil
+            enLaBolsa(e.itemID, e.ilvl, function(bolsa, hueco, info)
+                if not info.isLocked then
+                    sitio = ItemLocation:CreateFromBagAndSlot(bolsa, hueco)
+                    return true
+                end
+            end)
+            if sitio then
+                return e, sitio
+            end
+        end
+    end
+    return nil, nil
+end
+
+-- Lo que falta por confirmar del ultimo PostItem, si el juego pidio
+-- confirmacion. Confirmar tambien es una funcion protegida, asi que va en su
+-- propia pulsacion.
+local confirmacion = nil
+
+-- Hace UNA accion y devuelve cual ("buscar", "cancelar", "recoger", "postear",
+-- "confirmar"), o nil si no habia nada que hacer. Nunca llama a mas de una
+-- funcion protegida.
 function R.Siguiente()
     local hecho = nil
     if casaAbierta() then
-        if not buscadoEnEstaVisita then
+        if confirmacion then
+            local c = confirmacion
+            confirmacion = nil
+            C_AuctionHouse.ConfirmPostItem(c.sitio, c.duracion, 1, nil, c.precio)
+            quitarEntrada(c.auctionID)
+            hecho = "confirmar"
+        elseif not buscadoEnEstaVisita then
             if subastasListas() then
                 empezarBusqueda()
                 hecho = "buscar"
             end
         elseif not buscando() then
+            -- Con la casa saturada de consultas, cancelar o postear podria
+            -- perderse sin aviso: mejor no hacer nada y que se vuelva a pulsar.
+            local listo = C_AuctionHouse.IsThrottledMessageSystemReady()
             local e = primeraPorCancelar()
-            if e and C_AuctionHouse.IsThrottledMessageSystemReady() then
-                C_AuctionHouse.CancelAuction(e.auctionID)
-                e.estado = "cancelando"
-                hecho = "cancelar"
+            if e then
+                if listo then
+                    C_AuctionHouse.CancelAuction(e.auctionID)
+                    e.estado = "cancelando"
+                    hecho = "cancelar"
+                end
+            elseif listo then
+                local d, sitio = paraPostear()
+                if d then
+                    local duracion = vigilados().duracion
+                    if C_AuctionHouse.PostItem(sitio, duracion, 1, nil, d.precio) then
+                        confirmacion = {
+                            sitio = sitio,
+                            duracion = duracion,
+                            precio = d.precio,
+                            auctionID = d.auctionID,
+                        }
+                    else
+                        quitarEntrada(d.auctionID)
+                    end
+                    hecho = "postear"
+                end
             end
         end
     elseif buzonAbierto() then
@@ -464,6 +517,7 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
         reiniciarBusqueda()
     elseif evento == "AUCTION_HOUSE_CLOSED" then
         abiertaEn = nil
+        confirmacion = nil
         reiniciarBusqueda()
     elseif evento == "OWNED_AUCTIONS_UPDATED" then
         recibidasEn = GetTime()
