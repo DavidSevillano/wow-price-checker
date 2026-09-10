@@ -119,6 +119,25 @@ local siguienteGrupo = 1
 local esperando = nil    -- clave del grupo cuya respuesta se espera
 local repasadas = {}     -- auctionID -> true: devueltas con el precio al dia
 
+-- La lista de subastas propias llega por partes, y la primera respuesta tras
+-- abrir la casa viene vacia (ver WowAlertsExport.lua). Buscar con la lista a
+-- medias borraria de la cola lo que no apareciera, asi que hace falta haber
+-- recibido la lista despues de abrir y que la casa lleve unos segundos abierta.
+local SEGUNDOS_PARA_FIARSE = 5
+local abiertaEn = nil     -- GetTime() al abrir la casa
+local recibidasEn = nil   -- GetTime() de la ultima OWNED_AUCTIONS_UPDATED
+
+local function subastasListas()
+    return abiertaEn ~= nil and recibidasEn ~= nil and recibidasEn >= abiertaEn
+        and GetTime() - abiertaEn >= SEGUNDOS_PARA_FIARSE
+end
+
+-- Si la respuesta a una busqueda no llega en este tiempo (mensaje perdido,
+-- otra busqueda del juego o de otro addon por medio), se salta ese objeto en
+-- esta visita sin tocar su cola.
+local SEGUNDOS_DE_ESPERA = 10
+local consulta = 0        -- numero de la ultima busqueda enviada
+
 local function reiniciarBusqueda()
     grupos, ordenGrupos, siguienteGrupo, esperando = {}, {}, 1, nil
 end
@@ -162,7 +181,7 @@ local function prepararBusqueda()
                 auctionID = info.auctionID,
                 buyout = info.buyoutAmount,
                 itemID = itemKey.itemID,
-                ilvl = GetDetailedItemLevelInfo(info.itemLink) or itemKey.itemLevel,
+                ilvl = (info.itemLink and GetDetailedItemLevelInfo(info.itemLink)) or itemKey.itemLevel,
             }
         end
     end
@@ -190,7 +209,7 @@ local function prepararBusqueda()
 end
 
 local function lanzarSiguiente()
-    if esperando or not buscando() then
+    if esperando or not buscando() or not casaAbierta() then
         return
     end
     if not C_AuctionHouse.IsThrottledMessageSystemReady() then
@@ -199,11 +218,21 @@ local function lanzarSiguiente()
         return
     end
     esperando = ordenGrupos[siguienteGrupo]
+    consulta = consulta + 1
+    local esta = consulta
     C_AuctionHouse.SendSearchQuery(
         grupos[esperando].itemKey,
         { { sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false } },
         true
     )
+    C_Timer.After(SEGUNDOS_DE_ESPERA, function()
+        if esperando and consulta == esta then
+            esperando = nil
+            siguienteGrupo = siguienteGrupo + 1
+            lanzarSiguiente()
+            R.refrescarPanel()
+        end
+    end)
 end
 
 -- El precio del rival mas barato que va por delante de `mia`, o nil.
@@ -280,7 +309,7 @@ end
 -- Hace UNA accion y devuelve cual ("buscar"), o nil si no habia nada que hacer.
 function R.Siguiente()
     local hecho = nil
-    if casaAbierta() and not buscadoEnEstaVisita then
+    if casaAbierta() and not buscadoEnEstaVisita and subastasListas() then
         empezarBusqueda()
         hecho = "buscar"
     end
@@ -297,17 +326,28 @@ frame:RegisterEvent("AUCTION_HOUSE_SHOW")
 frame:RegisterEvent("AUCTION_HOUSE_CLOSED")
 frame:RegisterEvent("ITEM_SEARCH_RESULTS_UPDATED")
 frame:RegisterEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+frame:RegisterEvent("OWNED_AUCTIONS_UPDATED")
+frame:RegisterEvent("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED")
 
 frame:SetScript("OnEvent", function(_, evento, arg1)
     if evento == "AUCTION_HOUSE_SHOW" then
+        abiertaEn = GetTime()
         buscadoEnEstaVisita = false
         repasadas = {}
         reiniciarBusqueda()
     elseif evento == "AUCTION_HOUSE_CLOSED" then
-        esperando = nil
+        abiertaEn = nil
+        reiniciarBusqueda()
+    elseif evento == "OWNED_AUCTIONS_UPDATED" then
+        recibidasEn = GetTime()
     elseif evento == "ITEM_SEARCH_RESULTS_UPDATED" then
         alResponder(arg1)
     elseif evento == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
+        lanzarSiguiente()
+    elseif evento == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
+        -- El servidor ha descartado una consulta: se vuelve a pedir la que
+        -- estaba en curso.
+        esperando = nil
         lanzarSiguiente()
     end
     R.refrescarPanel()

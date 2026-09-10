@@ -80,10 +80,17 @@ function GetDetailedItemLevelInfo(enlace)
 end
 
 SlashCmdList = {}
+TEMPORIZADORES = {}
 C_Timer = {
-    After = function(_, fn) fn() end,
+    After = function(segundos, fn) TEMPORIZADORES[#TEMPORIZADORES + 1] = fn end,
     NewTicker = function() return { Cancel = function() end } end,
 }
+-- Vence todos los temporizadores pendientes, como si pasara el tiempo.
+function VENCER_TEMPORIZADORES()
+    local pendientes = TEMPORIZADORES
+    TEMPORIZADORES = {}
+    for _, fn in ipairs(pendientes) do fn() end
+end
 
 CASA_ABIERTA = false
 AuctionHouseFrame = { IsShown = function() return CASA_ABIERTA end }
@@ -225,9 +232,13 @@ def en_la_casa(lua, filas, item_id=GREBAS, ilvl=311):
     poner(lua, "RESULTADOS", {f"{item_id}:{ilvl}:0": filas})
 
 
-def abrir_casa(lua):
+def abrir_casa(lua, esperar=True):
+    """Abre la casa y, salvo que se pida lo contrario, deja pasar los segundos
+    que hacen falta para fiarse de la lista de subastas propias."""
     lua.globals().CASA_ABIERTA = True
     lua.globals().DISPARAR("AUCTION_HOUSE_SHOW")
+    if esperar:
+        lua.globals().RELOJ = lua.globals().RELOJ + 5
 
 
 def pulsar(lua):
@@ -431,6 +442,8 @@ def test_una_busqueda_por_objeto_e_ilvl_y_de_una_en_una():
     abrir_casa(lua)
     pulsar(lua)
     assert lua.globals().BUSCADAS == 1
+    assert lua.eval("BUSQUEDAS[1].itemID") == GREBAS
+    assert lua.eval("BUSQUEDAS[1].itemLevel") == 311
 
     lua.globals().RESPONDER()
     assert lua.globals().BUSCADAS == 2
@@ -491,3 +504,82 @@ def test_si_ya_no_te_adelantan_sale_de_la_cola():
     detectar(lua)
 
     assert cola(lua) == []
+
+
+def test_no_busca_hasta_fiarse_de_la_lista_de_subastas():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(11, 90_000)])
+    detectar(lua)
+    assert cola(lua) != []
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    buscadas_antes = lua.globals().BUSCADAS
+
+    poner(lua, "SUBASTAS", [])
+    abrir_casa(lua, esperar=False)
+    assert pulsar(lua) is None
+    assert lua.globals().BUSCADAS == buscadas_antes
+    assert cola(lua) != []
+
+    poner(lua, "SUBASTAS", [mia(10, 100_000)])
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    lua.globals().RELOJ = lua.globals().RELOJ + 5
+    assert pulsar(lua) == "buscar"
+
+
+def test_si_la_respuesta_no_llega_se_salta_ese_objeto():
+    lua = runtime(subastas=[mia(10, 100_000), mia(20, 50_000, ilvl=298)])
+    abrir_casa(lua)
+    pulsar(lua)
+    assert lua.globals().BUSCADAS == 1
+
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert lua.globals().BUSCADAS == 2
+
+    lua.globals().RESPONDER()
+    assert pulsar(lua) is None
+    assert lua.globals().BUSCADAS == 2
+
+
+def test_una_respuesta_a_tiempo_no_la_salta_el_temporizador():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(11, 90_000)])
+    abrir_casa(lua)
+    pulsar(lua)
+    lua.globals().RESPONDER()
+
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert lua.globals().BUSCADAS == 1
+    assert [e["precio"] for e in cola(lua)] == [90_000]
+
+
+def test_si_el_servidor_descarta_la_consulta_se_vuelve_a_pedir():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    abrir_casa(lua)
+    pulsar(lua)
+    assert lua.globals().BUSCADAS == 1
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED")
+    assert lua.globals().BUSCADAS == 2
+
+
+def test_cerrar_la_casa_a_mitad_para_la_busqueda():
+    lua = runtime(subastas=[mia(10, 100_000), mia(20, 50_000, ilvl=298)])
+    abrir_casa(lua)
+    pulsar(lua)
+    assert lua.globals().BUSCADAS == 1
+
+    lua.globals().CASA_ABIERTA = False
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert lua.globals().BUSCADAS == 1
+
+
+def test_de_dos_subastas_solo_entra_la_que_va_por_detras():
+    lua = runtime(subastas=[mia(10, 100_000), mia(12, 80_000)])
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    detectar(lua)
+
+    assert [e["auctionID"] for e in cola(lua)] == [10]
