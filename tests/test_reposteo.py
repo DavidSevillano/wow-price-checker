@@ -354,3 +354,140 @@ def test_el_exportador_sigue_funcionando_con_el_reposteo_cargado():
     payload = json.loads(lua.globals().WowAlertsExportDB.payload)
     subastas = payload["personajes"]["Sanguino-Pepe"]["auctions"]
     assert [s["auctionID"] for s in subastas] == [1]
+
+
+# -- La busqueda -----------------------------------------------------------------
+
+
+def detectar(lua):
+    """Abre la casa, pulsa para buscar y deja que el servidor responda a todo."""
+    abrir_casa(lua)
+    pulsar(lua)
+    responder_todo(lua)
+
+
+def test_la_primera_pulsacion_busca_y_no_cancela_nada():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    abrir_casa(lua)
+
+    assert pulsar(lua) == "buscar"
+    assert lua.globals().BUSCADAS == 1
+    assert llamadas(lua) == []
+
+
+def test_sin_la_casa_abierta_no_busca():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    assert pulsar(lua) is None
+    assert lua.globals().BUSCADAS == 0
+
+
+def test_si_te_adelantan_entra_en_la_cola_al_precio_del_rival():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(11, 90_000), en_venta(10, 100_000, dueno="Pepe", propia=True)])
+    detectar(lua)
+
+    [entrada] = cola(lua)
+    assert entrada["auctionID"] == 10
+    assert entrada["estado"] == "cancelar"
+    assert entrada["precio"] == 90_000
+    assert entrada["precioAnterior"] == 100_000
+    assert (entrada["itemID"], entrada["ilvl"]) == (GREBAS, 311)
+
+
+def test_al_mismo_precio_y_publicada_despues_tambien_te_adelanta():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(11, 100_000)])
+    detectar(lua)
+
+    assert [e["precio"] for e in cola(lua)] == [100_000]
+
+
+def test_si_vas_primero_no_entra_nada():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(9, 100_000), en_venta(12, 120_000)])
+    detectar(lua)
+
+    assert cola(lua) == []
+
+
+def test_tus_alts_no_te_adelantan():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(11, 50_000, dueno="Mbarval-Sanguino")])
+    detectar(lua)
+
+    assert cola(lua) == []
+
+
+def test_solo_se_revisan_los_objetos_vigilados_y_activos():
+    lua = runtime(subastas=[mia(10, 100_000, item_id=999), mia(11, 100_000, status=1)])
+    detectar(lua)
+
+    assert lua.globals().BUSCADAS == 0
+    assert cola(lua) == []
+
+
+def test_una_busqueda_por_objeto_e_ilvl_y_de_una_en_una():
+    lua = runtime(subastas=[mia(10, 100_000), mia(12, 100_000), mia(20, 50_000, ilvl=298)])
+    abrir_casa(lua)
+    pulsar(lua)
+    assert lua.globals().BUSCADAS == 1
+
+    lua.globals().RESPONDER()
+    assert lua.globals().BUSCADAS == 2
+
+    responder_todo(lua)
+    # Las dos de ilvl 311 comparten busqueda.
+    assert lua.globals().BUSCADAS == 2
+
+
+def test_si_la_casa_no_admite_consultas_espera_a_que_avise():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    lua.globals().SISTEMA_LISTO = False
+    abrir_casa(lua)
+    pulsar(lua)
+    assert lua.globals().BUSCADAS == 0
+
+    lua.globals().SISTEMA_LISTO = True
+    lua.globals().DISPARAR("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    assert lua.globals().BUSCADAS == 1
+
+
+def test_mientras_busca_otra_pulsacion_no_hace_nada():
+    lua = runtime(subastas=[mia(10, 100_000), mia(20, 50_000, ilvl=298)])
+    abrir_casa(lua)
+    pulsar(lua)
+
+    assert pulsar(lua) is None
+    assert lua.globals().BUSCADAS == 1
+
+
+def test_la_cola_se_guarda_en_savedvariables_por_personaje():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(11, 90_000)])
+    detectar(lua)
+
+    assert lua.eval('WowAlertsExportDB.reposteo["Sanguino-Pepe"][1].auctionID') == 10
+
+
+def test_volver_a_buscar_actualiza_el_precio_sin_duplicar():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(11, 90_000)])
+    detectar(lua)
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+
+    en_la_casa(lua, [en_venta(11, 90_000), en_venta(13, 80_000)])
+    detectar(lua)
+
+    assert [e["precio"] for e in cola(lua)] == [80_000]
+
+
+def test_si_ya_no_te_adelantan_sale_de_la_cola():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(11, 90_000)])
+    detectar(lua)
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    assert cola(lua) == []
