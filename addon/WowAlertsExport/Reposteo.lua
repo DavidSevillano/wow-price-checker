@@ -308,6 +308,86 @@ local function empezarBusqueda()
 end
 
 -- ---------------------------------------------------------------------------
+--  El buzon y la bolsa
+-- ---------------------------------------------------------------------------
+
+local function buzonAbierto()
+    return MailFrame ~= nil and MailFrame:IsShown()
+end
+
+-- El asunto de las cartas de subasta cancelada, como patron. Sale del texto
+-- del propio juego para funcionar en cualquier idioma ("Subasta cancelada: %s").
+local function patronCancelada()
+    local formato = AUCTION_REMOVED_MAIL_SUBJECT or "Auction cancelled: %s"
+    local escapado = (formato:gsub("[%^%$%(%)%.%[%]%*%+%-%?]", "%%%0"))
+    return "^" .. (escapado:gsub("%%s", "(.+)")) .. "$"
+end
+
+local function claveObjeto(itemID, ilvl)
+    return tostring(itemID) .. ":" .. tostring(ilvl)
+end
+
+-- Recorre la bolsa llamando a `fn(bolsa, hueco, info)` en cada copia de ese
+-- objeto e ilvl. Si `fn` devuelve true, se para.
+local function enLaBolsa(itemID, ilvl, fn)
+    for bolsa = 0, NUM_BAG_SLOTS do
+        for hueco = 1, C_Container.GetContainerNumSlots(bolsa) do
+            local info = C_Container.GetContainerItemInfo(bolsa, hueco)
+            if info and info.itemID == itemID
+                and GetDetailedItemLevelInfo(info.hyperlink) == ilvl then
+                if fn(bolsa, hueco, info) then
+                    return
+                end
+            end
+        end
+    end
+end
+
+local function copiasEnBolsa(itemID, ilvl)
+    local n = 0
+    enLaBolsa(itemID, ilvl, function()
+        n = n + 1
+    end)
+    return n
+end
+
+-- Cartas ya pedidas y aun sin respuesta: indice -> clave del objeto. Se
+-- olvidan con MAIL_INBOX_UPDATE, que llega cuando el buzon cambia.
+local tomadas = {}
+
+local function cartaPorRecoger()
+    local patron = patronCancelada()
+    for i = 1, (GetInboxNumItems()) do
+        if not tomadas[i] then
+            local _, _, _, asunto, _, _, _, tieneObjeto = GetInboxHeaderInfo(i)
+            if tieneObjeto and asunto and asunto:match(patron) then
+                local _, itemID = GetInboxItem(i, 1)
+                local ilvl = GetDetailedItemLevelInfo(GetInboxItemLink(i, 1))
+                local clave = claveObjeto(itemID, ilvl)
+
+                local devueltas = 0
+                for _, e in ipairs(cola()) do
+                    if e.estado == "devuelta" and claveObjeto(e.itemID, e.ilvl) == clave then
+                        devueltas = devueltas + 1
+                    end
+                end
+                local pedidas = 0
+                for _, otra in pairs(tomadas) do
+                    if otra == clave then
+                        pedidas = pedidas + 1
+                    end
+                end
+
+                if devueltas > copiasEnBolsa(itemID, ilvl) + pedidas then
+                    return i, clave
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
+-- ---------------------------------------------------------------------------
 --  La tecla
 -- ---------------------------------------------------------------------------
 
@@ -324,8 +404,8 @@ local function primeraPorCancelar()
     return nil
 end
 
--- Hace UNA accion y devuelve cual ("buscar", "cancelar"), o nil si no habia
--- nada que hacer. Nunca llama a mas de una funcion protegida.
+-- Hace UNA accion y devuelve cual ("buscar", "cancelar", "recoger"), o nil si
+-- no habia nada que hacer. Nunca llama a mas de una funcion protegida.
 function R.Siguiente()
     local hecho = nil
     if casaAbierta() then
@@ -341,6 +421,13 @@ function R.Siguiente()
                 e.estado = "cancelando"
                 hecho = "cancelar"
             end
+        end
+    elseif buzonAbierto() then
+        local indice, clave = cartaPorRecoger()
+        if indice then
+            TakeInboxItem(indice, 1)
+            tomadas[indice] = clave
+            hecho = "recoger"
         end
     end
     R.refrescarPanel()
@@ -359,6 +446,9 @@ frame:RegisterEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
 frame:RegisterEvent("OWNED_AUCTIONS_UPDATED")
 frame:RegisterEvent("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED")
 frame:RegisterEvent("AUCTION_CANCELED")
+frame:RegisterEvent("MAIL_SHOW")
+frame:RegisterEvent("MAIL_CLOSED")
+frame:RegisterEvent("MAIL_INBOX_UPDATE")
 
 frame:SetScript("OnEvent", function(_, evento, arg1)
     if evento == "AUCTION_HOUSE_SHOW" then
@@ -388,6 +478,8 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
         if e and (e.estado == "cancelando" or e.estado == "cancelar") then
             e.estado = "devuelta"
         end
+    elseif evento == "MAIL_SHOW" or evento == "MAIL_CLOSED" or evento == "MAIL_INBOX_UPDATE" then
+        tomadas = {}
     end
     R.refrescarPanel()
 end)

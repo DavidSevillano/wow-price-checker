@@ -717,3 +717,101 @@ def test_con_la_casa_saturada_de_consultas_no_cancela():
 
     assert pulsar(lua) is None
     assert llamadas(lua) == []
+
+
+# -- El correo -------------------------------------------------------------------
+
+
+def devolver(lua, *ids, precio=100_000, rival=90_000):
+    """Deja `ids` en la cola como devueltas: buscadas, canceladas y confirmadas."""
+    adelantadas(lua, *ids, precio=precio, rival=rival)
+    for i in ids:
+        pulsar(lua)
+        lua.globals().DISPARAR("AUCTION_CANCELED", i)
+    poner(lua, "SUBASTAS", [])
+    lua.globals().CASA_ABIERTA = False
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    poner(lua, "LLAMADAS", [])
+
+
+def carta(item_id=GREBAS, ilvl=311, asunto="Auction cancelled: Greaves of the Noxious Depths"):
+    return {"asunto": asunto, "nombre": "Greaves", "itemID": item_id, "enlace": f"[Grebas]ilvl{ilvl}"}
+
+
+def abrir_buzon(lua):
+    lua.globals().BUZON_ABIERTO = True
+    lua.globals().DISPARAR("MAIL_SHOW")
+
+
+def test_en_el_buzon_recoge_la_carta_de_lo_cancelado():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    abrir_buzon(lua)
+
+    assert pulsar(lua) == "recoger"
+    assert llamadas(lua) == [("TakeInboxItem", 1, 1)]
+
+
+def test_no_recoge_cartas_que_no_son_de_la_cola():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta(asunto="Hola"), carta(item_id=999), carta(ilvl=298)])
+    abrir_buzon(lua)
+
+    assert pulsar(lua) is None
+    assert llamadas(lua) == []
+
+
+def test_no_recoge_si_el_objeto_ya_esta_en_la_bolsa():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    poner(lua, "BOLSA", {"0:1": {"itemID": GREBAS, "hyperlink": "[Grebas]ilvl311", "isLocked": False}})
+    abrir_buzon(lua)
+
+    assert pulsar(lua) is None
+
+
+def test_no_pide_dos_cartas_para_una_sola_devuelta():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta(), carta()])
+    abrir_buzon(lua)
+
+    assert pulsar(lua) == "recoger"
+    assert pulsar(lua) is None
+    assert len(llamadas(lua)) == 1
+
+
+def test_con_dos_devueltas_recoge_dos_cartas_de_una_en_una():
+    lua = runtime()
+    devolver(lua, 10, 12)
+    poner(lua, "CORREO", [carta(), carta()])
+    abrir_buzon(lua)
+
+    pulsar(lua)
+    pulsar(lua)
+    assert llamadas(lua) == [("TakeInboxItem", 1, 1), ("TakeInboxItem", 2, 1)]
+
+
+def test_si_la_bolsa_estaba_llena_se_reintenta():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    abrir_buzon(lua)
+    pulsar(lua)
+
+    # La carta sigue ahi porque el objeto no cabia.
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+    assert pulsar(lua) == "recoger"
+
+
+def test_funciona_con_el_asunto_en_castellano():
+    lua = runtime()
+    lua.globals().AUCTION_REMOVED_MAIL_SUBJECT = "Subasta cancelada: %s"
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta(asunto="Subasta cancelada: Grebas de las profundidades nocivas")])
+    abrir_buzon(lua)
+
+    assert pulsar(lua) == "recoger"
