@@ -664,3 +664,56 @@ def test_si_desaparece_antes_de_cancelarla_sale_de_la_cola():
     poner(lua, "SUBASTAS", [])  # se vendio mientras tanto
     detectar(lua)
     assert cola(lua) == []
+
+
+def test_mientras_busca_no_cancela_lo_de_la_visita_anterior():
+    lua = runtime()
+    adelantadas(lua, 10)
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+
+    poner(lua, "SUBASTAS", [mia(10, 100_000), mia(20, 50_000, ilvl=298)])
+    abrir_casa(lua)
+    assert pulsar(lua) == "buscar"
+
+    assert pulsar(lua) is None
+    assert llamadas(lua) == []
+
+
+def test_si_la_busqueda_no_confirma_una_adelantada_no_se_cancela():
+    """Cancelar cuesta el deposito: sin datos de esta visita, no se cancela."""
+    lua = runtime()
+    adelantadas(lua, 10)
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+
+    abrir_casa(lua)
+    pulsar(lua)
+    lua.globals().VENCER_TEMPORIZADORES()  # la respuesta no llega
+
+    assert pulsar(lua) is None
+    assert llamadas(lua) == []
+
+
+def test_una_cancelada_a_mano_pasa_a_devuelta():
+    lua = runtime()
+    adelantadas(lua, 10)
+
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+    assert cola(lua)[0]["estado"] == "devuelta"
+
+
+def test_no_cancela_lo_que_el_juego_no_deja_cancelar():
+    lua = runtime()
+    adelantadas(lua, 10, 12)
+    lua.execute("C_AuctionHouse.CanCancelAuction = function(id) return id ~= 10 end")
+
+    assert pulsar(lua) == "cancelar"
+    assert llamadas(lua) == [("CancelAuction", 12)]
+
+
+def test_con_la_casa_saturada_de_consultas_no_cancela():
+    lua = runtime()
+    adelantadas(lua, 10)
+    lua.globals().SISTEMA_LISTO = False
+
+    assert pulsar(lua) is None
+    assert llamadas(lua) == []

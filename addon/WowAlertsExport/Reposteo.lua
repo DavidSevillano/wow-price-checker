@@ -119,6 +119,10 @@ local siguienteGrupo = 1
 local esperando = nil    -- clave del grupo cuya respuesta se espera
 local repasadas = {}     -- auctionID -> true: devueltas con el precio al dia
 
+-- auctionID -> true: adelantadas que la busqueda de esta visita ha confirmado.
+-- Cancelar cuesta el deposito, asi que no se cancela con datos de otra visita.
+local confirmadas = {}
+
 -- La lista de subastas propias llega por partes, y la primera respuesta tras
 -- abrir la casa viene vacia (ver WowAlertsExport.lua). Buscar con la lista a
 -- medias borraria de la cola lo que no apareciera, asi que hace falta haber
@@ -270,6 +274,7 @@ local function procesarGrupo(grupo)
             end
             if entrada.estado == "cancelar" then
                 entrada.precio = precio
+                confirmadas[m.auctionID] = true
             end
         elseif entrada and entrada.estado == "cancelar" then
             quitarEntrada(m.auctionID)
@@ -306,9 +311,13 @@ end
 --  La tecla
 -- ---------------------------------------------------------------------------
 
+-- La primera adelantada confirmada en esta visita que el juego deja cancelar.
+-- CanCancelAuction se consulta solo si existe: una subasta con puja, por
+-- ejemplo, no se puede cancelar y no debe gastar pulsaciones.
 local function primeraPorCancelar()
     for _, e in ipairs(cola()) do
-        if e.estado == "cancelar" then
+        if e.estado == "cancelar" and confirmadas[e.auctionID]
+            and (not C_AuctionHouse.CanCancelAuction or C_AuctionHouse.CanCancelAuction(e.auctionID)) then
             return e
         end
     end
@@ -327,7 +336,7 @@ function R.Siguiente()
             end
         elseif not buscando() then
             local e = primeraPorCancelar()
-            if e then
+            if e and C_AuctionHouse.IsThrottledMessageSystemReady() then
                 C_AuctionHouse.CancelAuction(e.auctionID)
                 e.estado = "cancelando"
                 hecho = "cancelar"
@@ -356,6 +365,7 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
         abiertaEn = GetTime()
         buscadoEnEstaVisita = false
         repasadas = {}
+        confirmadas = {}
         reiniciarBusqueda()
     elseif evento == "AUCTION_HOUSE_CLOSED" then
         abiertaEn = nil
