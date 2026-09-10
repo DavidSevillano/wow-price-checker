@@ -6,6 +6,8 @@ el juego acepte esas llamadas desde una tecla-- se comprueba a mano en la
 Task 9 del plan.
 
 Necesita `lupa`, que va en requirements-dev.txt. Sin el, los tests se saltan.
+
+Corre sobre lupa.lua51, la misma version 5.1 que usa el juego.
 """
 
 from __future__ import annotations
@@ -15,38 +17,55 @@ from pathlib import Path
 
 import pytest
 
-lupa = pytest.importorskip("lupa")
+lupa = pytest.importorskip("lupa.lua51")
 
 CARPETA = Path(__file__).resolve().parent.parent / "addon" / "WowAlertsExport"
 GREBAS = 271440
 
 DOBLES = r"""
 -- Dobles de las APIs de WoW que usan el exportador y el reposteo.
-local manejadores = {}
+local marcos = {}   -- frames creados, en orden de creacion, con sus eventos
 mensajes = {}
 LLAMADAS = {}    -- funciones protegidas, en el orden en que se llaman
 BUSQUEDAS = {}   -- itemKeys pedidas a la casa y aun sin responder
 BUSCADAS = 0     -- cuantas busquedas se han lanzado en total
 
-local function apuntar(...) LLAMADAS[#LLAMADAS + 1] = { ... } end
+-- Se guarda cuantos argumentos hubo (select("#", ...)) porque un nil en medio
+-- no deja rastro en la tabla: sin "n" no habria forma de saber donde acababa
+-- la llamada.
+local function apuntar(...)
+    LLAMADAS[#LLAMADAS + 1] = { n = select("#", ...), ... }
+end
 
 -- Cualquier metodo de interfaz que no importe devuelve un objeto que tampoco
 -- hace nada, para poder encadenar llamadas (CreateFontString():SetText()...).
 local NULO
 NULO = setmetatable({}, { __index = function() return function() return NULO end end })
 
+-- Cada frame se acuerda de que eventos ha registrado. Antes DISPARAR llamaba
+-- a todos los manejadores para cualquier evento, y un RegisterEvent olvidado
+-- en el addon de verdad nunca se habria notado aqui.
 function CreateFrame(_, nombre)
+    local registro = { eventos = {} }
     local frame = setmetatable({}, { __index = function() return function() return NULO end end })
+    frame.RegisterEvent = function(self, evento) registro.eventos[evento] = true end
+    frame.UnregisterEvent = function(self, evento) registro.eventos[evento] = nil end
     frame.SetScript = function(self, script, fn)
-        if script == "OnEvent" then manejadores[#manejadores + 1] = fn end
+        if script == "OnEvent" then registro.onEvent = fn end
         rawset(self, "script_" .. script, fn)
     end
+    registro.frame = frame
+    marcos[#marcos + 1] = registro
     if nombre then _G[nombre] = frame end
     return frame
 end
 
 function DISPARAR(evento, ...)
-    for _, fn in ipairs(manejadores) do fn(nil, evento, ...) end
+    for _, registro in ipairs(marcos) do
+        if registro.eventos[evento] and registro.onEvent then
+            registro.onEvent(registro.frame, evento, ...)
+        end
+    end
 end
 
 function print(texto) mensajes[#mensajes + 1] = texto end
@@ -95,14 +114,14 @@ C_AuctionHouse = {
     GetItemSearchResultInfo = function(k, i) return (RESULTADOS[clave(k)] or {})[i] end,
     CancelAuction = function(id) apuntar("CancelAuction", id) end,
     PostItem = function(loc, duracion, cantidad, puja, precio)
-        apuntar("PostItem", loc.bag, loc.slot, duracion, cantidad, precio)
+        apuntar("PostItem", loc.bagID, loc.slotIndex, duracion, cantidad, precio)
         -- Como el juego: el objeto queda bloqueado mientras se publica.
-        local hueco = BOLSA[loc.bag .. ":" .. loc.slot]
+        local hueco = BOLSA[loc.bagID .. ":" .. loc.slotIndex]
         if hueco then hueco.isLocked = true end
         return NECESITA_CONFIRMAR
     end,
     ConfirmPostItem = function(loc, duracion, cantidad, puja, precio)
-        apuntar("ConfirmPostItem", loc.bag, loc.slot, duracion, cantidad, precio)
+        apuntar("ConfirmPostItem", loc.bagID, loc.slotIndex, duracion, cantidad, precio)
     end,
 }
 
@@ -133,7 +152,7 @@ C_Container = {
     GetContainerItemInfo = function(bolsa, hueco) return BOLSA[bolsa .. ":" .. hueco] end,
 }
 ItemLocation = {}
-function ItemLocation:CreateFromBagAndSlot(bolsa, hueco) return { bag = bolsa, slot = hueco } end
+function ItemLocation:CreateFromBagAndSlot(bolsa, hueco) return { bagID = bolsa, slotIndex = hueco } end
 """
 
 VIGILADOS = """
@@ -225,7 +244,16 @@ def cola(lua):
 
 
 def llamadas(lua):
-    return [tuple(c) for c in a_python(lua.globals().LLAMADAS)]
+    """Las llamadas protegidas registradas, leyendo cada una por su "n" para
+    no perder los argumentos nil de en medio (p.ej. duracion o puja)."""
+    tabla = lua.globals().LLAMADAS
+    total = int(lua.eval("#LLAMADAS"))
+    resultado = []
+    for i in range(1, total + 1):
+        llamada = tabla[i]
+        n = int(llamada["n"])
+        resultado.append(tuple(a_python(llamada[j]) for j in range(1, n + 1)))
+    return resultado
 
 
 # -- La regla del rival --------------------------------------------------------
@@ -265,6 +293,52 @@ def test_lo_tuyo_y_lo_de_tus_alts_no_cuenta_como_rival():
     assert es_nuestro(fila(dueno="Mbarval"))
     assert es_nuestro(fila(dueno="Mbarval-Sanguino"))
     assert not es_nuestro(fila(dueno="Extrano"))
+
+    # Sin duenos y sin banderas de propiedad tampoco es nuestro: una fila asi
+    # no puede colarse como "propia" por defecto.
+    sin_duenos = lua.table_from(
+        {
+            "auctionID": 1,
+            "buyoutAmount": 100,
+            "owners": [],
+            "containsOwnerItem": False,
+            "containsAccountItem": False,
+        },
+        recursive=True,
+    )
+    assert not es_nuestro(sin_duenos)
+
+
+# -- El arnes de eventos --------------------------------------------------------
+
+
+def test_disparar_solo_entrega_a_quien_registro_el_evento():
+    """Un RegisterEvent olvidado en el addon de verdad no debe pasar aqui
+    desapercibido: DISPARAR solo tiene que llegar a quien se apunto."""
+    lua = runtime()
+    lua.execute(
+        """
+        VISTOS = {}
+        local marco = CreateFrame("Frame")
+        marco:RegisterEvent("EVENTO_APUNTADO")
+        marco:SetScript("OnEvent", function(self, evento) VISTOS[#VISTOS + 1] = evento end)
+        """
+    )
+
+    lua.globals().DISPARAR("EVENTO_NO_APUNTADO")
+    assert a_python(lua.globals().VISTOS) == []
+
+    lua.globals().DISPARAR("EVENTO_APUNTADO")
+    assert a_python(lua.globals().VISTOS) == ["EVENTO_APUNTADO"]
+
+
+# -- Llamadas protegidas --------------------------------------------------------
+
+
+def test_llamadas_tolera_un_argumento_nulo_en_medio():
+    lua = runtime()
+    lua.execute('C_AuctionHouse.PostItem({bagID = 0, slotIndex = 3}, nil, 1, nil, 500)')
+    assert llamadas(lua) == [("PostItem", 0, 3, None, 1, 500)]
 
 
 def test_el_toc_carga_los_ficheros_en_orden():
