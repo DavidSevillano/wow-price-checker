@@ -306,12 +306,33 @@ end
 --  La tecla
 -- ---------------------------------------------------------------------------
 
--- Hace UNA accion y devuelve cual ("buscar"), o nil si no habia nada que hacer.
+local function primeraPorCancelar()
+    for _, e in ipairs(cola()) do
+        if e.estado == "cancelar" then
+            return e
+        end
+    end
+    return nil
+end
+
+-- Hace UNA accion y devuelve cual ("buscar", "cancelar"), o nil si no habia
+-- nada que hacer. Nunca llama a mas de una funcion protegida.
 function R.Siguiente()
     local hecho = nil
-    if casaAbierta() and not buscadoEnEstaVisita and subastasListas() then
-        empezarBusqueda()
-        hecho = "buscar"
+    if casaAbierta() then
+        if not buscadoEnEstaVisita then
+            if subastasListas() then
+                empezarBusqueda()
+                hecho = "buscar"
+            end
+        elseif not buscando() then
+            local e = primeraPorCancelar()
+            if e then
+                C_AuctionHouse.CancelAuction(e.auctionID)
+                e.estado = "cancelando"
+                hecho = "cancelar"
+            end
+        end
     end
     R.refrescarPanel()
     return hecho
@@ -328,6 +349,7 @@ frame:RegisterEvent("ITEM_SEARCH_RESULTS_UPDATED")
 frame:RegisterEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
 frame:RegisterEvent("OWNED_AUCTIONS_UPDATED")
 frame:RegisterEvent("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED")
+frame:RegisterEvent("AUCTION_CANCELED")
 
 frame:SetScript("OnEvent", function(_, evento, arg1)
     if evento == "AUCTION_HOUSE_SHOW" then
@@ -349,6 +371,13 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
         -- estaba en curso.
         esperando = nil
         lanzarSiguiente()
+    elseif evento == "AUCTION_CANCELED" then
+        -- arg1 es el id de la subasta. El exportador apunta la cancelacion por
+        -- su cuenta, con su propio frame.
+        local e = buscarEntrada(arg1)
+        if e and (e.estado == "cancelando" or e.estado == "cancelar") then
+            e.estado = "devuelta"
+        end
     end
     R.refrescarPanel()
 end)
