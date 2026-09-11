@@ -416,3 +416,17 @@ items:
 """
     with pytest.raises(ConfigError, match="'repostear' solo admite true o false"):
         load_config(write(tmp_path, texto))
+
+
+def test_repostear_nulo_sigue_a_avisar_undercut(tmp_path):
+    texto = """
+region: eu
+items:
+  - name: "Patron"
+    max_price: 100
+    avisar_undercut: false
+    repostear:
+"""
+    config = load_config(write(tmp_path, texto))
+
+    assert config.items[0].se_repostea is False

@@ -268,11 +268,7 @@ def _parse_items(value: Any) -> tuple[ItemRule, ...]:
                 avisar_undercut=_parse_bool(
                     entry.get("avisar_undercut"), name, "avisar_undercut", True
                 ),
-                repostear=(
-                    None
-                    if entry.get("repostear") is None
-                    else _parse_bool(entry.get("repostear"), name, "repostear", True)
-                ),
+                repostear=_parse_optional_bool(entry.get("repostear"), name, "repostear"),
             )
         )
 
@@ -308,6 +304,12 @@ def _parse_bool(value: Any, item_name: str, campo: str, por_defecto: bool) -> bo
             f"(he encontrado {value!r})."
         )
     return value
+
+
+def _parse_optional_bool(value: Any, item_name: str, campo: str) -> bool | None:
+    if value is None:
+        return None
+    return _parse_bool(value, item_name, campo, True)
 
 
 def _parse_price_table(value: Any, item_name: str) -> Mapping[int, int]:
