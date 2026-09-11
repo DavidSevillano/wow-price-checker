@@ -248,6 +248,7 @@ local function prepararBusqueda()
             else
                 -- Un posteo del que no llego respuesta vuelve a la fila.
                 e.estado = "devuelta"
+                e.dudosa = nil
                 local grupo = anadirAGrupo(e.itemKey)
                 grupo.devueltas[#grupo.devueltas + 1] = e
             end
@@ -565,11 +566,21 @@ local function primeraPorCancelar()
     return nil
 end
 
+local function hayDudosa(clave)
+    for _, e in ipairs(cola()) do
+        if e.estado == "posteando" and e.dudosa and claveObjeto(e.itemID, e.ilvl) == clave then
+            return true
+        end
+    end
+    return false
+end
+
 -- La primera devuelta con el precio al dia en esta visita y una copia libre y
 -- vendible en la bolsa, y donde esta esa copia.
 local function paraPostear()
     for _, e in ipairs(cola()) do
-        if e.estado == "devuelta" and repasadas[e.auctionID] and e.precio then
+        if e.estado == "devuelta" and repasadas[e.auctionID] and e.precio
+            and not hayDudosa(claveObjeto(e.itemID, e.ilvl)) then
             local sitio = nil
             enLaBolsa(e.itemID, e.ilvl, function(bolsa, hueco, info)
                 if not info.isLocked and sePuedeVender(bolsa, hueco) then
@@ -666,10 +677,15 @@ function R.Siguiente()
                     end
                     C_AuctionHouse.ConfirmPostItem(c.sitio, c.duracion, 1, nil, c.precio)
                     hecho = "confirmar"
+                elseif e and e.estado == "posteando" then
+                    -- Si no se confirma, la entrada se queda "posteando": la
+                    -- busqueda siguiente decide (la crease el juego aunque se
+                    -- perdiera el aviso, o no), en vez de darla por libre aqui.
+                    -- No se sabe si llego a crearse (el aviso de Blizzard pudo
+                    -- aceptarse). Hasta la busqueda siguiente no se postea otra
+                    -- copia de ese objeto: su subasta se confundiria con esta.
+                    e.dudosa = true
                 end
-                -- Si no se confirma, la entrada se queda "posteando": la
-                -- busqueda siguiente decide (la crease el juego aunque se
-                -- perdiera el aviso, o no), en vez de darla por libre aqui.
                 cerrarAvisoDePrecio()
             end
         elseif not buscadoEnEstaVisita then
@@ -714,6 +730,11 @@ function R.Siguiente()
                             ilvl = d.ilvl,
                         }
                     end
+                    -- Pasado el margen no llega ningun evento: se refresca a mano
+                    -- para que el boton deje de decir "Posteando...".
+                    C_Timer.After(SEGUNDOS_SIN_RESPUESTA, function()
+                        R.refrescarPanel()
+                    end)
                     hecho = "postear"
                 end
             end
@@ -795,7 +816,7 @@ function R.Estado()
         if primeraPorCancelar() then
             return ("Cancelar (%s)"):format(contarCancelables())
         end
-        if paraPostear() then
+        if paraPostear() and not hayReciente("posteando", "posteandoEn") then
             return "Postear"
         end
         if hayReciente("cancelando", "cancelandoEn") then

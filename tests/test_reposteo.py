@@ -1931,6 +1931,7 @@ def test_una_marca_de_otra_visita_al_buzon_no_olvida_de_golpe():
     lua.globals().BUZON_ABIERTO = False
     lua.globals().DISPARAR("MAIL_CLOSED")
     lua.globals().RELOJ = lua.globals().RELOJ + 3600
+    lua.globals().AHORA = lua.globals().AHORA + 3600
     abrir_buzon(lua)
     lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
 
@@ -2005,3 +2006,55 @@ def test_el_buzon_programa_una_sola_revision():
     lua.globals().DISPARAR("BAG_UPDATE_DELAYED")
     lua.globals().DISPARAR("BAG_UPDATE_DELAYED")
     assert lua.eval("#TEMPORIZADORES") == n
+
+
+def test_una_confirmacion_descartada_no_hace_olvidar_la_otra_copia():
+    lua = runtime()
+    devolver(lua, 10, 12)
+    en_la_bolsa(lua, 3, 4)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+    assert pulsar(lua) == "postear"
+
+    # Se ordena la bolsa: las grebas pasan a los huecos 5 y 6.
+    en_la_bolsa(lua, 5, 6)
+    assert pulsar(lua) is None  # se descarta la confirmacion
+    lua.globals().NECESITA_CONFIRMAR = False
+    lua.globals().RELOJ = lua.globals().RELOJ + 11
+
+    # No se sabe si la primera llego a crearse: la otra copia espera.
+    assert pulsar(lua) is None
+    assert estado(lua) == "Cierra y abre la casa para repasar precios"
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    assert sorted(e["auctionID"] for e in cola(lua)) == [10, 12]
+    assert pulsar(lua) == "postear"
+
+
+def test_cerrar_la_casa_con_una_confirmacion_pendiente_deja_que_decida_la_busqueda():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+    assert pulsar(lua) == "postear"
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    assert [e["estado"] for e in cola(lua)] == ["posteando"]
+
+    lua.execute('BOLSA["0:3"].isLocked = false')  # no llego a crearse
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    detectar(lua)
+    assert [e["estado"] for e in cola(lua)] == ["devuelta"]
+
+
+def test_mientras_espera_a_que_se_cree_un_posteo_el_panel_no_dice_postear():
+    lua = runtime()
+    devolver(lua, 10, 12)
+    en_la_bolsa(lua, 3, 4)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().CREAR_SUBASTA = False
+    assert pulsar(lua) == "postear"
+
+    assert estado(lua) == "Posteando..."
