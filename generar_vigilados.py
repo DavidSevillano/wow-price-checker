@@ -52,7 +52,7 @@ def duracion_de(listing_hours: int) -> int:
     return DURACIONES[listing_hours]
 
 
-def _se_repostea(regla: ItemRule) -> bool:
+def _entra_en_vigilados(regla: ItemRule) -> bool:
     """Si `regla` tiene que entrar en el fichero que lee el addon.
 
     Lo dice `repostear` en config.yaml, que sin valor sigue a `avisar_undercut`:
@@ -68,7 +68,7 @@ def objetos_a_repostear(reglas: Mapping[int, ItemRule]) -> dict[int, str]:
     return {
         item_id: regla.name
         for item_id, regla in sorted(reglas.items())
-        if _se_repostea(regla)
+        if _entra_en_vigilados(regla)
     }
 
 
@@ -133,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     cache.save()
 
     objetos = objetos_a_repostear(reglas)
-    esperados = {r.name for r in config.items if _se_repostea(r)}
+    esperados = {r.name for r in config.items if _entra_en_vigilados(r)}
     faltan = esperados - set(objetos.values())
     if faltan:
         log.error(

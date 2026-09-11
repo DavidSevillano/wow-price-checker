@@ -34,6 +34,16 @@ items:
     repostear: true
 """
 
+CONFIG_UNDERCUT_SIN_REPOSTEO = """
+region: eu
+items:
+  - name: "Grebas"
+    max_price: 100
+  - name: "Montura"
+    max_price: 100
+    repostear: false
+"""
+
 
 def test_la_duracion_sale_de_listing_hours():
     assert duracion_de(12) == 1
@@ -98,17 +108,18 @@ def test_el_fichero_del_repositorio_esta_al_dia_con_config_yaml():
     assert vigilados.duracion == duracion_de(config.settings.listing_hours)
 
 
-def test_credenciales_invalidas_no_rompen_con_traceback(tmp_path, monkeypatch):
-    """Un fallo de credenciales debe parar limpio, no reventar con traceback."""
+def _ejecutar_main(tmp_path, monkeypatch, config_text, resolver):
+    """Llama a generar_vigilados.main() sobre un config.yaml de prueba.
+
+    Parchea `load_dotenv` (no hace falta leer un .env real) y `resolve_item_ids`
+    con `resolver`, escribe `config_text` como config.yaml en `tmp_path` y
+    devuelve (codigo, salida) para que cada test compruebe lo que le importa.
+    """
     monkeypatch.setattr(generar_vigilados, "load_dotenv", lambda *a, **k: None)
-
-    def _falla(client, config, cache):
-        raise BlizzardAuthError("credenciales invalidas")
-
-    monkeypatch.setattr(generar_vigilados, "resolve_item_ids", _falla)
+    monkeypatch.setattr(generar_vigilados, "resolve_item_ids", resolver)
 
     config_path = tmp_path / "config.yaml"
-    config_path.write_text(CONFIG_MINIMO, encoding="utf-8")
+    config_path.write_text(config_text, encoding="utf-8")
     salida = tmp_path / "Vigilados.lua"
 
     codigo = generar_vigilados.main(
@@ -118,6 +129,16 @@ def test_credenciales_invalidas_no_rompen_con_traceback(tmp_path, monkeypatch):
             "--salida", str(salida),
         ]
     )
+    return codigo, salida
+
+
+def test_credenciales_invalidas_no_rompen_con_traceback(tmp_path, monkeypatch):
+    """Un fallo de credenciales debe parar limpio, no reventar con traceback."""
+
+    def _falla(client, config, cache):
+        raise BlizzardAuthError("credenciales invalidas")
+
+    codigo, salida = _ejecutar_main(tmp_path, monkeypatch, CONFIG_MINIMO, _falla)
 
     assert codigo == generar_vigilados.EXIT_ERROR
     assert not salida.exists()
@@ -127,50 +148,45 @@ def test_falta_un_repostear_sin_undercut_no_escribe_nada_y_avisa(tmp_path, monke
     """Un objeto con `repostear: true` y `avisar_undercut: false` sin id
     resuelto debe avisar igual: no lleva undercut, pero si tiene que repostearse.
     """
-    monkeypatch.setattr(generar_vigilados, "load_dotenv", lambda *a, **k: None)
 
     def _resuelve_a_medias(client, config, cache):
         # Falta "Receta": simula que no se ha podido identificar su id.
         return {1: ItemRule(name="Grebas", max_price=100)}
 
-    monkeypatch.setattr(generar_vigilados, "resolve_item_ids", _resuelve_a_medias)
-
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(CONFIG_REPOSTEO_SIN_UNDERCUT, encoding="utf-8")
-    salida = tmp_path / "Vigilados.lua"
-
-    codigo = generar_vigilados.main(
-        [
-            "--config", str(config_path),
-            "--state-dir", str(tmp_path / "estado"),
-            "--salida", str(salida),
-        ]
+    codigo, salida = _ejecutar_main(
+        tmp_path, monkeypatch, CONFIG_REPOSTEO_SIN_UNDERCUT, _resuelve_a_medias
     )
 
     assert codigo == generar_vigilados.EXIT_ERROR
     assert not salida.exists()
 
 
+def test_repostear_false_no_exige_id_resuelto(tmp_path, monkeypatch):
+    """Un objeto con `repostear: false` no tiene que estar en Vigilados.lua,
+    asi que no debe exigirse que se resuelva su id.
+    """
+
+    def _resuelve_a_medias(client, config, cache):
+        # Falta "Montura": no hace falta resolverla, porque no se repostea.
+        return {1: ItemRule(name="Grebas", max_price=100)}
+
+    codigo, salida = _ejecutar_main(
+        tmp_path, monkeypatch, CONFIG_UNDERCUT_SIN_REPOSTEO, _resuelve_a_medias
+    )
+
+    assert codigo == generar_vigilados.EXIT_OK
+    assert salida.exists()
+
+
 def test_un_objeto_no_resuelto_no_escribe_nada_y_avisa(tmp_path, monkeypatch):
     """Si falta el id de un objeto, el script no debe escribir un fichero incompleto."""
-    monkeypatch.setattr(generar_vigilados, "load_dotenv", lambda *a, **k: None)
 
     def _resuelve_a_medias(client, config, cache):
         # Falta "Otro": simula que no se ha podido identificar su id.
         return {1: ItemRule(name="Grebas", max_price=100)}
 
-    monkeypatch.setattr(generar_vigilados, "resolve_item_ids", _resuelve_a_medias)
-
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(CONFIG_MINIMO, encoding="utf-8")
-    salida = tmp_path / "Vigilados.lua"
-
-    codigo = generar_vigilados.main(
-        [
-            "--config", str(config_path),
-            "--state-dir", str(tmp_path / "estado"),
-            "--salida", str(salida),
-        ]
+    codigo, salida = _ejecutar_main(
+        tmp_path, monkeypatch, CONFIG_MINIMO, _resuelve_a_medias
     )
 
     assert codigo == generar_vigilados.EXIT_ERROR
