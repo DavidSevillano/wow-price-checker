@@ -1164,6 +1164,14 @@ def test_si_el_objeto_cambia_de_hueco_antes_de_confirmar_no_se_confirma():
     )
     assert pulsar(lua) is None
     assert "ConfirmPostItem" not in [c[0] for c in llamadas(lua)]
+    # Se descarto la confirmacion, pero la entrada sigue "posteando": lo
+    # decide la busqueda siguiente (I-2).
+    assert [e["estado"] for e in cola(lua)] == ["posteando"]
+    assert pulsar(lua) is None
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])  # SUBASTAS no tiene nada a ese precio
+    assert [e["estado"] for e in cola(lua)] == ["devuelta"]
 
     assert pulsar(lua) == "postear"
     assert llamadas(lua)[-1][:3] == ("PostItem", 0, 4)
@@ -1670,7 +1678,7 @@ def test_si_la_repusiste_a_mano_se_olvida_al_abrir_el_buzon():
     lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
     assert len(cola(lua)) == 1  # primera vez que falta: aun no se olvida
 
-    lua.globals().AHORA = lua.globals().AHORA + 4
+    lua.globals().RELOJ = lua.globals().RELOJ + 4
     lua.globals().VENCER_TEMPORIZADORES()
     assert cola(lua) == []
 
@@ -1700,7 +1708,7 @@ def test_lo_devuelto_que_ya_no_esta_ni_en_el_buzon_ni_en_la_bolsa_se_olvida():
     lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
     assert len(cola(lua)) == 1
 
-    lua.globals().AHORA = lua.globals().AHORA + 4
+    lua.globals().RELOJ = lua.globals().RELOJ + 4
     lua.globals().VENCER_TEMPORIZADORES()
     assert cola(lua) == []
 
@@ -1877,7 +1885,7 @@ def test_no_olvida_lo_que_llega_a_la_bolsa_poco_despues():
     lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
 
     en_la_bolsa(lua, 3)
-    lua.globals().AHORA = lua.globals().AHORA + 4
+    lua.globals().RELOJ = lua.globals().RELOJ + 4
     lua.globals().VENCER_TEMPORIZADORES()
 
     assert len(cola(lua)) == 1
@@ -1888,7 +1896,7 @@ def test_con_el_buzon_cerrado_no_olvida_nada():
     devolver(lua, 10)
     lua.globals().AHORA = lua.globals().AHORA + 120
     lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
-    lua.globals().AHORA = lua.globals().AHORA + 4
+    lua.globals().RELOJ = lua.globals().RELOJ + 4
     lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
     lua.globals().VENCER_TEMPORIZADORES()
 
@@ -1907,3 +1915,93 @@ def test_una_subasta_creada_mucho_despues_no_cierra_un_posteo_viejo():
     lua.globals().DISPARAR("AUCTION_HOUSE_AUCTION_CREATED", 7777)  # un posteo a mano de otra cosa
 
     assert len(cola(lua)) == 1
+
+
+# -- Lo que no sobrevive a una visita, y lo que no se duplica -----------------
+
+
+def test_una_marca_de_otra_visita_al_buzon_no_olvida_de_golpe():
+    """La marca de que algo falta no se guarda: es de esta visita al buzon."""
+    lua = runtime()
+    devolver(lua, 10)
+    lua.globals().AHORA = lua.globals().AHORA + 120
+    abrir_buzon(lua)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")  # marca que falta, en esta visita
+
+    lua.globals().BUZON_ABIERTO = False
+    lua.globals().DISPARAR("MAIL_CLOSED")
+    lua.globals().RELOJ = lua.globals().RELOJ + 3600
+    abrir_buzon(lua)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+
+    assert len(cola(lua)) == 1
+
+
+def test_aceptar_sin_aviso_de_creada_no_postea_otra_copia():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3, 4)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+
+    assert pulsar(lua) == "postear"
+
+    # Se acepta desde el aviso de Blizzard, pero el aviso de creacion se pierde.
+    lua.execute('BOLSA["0:3"] = nil')
+    assert pulsar(lua) is None
+    assert pulsar(lua) is None
+    assert [c[0] for c in llamadas(lua)].count("PostItem") == 1
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    poner(lua, "SUBASTAS", [mia(60, 90_000)])  # la que se creo al aceptar
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    assert cola(lua) == []
+    assert pulsar(lua) is None
+
+
+def test_no_postea_otra_mientras_espera_a_que_se_cree_la_anterior():
+    lua = runtime()
+    devolver(lua, 10, 12)
+    en_la_bolsa(lua, 3, 4)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().CREAR_SUBASTA = False
+
+    assert pulsar(lua) == "postear"
+    assert pulsar(lua) is None
+    assert [c[0] for c in llamadas(lua)].count("PostItem") == 1
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 11
+    assert pulsar(lua) == "postear"
+    assert [c[0] for c in llamadas(lua)].count("PostItem") == 2
+
+
+def test_un_posteo_creado_sin_aviso_y_ya_vendido_tambien_sale():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().CREAR_SUBASTA = False
+    assert pulsar(lua) == "postear"
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    poner(lua, "SUBASTAS", [mia(60, 90_000, status=1)])  # se creo y ya se vendio
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    assert cola(lua) == []
+
+
+def test_el_buzon_programa_una_sola_revision():
+    lua = runtime()
+    devolver(lua, 10)
+    lua.globals().AHORA = lua.globals().AHORA + 120
+    abrir_buzon(lua)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+
+    n = lua.eval("#TEMPORIZADORES")
+    lua.globals().DISPARAR("BAG_UPDATE_DELAYED")
+    lua.globals().DISPARAR("BAG_UPDATE_DELAYED")
+    lua.globals().DISPARAR("BAG_UPDATE_DELAYED")
+    assert lua.eval("#TEMPORIZADORES") == n

@@ -187,18 +187,22 @@ local function prepararBusqueda()
         if info and info.auctionID and info.auctionID > maxIdVisto then
             maxIdVisto = info.auctionID
         end
-        -- status 0 es activa. 1 es vendida y pendiente de cobro: no se toca.
-        if info and info.status == 0 and (info.buyoutAmount or 0) > 0
+        -- status 0 es activa, 1 es vendida y pendiente de cobro. Las dos
+        -- prueban que el juego creo un posteo de la tecla, aunque no llegara
+        -- el aviso, pero solo la activa entra en la busqueda de undercuts.
+        if info and (info.status == 0 or info.status == 1) and (info.buyoutAmount or 0) > 0
             and itemKey and objetos[itemKey.itemID] then
-            activas[info.auctionID] = true
             local ilvl = (info.itemLink and GetDetailedItemLevelInfo(info.itemLink)) or itemKey.itemLevel
-            local grupo = anadirAGrupo(itemKey)
-            grupo.mias[#grupo.mias + 1] = {
-                auctionID = info.auctionID,
-                buyout = info.buyoutAmount,
-                itemID = itemKey.itemID,
-                ilvl = ilvl,
-            }
+            if info.status == 0 then
+                activas[info.auctionID] = true
+                local grupo = anadirAGrupo(itemKey)
+                grupo.mias[#grupo.mias + 1] = {
+                    auctionID = info.auctionID,
+                    buyout = info.buyoutAmount,
+                    itemID = itemKey.itemID,
+                    ilvl = ilvl,
+                }
+            end
             local clave = claveObjeto(itemKey.itemID, ilvl)
             nuevas[clave] = nuevas[clave] or {}
             table.insert(nuevas[clave], { id = info.auctionID, buyout = info.buyoutAmount })
@@ -464,6 +468,14 @@ local SEGUNDOS_PARA_QUE_LLEGUE_LA_CARTA = 60
 -- recogida a mano o por otro addon tarda un momento en llegar a la bolsa.
 local SEGUNDOS_FALTANDO = 3
 
+-- auctionID -> GetTime() de la primera vez que se vio faltar. No se guarda en
+-- la entrada a proposito: una marca de otra visita o sesion se saltaria la
+-- espera de arriba. Se reinicia al abrir el buzon.
+local faltan = {}
+
+-- Para no programar mas de una revision pendiente a la vez.
+local revisionProgramada = false
+
 -- Devueltas cuyo objeto ya no esta ni en el buzon ni en la bolsa (se vendio,
 -- se envio o se puso a mano): se olvidan, para que el boton no mande de la
 -- casa al buzon y vuelta. Solo con el buzon abierto y entero cargado, con
@@ -505,23 +517,26 @@ local function olvidarSinCarta()
             local clave = claveObjeto(e.itemID, e.ilvl)
             vistas[clave] = (vistas[clave] or 0) + 1
             if vistas[clave] > (cartas[clave] or 0) + copiasEnBolsa(e.itemID, e.ilvl) then
-                if not e.faltaEn then
-                    e.faltaEn = ahora
+                if not faltan[e.auctionID] then
+                    faltan[e.auctionID] = GetTime()
                     pendiente = true
-                elseif ahora - e.faltaEn >= SEGUNDOS_FALTANDO then
+                elseif GetTime() - faltan[e.auctionID] >= SEGUNDOS_FALTANDO then
+                    faltan[e.auctionID] = nil
                     table.remove(entradas, i)
                 else
                     pendiente = true
                 end
             else
-                e.faltaEn = nil
+                faltan[e.auctionID] = nil
             end
         end
     end
 
-    if pendiente then
+    if pendiente and not revisionProgramada then
+        revisionProgramada = true
         -- Se vuelve a mirar pasado el margen, llegue o no otro evento.
         C_Timer.After(SEGUNDOS_FALTANDO, function()
+            revisionProgramada = false
             olvidarSinCarta()
             R.refrescarPanel()
         end)
@@ -603,6 +618,37 @@ local function cerrarAvisoDePrecio()
     end
 end
 
+-- Segundos tras los que una cancelacion o un posteo sin respuesta se da por
+-- atascado: el boton deja de decir que espera y pide volver a buscar.
+local SEGUNDOS_SIN_RESPUESTA = 10
+
+local function hayReciente(estadoBuscado, campo)
+    for _, e in ipairs(cola()) do
+        if e.estado == estadoBuscado and e[campo]
+            and GetTime() - e[campo] < SEGUNDOS_SIN_RESPUESTA then
+            return true
+        end
+    end
+    return false
+end
+
+local function hayAtascada()
+    for _, e in ipairs(cola()) do
+        if e.estado == "cancelando" or e.estado == "posteando" then
+            local desde
+            if e.estado == "cancelando" then
+                desde = e.cancelandoEn
+            else
+                desde = e.posteandoEn
+            end
+            if not desde or GetTime() - desde >= SEGUNDOS_SIN_RESPUESTA then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 -- Hace UNA accion y devuelve cual ("buscar", "cancelar", "recoger", "postear",
 -- "confirmar"), o nil si no habia nada que hacer. Nunca llama a mas de una
 -- funcion protegida.
@@ -620,10 +666,10 @@ function R.Siguiente()
                     end
                     C_AuctionHouse.ConfirmPostItem(c.sitio, c.duracion, 1, nil, c.precio)
                     hecho = "confirmar"
-                elseif e and e.estado == "posteando" then
-                    -- No se confirma: vuelve a estar lista para postear.
-                    e.estado = "devuelta"
                 end
+                -- Si no se confirma, la entrada se queda "posteando": la
+                -- busqueda siguiente decide (la crease el juego aunque se
+                -- perdiera el aviso, o no), en vez de darla por libre aqui.
                 cerrarAvisoDePrecio()
             end
         elseif not buscadoEnEstaVisita then
@@ -645,7 +691,10 @@ function R.Siguiente()
                 end
             elseif listo then
                 local d, sitio = paraPostear()
-                if d then
+                -- Mientras un posteo espera a AUCTION_HOUSE_AUCTION_CREATED,
+                -- postear otro dejaria ambiguo a cual de los dos pertenece el
+                -- aviso cuando llegue.
+                if d and not hayReciente("posteando", "posteandoEn") then
                     local duracion = vigilados().duracion
                     -- La entrada sale de la cola cuando el juego crea la subasta
                     -- (AUCTION_HOUSE_AUCTION_CREATED), no al pedirlo: un posteo
@@ -724,37 +773,6 @@ local function sinConfirmar()
     for _, e in ipairs(cola()) do
         if e.estado == "cancelar" and not confirmadas[e.auctionID] then
             return true
-        end
-    end
-    return false
-end
-
--- Segundos tras los que una cancelacion o un posteo sin respuesta se da por
--- atascado: el boton deja de decir que espera y pide volver a buscar.
-local SEGUNDOS_SIN_RESPUESTA = 10
-
-local function hayReciente(estadoBuscado, campo)
-    for _, e in ipairs(cola()) do
-        if e.estado == estadoBuscado and e[campo]
-            and GetTime() - e[campo] < SEGUNDOS_SIN_RESPUESTA then
-            return true
-        end
-    end
-    return false
-end
-
-local function hayAtascada()
-    for _, e in ipairs(cola()) do
-        if e.estado == "cancelando" or e.estado == "posteando" then
-            local desde
-            if e.estado == "cancelando" then
-                desde = e.cancelandoEn
-            else
-                desde = e.posteandoEn
-            end
-            if not desde or GetTime() - desde >= SEGUNDOS_SIN_RESPUESTA then
-                return true
-            end
         end
     end
     return false
@@ -883,12 +901,8 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
         end)
     elseif evento == "AUCTION_HOUSE_CLOSED" then
         abiertaEn = nil
-        if confirmacion then
-            local e = buscarEntrada(confirmacion.auctionID)
-            if e and e.estado == "posteando" then
-                e.estado = "devuelta"
-            end
-        end
+        -- La entrada de una confirmacion pendiente se queda "posteando": la
+        -- busqueda siguiente decide, igual que en R.Siguiente (I-2).
         confirmacion = nil
         reiniciarBusqueda()
     elseif evento == "OWNED_AUCTIONS_UPDATED" then
@@ -938,6 +952,10 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
             end
         end
     elseif evento == "MAIL_SHOW" or evento == "MAIL_CLOSED" or evento == "MAIL_INBOX_UPDATE" then
+        if evento == "MAIL_SHOW" then
+            -- Una marca de otra visita al buzon no debe saltarse la espera.
+            faltan = {}
+        end
         -- Justo despues de recoger, la carta ya no esta y el objeto puede no
         -- haber llegado a la bolsa: ese momento no sirve para olvidar nada.
         if evento == "MAIL_INBOX_UPDATE" and not hayTomasRecientes() then
