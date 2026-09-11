@@ -248,7 +248,6 @@ local function prepararBusqueda()
             else
                 -- Un posteo del que no llego respuesta vuelve a la fila.
                 e.estado = "devuelta"
-                e.dudosa = nil
                 local grupo = anadirAGrupo(e.itemKey)
                 grupo.devueltas[#grupo.devueltas + 1] = e
             end
@@ -566,9 +565,13 @@ local function primeraPorCancelar()
     return nil
 end
 
-local function hayDudosa(clave)
+-- Si hay un posteo de ese objeto e ilvl esperando a saber si se creo. Hasta la
+-- busqueda siguiente no se postea otra copia: su subasta se confundiria con la
+-- de ese posteo y la busqueda podria dar por puesta una copia que sigue en la
+-- bolsa.
+local function hayPosteandoDe(clave)
     for _, e in ipairs(cola()) do
-        if e.estado == "posteando" and e.dudosa and claveObjeto(e.itemID, e.ilvl) == clave then
+        if e.estado == "posteando" and claveObjeto(e.itemID, e.ilvl) == clave then
             return true
         end
     end
@@ -580,7 +583,7 @@ end
 local function paraPostear()
     for _, e in ipairs(cola()) do
         if e.estado == "devuelta" and repasadas[e.auctionID] and e.precio
-            and not hayDudosa(claveObjeto(e.itemID, e.ilvl)) then
+            and not hayPosteandoDe(claveObjeto(e.itemID, e.ilvl)) then
             local sitio = nil
             enLaBolsa(e.itemID, e.ilvl, function(bolsa, hueco, info)
                 if not info.isLocked and sePuedeVender(bolsa, hueco) then
@@ -676,15 +679,18 @@ function R.Siguiente()
                         e.posteandoEn = GetTime()
                     end
                     C_AuctionHouse.ConfirmPostItem(c.sitio, c.duracion, 1, nil, c.precio)
+                    -- Pasado el margen no llega ningun evento: se refresca a mano
+                    -- para que el boton deje de decir "Posteando...".
+                    C_Timer.After(SEGUNDOS_SIN_RESPUESTA + 0.1, function()
+                        R.refrescarPanel()
+                    end)
                     hecho = "confirmar"
                 elseif e and e.estado == "posteando" then
                     -- Si no se confirma, la entrada se queda "posteando": la
                     -- busqueda siguiente decide (la crease el juego aunque se
                     -- perdiera el aviso, o no), en vez de darla por libre aqui.
                     -- No se sabe si llego a crearse (el aviso de Blizzard pudo
-                    -- aceptarse). Hasta la busqueda siguiente no se postea otra
-                    -- copia de ese objeto: su subasta se confundiria con esta.
-                    e.dudosa = true
+                    -- aceptarse).
                 end
                 cerrarAvisoDePrecio()
             end
@@ -732,7 +738,7 @@ function R.Siguiente()
                     end
                     -- Pasado el margen no llega ningun evento: se refresca a mano
                     -- para que el boton deje de decir "Posteando...".
-                    C_Timer.After(SEGUNDOS_SIN_RESPUESTA, function()
+                    C_Timer.After(SEGUNDOS_SIN_RESPUESTA + 0.1, function()
                         R.refrescarPanel()
                     end)
                     hecho = "postear"

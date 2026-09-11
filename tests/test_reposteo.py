@@ -1974,8 +1974,17 @@ def test_no_postea_otra_mientras_espera_a_que_se_cree_la_anterior():
     assert [c[0] for c in llamadas(lua)].count("PostItem") == 1
 
     lua.globals().RELOJ = lua.globals().RELOJ + 11
+    assert pulsar(lua) is None
+    assert estado(lua) == "Cierra y abre la casa para repasar precios"
+    assert [c[0] for c in llamadas(lua)].count("PostItem") == 1
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    lua.globals().CREAR_SUBASTA = True
+    lua.execute('BOLSA["0:3"].isLocked = false')  # el primer posteo no se creo
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    assert sorted(e["auctionID"] for e in cola(lua)) == [10, 12]
+    assert all(e["estado"] == "devuelta" for e in cola(lua))
     assert pulsar(lua) == "postear"
-    assert [c[0] for c in llamadas(lua)].count("PostItem") == 2
 
 
 def test_un_posteo_creado_sin_aviso_y_ya_vendido_tambien_sale():
@@ -2058,3 +2067,17 @@ def test_mientras_espera_a_que_se_cree_un_posteo_el_panel_no_dice_postear():
     assert pulsar(lua) == "postear"
 
     assert estado(lua) == "Posteando..."
+
+
+def test_el_boton_deja_de_decir_posteando_al_pasar_la_espera():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().CREAR_SUBASTA = False
+    assert pulsar(lua) == "postear"
+    assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Posteando..."
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 11
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Cierra y abre la casa para repasar precios"
