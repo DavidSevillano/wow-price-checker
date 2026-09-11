@@ -702,8 +702,9 @@ Lo que conviene saber:
   precios`.
 - La cola se guarda por personaje y sobrevive a `/reload`. Lo que lleve mas de
   48 horas desde que se detecto se descarta, aunque este en la bolsa.
-- Si vuelves a poner algo a mano, o lo vendes o lo envias, el addon se da
-  cuenta al buscar o al abrir el buzon y lo saca de la cola.
+- Si vuelves a poner algo a mano, o lo vendes o lo envias, el addon lo saca de
+  la cola la proxima vez que abras el buzon y vea que no esta ni alli ni en la
+  bolsa.
 - **Si cambias los objetos, `orden_personajes` o `listing_hours`**, regenera la
   lista del addon y vuelve a copiarlo (apartado 5.1):
 
