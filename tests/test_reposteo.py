@@ -129,6 +129,7 @@ SUBASTAS = {}
 RESULTADOS = {}
 SISTEMA_LISTO = true
 NECESITA_CONFIRMAR = false
+CREAR_SUBASTA = true
 
 C_AuctionHouse = {
     GetNumOwnedAuctions = function() return #SUBASTAS end,
@@ -152,10 +153,16 @@ C_AuctionHouse = {
             -- pedir confirmacion.
             AVISO_VISIBLE = "AUCTION_HOUSE_POST_WARNING"
         end
+        if not NECESITA_CONFIRMAR and CREAR_SUBASTA then
+            DISPARAR("AUCTION_HOUSE_AUCTION_CREATED", 5000 + #LLAMADAS)
+        end
         return NECESITA_CONFIRMAR
     end,
     ConfirmPostItem = function(loc, duracion, cantidad, puja, precio)
         apuntar("ConfirmPostItem", loc.bagID, loc.slotIndex, duracion, cantidad, precio)
+        if CREAR_SUBASTA then
+            DISPARAR("AUCTION_HOUSE_AUCTION_CREATED", 5000 + #LLAMADAS)
+        end
     end,
 }
 
@@ -1052,7 +1059,10 @@ def test_cancelar_va_antes_que_postear():
     lua = runtime()
     devolver(lua, 10)
     en_la_bolsa(lua, 3)
-    poner(lua, "SUBASTAS", [mia(20, 100_000)])
+    # Un id menor que el de la ya cancelada: una subasta distinta y mas
+    # antigua, no una posterior a la cancelacion, que confundiria al addon con
+    # una copia repuesta a mano.
+    poner(lua, "SUBASTAS", [mia(5, 100_000)])
     volver_a_la_casa(lua, [en_venta(999, 90_000)])
 
     assert pulsar(lua) == "cancelar"
@@ -1594,3 +1604,196 @@ def test_la_version_del_toc_es_la_del_addon():
     en_toc = re.search(r"^## Version: (.+)$", toc, re.MULTILINE).group(1).strip()
     en_lua = re.search(r'^local ADDON_VERSION = "(.+)"$', lua, re.MULTILINE).group(1)
     assert en_toc == en_lua == "1.15"
+
+
+# -- Lo que el juego confirma y lo que se repone por fuera --------------------
+
+
+def test_postear_deja_la_entrada_hasta_que_el_juego_crea_la_subasta():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().CREAR_SUBASTA = False
+
+    assert pulsar(lua) == "postear"
+    assert [e["estado"] for e in cola(lua)] == ["posteando"]
+    assert estado(lua) == "Posteando..."
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_AUCTION_CREATED", 5000)
+    assert cola(lua) == []
+
+
+def test_aceptar_en_el_aviso_de_blizzard_no_postea_otra_copia():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3, 4)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+    assert pulsar(lua) == "postear"
+
+    # Aceptar en el aviso de Blizzard publica la copia del hueco 3.
+    lua.execute('BOLSA["0:3"] = nil')
+    lua.globals().DISPARAR("AUCTION_HOUSE_AUCTION_CREATED", 5000)
+
+    assert cola(lua) == []
+    assert pulsar(lua) is None
+    assert [c[0] for c in llamadas(lua)] == ["PostItem"]
+    assert lua.globals().AVISO_VISIBLE is None
+
+
+def test_un_posteo_sin_respuesta_vuelve_a_la_fila_en_la_visita_siguiente():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().CREAR_SUBASTA = False
+    pulsar(lua)
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    lua.execute('BOLSA["0:3"].isLocked = false')  # el posteo no llego a hacerse
+    lua.globals().CREAR_SUBASTA = True
+    detectar(lua)
+
+    assert pulsar(lua) == "postear"
+    assert cola(lua) == []
+
+
+def test_si_la_repusiste_a_mano_sale_de_la_cola():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "SUBASTAS", [mia(50, 90_000)])  # puesta a mano con Auctionator
+    volver_a_la_casa(lua, [])
+
+    assert cola(lua) == []
+
+
+def test_otra_copia_puesta_antes_de_cancelar_no_cuenta_como_repuesta():
+    lua = runtime()
+    poner(lua, "SUBASTAS", [mia(10, 100_000), mia(12, 80_000)])
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    detectar(lua)
+    assert pulsar(lua) == "cancelar"
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+    poner(lua, "SUBASTAS", [mia(12, 80_000)])
+    lua.globals().CASA_ABIERTA = False
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    assert [e["auctionID"] for e in cola(lua)] == [10]
+    assert pulsar(lua) == "postear"
+
+
+def test_lo_devuelto_que_ya_no_esta_ni_en_el_buzon_ni_en_la_bolsa_se_olvida():
+    lua = runtime()
+    devolver(lua, 10)
+    lua.globals().AHORA = lua.globals().AHORA + 120
+    abrir_buzon(lua)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+
+    assert cola(lua) == []
+
+
+def test_no_olvida_lo_devuelto_si_la_carta_puede_no_haber_llegado():
+    lua = runtime()
+    devolver(lua, 10)
+    abrir_buzon(lua)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+
+    assert len(cola(lua)) == 1
+
+
+def test_no_olvida_lo_devuelto_con_el_buzon_a_medio_cargar():
+    lua = runtime()
+    devolver(lua, 10)
+    lua.globals().AHORA = lua.globals().AHORA + 120
+    lua.execute("GetInboxNumItems = function() return 0, 3 end")
+    abrir_buzon(lua)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+
+    assert len(cola(lua)) == 1
+
+
+def test_no_olvida_lo_devuelto_justo_despues_de_recogerlo():
+    lua = runtime()
+    devolver(lua, 10)
+    lua.globals().AHORA = lua.globals().AHORA + 120
+    poner(lua, "CORREO", [carta()])
+    abrir_buzon(lua)
+    assert pulsar(lua) == "recoger"
+
+    # La carta ya no esta y el objeto aun no ha llegado a la bolsa.
+    poner(lua, "CORREO", [])
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+
+    assert len(cola(lua)) == 1
+
+
+def test_una_carta_pedida_hace_rato_se_puede_volver_a_pedir():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    abrir_buzon(lua)
+    assert pulsar(lua) == "recoger"
+
+    # La bolsa estaba llena y el buzon no ha cambiado.
+    lua.globals().RELOJ = lua.globals().RELOJ + 5
+    assert pulsar(lua) == "recoger"
+
+
+def test_una_cancelacion_sin_respuesta_no_deja_el_panel_en_cancelando():
+    lua = runtime()
+    adelantadas(lua, 10)
+    pulsar(lua)
+    lua.globals().RELOJ = lua.globals().RELOJ + 11
+
+    assert estado(lua) == "Cierra y abre la casa para repasar precios"
+
+
+def test_un_posteo_sin_respuesta_no_deja_el_panel_en_posteando():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().CREAR_SUBASTA = False
+    pulsar(lua)
+    lua.globals().RELOJ = lua.globals().RELOJ + 11
+
+    assert estado(lua) == "Cierra y abre la casa para repasar precios"
+
+
+def test_la_cola_sobrevive_a_un_reload():
+    lua = runtime()
+    devolver(lua, 10)
+    guardado = a_python(lua.globals().WowAlertsExportDB)
+
+    otra = runtime()
+    # WoW carga SavedVariables despues de ejecutar los ficheros del addon.
+    poner(otra, "WowAlertsExportDB", guardado)
+    en_la_bolsa(otra, 3)
+    volver_a_la_casa(otra, [en_venta(999, 90_000)])
+
+    assert pulsar(otra) == "postear"
+    assert llamadas(otra)[-1][-1] == 90_000
+
+
+def test_con_las_ventanas_cerradas_el_panel_no_recalcula():
+    lua = runtime()
+    devolver(lua, 10)
+    abrir_buzon(lua)  # crea el boton
+    lua.globals().BUZON_ABIERTO = False
+    lua.globals().DISPARAR("MAIL_CLOSED")
+    lua.execute(
+        """
+        MIRADAS = 0
+        local original = C_Container.GetContainerItemInfo
+        C_Container.GetContainerItemInfo = function(...)
+            MIRADAS = MIRADAS + 1
+            return original(...)
+        end
+        """
+    )
+    lua.globals().DISPARAR("BAG_UPDATE_DELAYED")
+
+    assert lua.globals().MIRADAS == 0
