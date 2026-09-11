@@ -391,7 +391,9 @@ local function cartaPorRecoger()
                         end
                     end
 
-                    if devueltas > copiasEnBolsa(itemID, ilvl) + pedidas then
+                    -- Sin entradas de ese objeto no hace falta mirar la bolsa:
+                    -- con muchas cartas ajenas eso seria recorrerla por cada una.
+                    if devueltas > 0 and devueltas > copiasEnBolsa(itemID, ilvl) + pedidas then
                         return i, clave
                     end
                 end
@@ -405,13 +407,18 @@ end
 --  La tecla
 -- ---------------------------------------------------------------------------
 
--- La primera adelantada confirmada en esta visita que el juego deja cancelar.
--- CanCancelAuction se consulta solo si existe: una subasta con puja, por
--- ejemplo, no se puede cancelar y no debe gastar pulsaciones.
+-- Si esa entrada se puede cancelar ya: adelantada confirmada en esta visita y
+-- que el juego deja cancelar. CanCancelAuction se consulta solo si existe: una
+-- subasta con puja, por ejemplo, no se puede cancelar y no debe gastar
+-- pulsaciones.
+local function sePuedeCancelar(e)
+    return e.estado == "cancelar" and confirmadas[e.auctionID]
+        and (not C_AuctionHouse.CanCancelAuction or C_AuctionHouse.CanCancelAuction(e.auctionID))
+end
+
 local function primeraPorCancelar()
     for _, e in ipairs(cola()) do
-        if e.estado == "cancelar" and confirmadas[e.auctionID]
-            and (not C_AuctionHouse.CanCancelAuction or C_AuctionHouse.CanCancelAuction(e.auctionID)) then
+        if sePuedeCancelar(e) then
             return e
         end
     end
@@ -564,6 +571,26 @@ local function devueltaEnBolsa()
     return false
 end
 
+local function contarCancelables()
+    local n = 0
+    for _, e in ipairs(cola()) do
+        if sePuedeCancelar(e) then
+            n = n + 1
+        end
+    end
+    return n
+end
+
+-- Adelantadas que la busqueda de esta visita no ha podido confirmar.
+local function sinConfirmar()
+    for _, e in ipairs(cola()) do
+        if e.estado == "cancelar" and not confirmadas[e.auctionID] then
+            return true
+        end
+    end
+    return false
+end
+
 function R.Estado()
     if confirmacion then
         return "Confirmar posteo"
@@ -579,16 +606,16 @@ function R.Estado()
             return ("Buscando %s/%s..."):format(siguienteGrupo, #ordenGrupos)
         end
         if primeraPorCancelar() then
-            return ("Cancelar · quedan %s"):format(contar("cancelar"))
+            return ("Cancelar (%s)"):format(contarCancelables())
         end
         if paraPostear() then
-            return ("Postear · quedan %s"):format(contar("devuelta"))
+            return "Postear"
         end
         if contar("cancelando") > 0 then
             return "Cancelando..."
         end
-        if devueltaEnBolsa() then
-            -- Esta en la bolsa pero su precio no se ha podido repasar.
+        if sinConfirmar() or devueltaEnBolsa() then
+            -- Hay algo cuyo precio no se ha podido repasar en esta visita.
             return "Cierra y abre la casa para repasar precios"
         end
         if contar("devuelta") > 0 then

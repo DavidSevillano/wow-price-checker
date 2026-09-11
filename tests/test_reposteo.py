@@ -1265,6 +1265,8 @@ def test_con_la_casa_saturada_la_confirmacion_espera():
     lua.globals().SISTEMA_LISTO = False
 
     assert pulsar(lua) is None
+    assert a_python(lua.globals().OCULTADOS) == []
+    assert lua.eval("AVISO_VISIBLE") == "AUCTION_HOUSE_POST_WARNING"
     assert "ConfirmPostItem" not in [c[0] for c in llamadas(lua)]
     lua.globals().SISTEMA_LISTO = True
     assert pulsar(lua) == "confirmar"
@@ -1317,7 +1319,7 @@ def test_el_panel_dice_que_toca():
     assert estado(lua) == "Buscar undercuts"
 
     adelantadas(lua, 10, 12)
-    assert estado(lua) == "Cancelar · quedan 2"
+    assert estado(lua) == "Cancelar (2)"
 
 
 def test_mientras_busca_el_panel_lo_dice():
@@ -1369,7 +1371,7 @@ def test_en_la_casa_el_panel_dice_si_postear_o_ir_al_buzon():
     assert estado(lua) == "Recoge lo devuelto en el buzon"
 
     en_la_bolsa(lua, 3)
-    assert estado(lua) == "Postear · quedan 1"
+    assert estado(lua) == "Postear"
 
 
 def test_si_no_se_pudo_repasar_el_precio_el_panel_lo_dice():
@@ -1495,3 +1497,88 @@ def test_ninguna_pulsacion_llama_a_mas_de_una_funcion_protegida():
         "TakeInboxItem", "TakeInboxItem",
         "PostItem", "ConfirmPostItem", "PostItem", "ConfirmPostItem",
     ]
+
+
+def test_si_el_aviso_ya_no_esta_abierto_no_se_intenta_cerrar():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+    assert pulsar(lua) == "postear"
+
+    # El jugador ha cerrado el aviso a mano.
+    lua.globals().AVISO_VISIBLE = None
+    # Se ordena la bolsa: en el hueco 3 queda otra cosa, y la confirmacion se
+    # descarta.
+    poner(
+        lua,
+        "BOLSA",
+        {"0:3": {"itemID": 999, "hyperlink": "[Otra]ilvl311", "isLocked": False}},
+    )
+    assert pulsar(lua) is None
+    assert a_python(lua.globals().OCULTADOS) == []
+
+
+def test_mientras_se_cancela_el_panel_lo_dice():
+    lua = runtime()
+    adelantadas(lua, 10)
+    assert pulsar(lua) == "cancelar"
+    assert estado(lua) == "Cancelando..."
+
+
+def test_si_el_boton_estaba_en_el_buzon_y_la_casa_carga_tarde_se_muda():
+    lua = runtime()
+    abrir_buzon(lua)
+    assert lua.eval("WowAlertsReposteoBoton:GetParent() == MailFrame")
+
+    lua.globals().BUZON_ABIERTO = False
+    lua.globals().DISPARAR("MAIL_CLOSED")
+
+    original = lua.globals().AuctionHouseFrame
+    lua.globals().AuctionHouseFrame = None
+    lua.globals().CASA_ABIERTA = True
+    lua.globals().DISPARAR("AUCTION_HOUSE_SHOW")
+    lua.globals().AuctionHouseFrame = original
+
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    assert lua.eval("WowAlertsReposteoBoton:GetParent() == AuctionHouseFrame")
+
+
+def test_si_la_busqueda_no_confirmo_una_adelantada_el_panel_pide_repasar():
+    lua = runtime()
+    adelantadas(lua, 10)
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+
+    abrir_casa(lua)
+    assert pulsar(lua) == "buscar"
+    lua.globals().VENCER_TEMPORIZADORES()  # la respuesta no llega
+
+    assert estado(lua) == "Cierra y abre la casa para repasar precios"
+
+
+def test_el_recuento_de_cancelar_solo_cuenta_lo_que_se_puede_cancelar():
+    lua = runtime()
+    adelantadas(lua, 10, 12)
+    lua.execute("C_AuctionHouse.CanCancelAuction = function(id) return id ~= 10 end")
+
+    assert estado(lua) == "Cancelar (1)"
+
+
+def test_en_el_buzon_no_mira_la_bolsa_por_cartas_ajenas():
+    lua = runtime()
+    lua.execute(
+        """
+        MIRADAS = 0
+        local original = C_Container.GetContainerItemInfo
+        C_Container.GetContainerItemInfo = function(bolsa, hueco)
+            MIRADAS = MIRADAS + 1
+            return original(bolsa, hueco)
+        end
+        """
+    )
+    poner(lua, "CORREO", [carta(), carta(), carta()])
+    abrir_buzon(lua)
+
+    assert pulsar(lua) is None
+    assert lua.eval("MIRADAS") == 0
