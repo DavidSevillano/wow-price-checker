@@ -16,6 +16,54 @@ local function vigilados()
     return WowAlertsVigilados or { objetos = {}, personajes = {}, duracion = 1 }
 end
 
+-- Traza de cada pulsacion y de lo que responde el juego, para averiguar por
+-- que una pulsacion no hace nada. No sale en el chat: se guarda en disco y se
+-- lee tras un /reload.
+local TRAZA = true
+
+-- Como string.format con %s, pero un nil o un fallo no rompe nada: la traza
+-- nunca debe romper lo que esta contando.
+local function formatear(texto, ...)
+    local n = select("#", ...)
+    local valores = { ... }
+    for i = 1, n do
+        valores[i] = tostring(valores[i])
+    end
+    local ok, linea = pcall(string.format, texto, unpack(valores, 1, n))
+    return ok and linea or texto
+end
+
+-- Lineas de traza que se guardan en WowAlertsExportDB.trazaReposteo, para
+-- leerlas desde fuera del juego tras un /reload.
+local LINEAS_GUARDADAS = 500
+
+local function traza(texto, ...)
+    if not TRAZA then
+        return
+    end
+    local linea = formatear(texto, ...)
+    WowAlertsExportDB = WowAlertsExportDB or {}
+    local guardadas = WowAlertsExportDB.trazaReposteo or {}
+    WowAlertsExportDB.trazaReposteo = guardadas
+    local hora = (date and date("%H:%M:%S")) or ""
+    guardadas[#guardadas + 1] = formatear("%s %s %s", hora, ("%.1f"):format(GetTime()), linea)
+    while #guardadas > LINEAS_GUARDADAS do
+        table.remove(guardadas, 1)
+    end
+end
+
+local function oro(cobre)
+    if not cobre then
+        return "?"
+    end
+    return tostring(math.floor(cobre / 10000)) .. "g"
+end
+
+-- Se definen mas abajo, con las funciones de la bolsa.
+local resumenCola
+local copiasEnBolsa
+local comprobarFin
+
 -- ---------------------------------------------------------------------------
 --  Quien te adelanta
 -- ---------------------------------------------------------------------------
@@ -125,6 +173,13 @@ local repasadas = {}     -- auctionID -> true: devueltas con el precio al dia
 -- Cancelar cuesta el deposito, asi que no se cancela con datos de otra visita.
 local confirmadas = {}
 
+-- auctionID -> GetTime() de la ultima busqueda que la vio sin nadie delante.
+-- Sobrevive a cerrar la casa: al volver a repostear un momento despues no hace
+-- falta mirar otra vez esos objetos, solo lo devuelto. Con un /reload se
+-- pierde, y entonces se busca todo.
+local vistaLimpiaEn = {}
+local SEGUNDOS_VISTA_LIMPIA = 300
+
 -- El mayor id de subasta propia visto en la ultima busqueda. Los ids crecen
 -- con el tiempo: sirve solo para reconocer, al buscar, un posteo de la tecla
 -- cuyo aviso de creacion nunca llego, comparando con el id apuntado al postear.
@@ -132,15 +187,44 @@ local maxIdVisto = 0
 
 -- La lista de subastas propias llega por partes, y la primera respuesta tras
 -- abrir la casa viene vacia (ver WowAlertsExport.lua). Buscar con la lista a
--- medias borraria de la cola lo que no apareciera, asi que hace falta haber
--- recibido la lista despues de abrir y que la casa lleve unos segundos abierta.
+-- medias borraria de la cola lo que no apareciera. Al abrir se pide la lista
+-- (la peticion del exportador suele descartarse, porque la casa aun esta
+-- ocupada) y, como Auctionator, se fia de lo que llegue despues de pedirla,
+-- en cuanto lleva un momento sin cambiar. Si llega vacia no se sabe si es de
+-- verdad, y se espera a que la casa lleve unos segundos abierta.
 local SEGUNDOS_PARA_FIARSE = 5
-local abiertaEn = nil     -- GetTime() al abrir la casa
-local recibidasEn = nil   -- GetTime() de la ultima OWNED_AUCTIONS_UPDATED
+local SEGUNDOS_DE_CALMA = 0.5
+local abiertaEn = nil       -- GetTime() al abrir la casa
+local recibidasEn = nil     -- GetTime() de la ultima OWNED_AUCTIONS_UPDATED
+local listaPedidaEn = nil   -- GetTime() de la ultima peticion propia de la lista
+local faltaPedirLista = false
+-- En el juego la lista llega varias veces por segundo tras abrir. Si llega dos
+-- veces seguidas con las mismas subastas, y no vacia, ya esta entera.
+local cuentaAnterior = nil
+local listaRepetida = false
 
 local function subastasListas()
-    return abiertaEn ~= nil and recibidasEn ~= nil and recibidasEn >= abiertaEn
-        and GetTime() - abiertaEn >= SEGUNDOS_PARA_FIARSE
+    if abiertaEn == nil or recibidasEn == nil or recibidasEn < abiertaEn then
+        return false
+    end
+    if GetTime() - abiertaEn >= SEGUNDOS_PARA_FIARSE or listaRepetida then
+        return true
+    end
+    return listaPedidaEn ~= nil and recibidasEn >= listaPedidaEn
+        and C_AuctionHouse.GetNumOwnedAuctions() > 0
+        and GetTime() - recibidasEn >= SEGUNDOS_DE_CALMA
+end
+
+-- Pide la lista si falta y la casa la admite ahora; si no, se reintenta con
+-- AUCTION_HOUSE_THROTTLED_SYSTEM_READY.
+local function pedirLista()
+    if not faltaPedirLista or not casaAbierta() or not C_AuctionHouse.IsThrottledMessageSystemReady() then
+        return
+    end
+    faltaPedirLista = false
+    listaPedidaEn = GetTime()
+    traza("pido la lista de tus subastas")
+    C_AuctionHouse.QueryOwnedAuctions({})
 end
 
 -- Si la respuesta a una busqueda no llega en este tiempo (mensaje perdido,
@@ -222,19 +306,36 @@ local function prepararBusqueda()
         return false
     end
 
+    -- Cualquier subasta de ese objeto posterior a `tope`, a cualquier precio.
+    local function hayUnaNueva(clave, tope)
+        for _, s in ipairs(nuevas[clave] or {}) do
+            if s.id > tope and not usadas[s.id] then
+                usadas[s.id] = true
+                return true
+            end
+        end
+        return false
+    end
+
     local ahora = time()
     local entradas = cola()
+    local porRepasar = {}   -- devueltas que siguen en la cola, de la mas nueva a la mas vieja
     for i = #entradas, 1, -1 do
         local e = entradas[i]
         if ahora - (e.desde or 0) > HORAS_DE_VIDA * 3600 then
+            traza("olvido %s: lleva mas de %s h en la cola", e.auctionID, HORAS_DE_VIDA)
             table.remove(entradas, i)
         elseif e.estado == "cancelar" or e.estado == "cancelando" then
             if activas[e.auctionID] then
                 -- Sigue activa: si estaba "cancelando", el juego rechazo la
                 -- cancelacion, y vuelve a la fila.
+                if e.estado == "cancelando" then
+                    traza("%s sigue activa: el juego no la cancelo", e.auctionID)
+                end
                 e.estado = "cancelar"
             else
                 -- Ya no esta: vendida o caducada antes de poder cancelarla.
+                traza("olvido %s: ya no esta entre tus subastas", e.auctionID)
                 table.remove(entradas, i)
             end
         elseif e.estado == "devuelta" or e.estado == "posteando" then
@@ -244,15 +345,85 @@ local function prepararBusqueda()
                 -- (o se acepto desde el aviso de Blizzard): hay una subasta tuya
                 -- de ese objeto, posterior y a ese precio. Con lo devuelto no se
                 -- hace: otra copia puesta a mano no dice nada de esta.
+                traza("olvido %s: su posteo si se creo", e.auctionID)
                 table.remove(entradas, i)
             else
                 -- Un posteo del que no llego respuesta vuelve a la fila.
                 e.estado = "devuelta"
-                local grupo = anadirAGrupo(e.itemKey)
-                grupo.devueltas[#grupo.devueltas + 1] = e
+                porRepasar[#porRepasar + 1] = e
             end
         end
     end
+
+    -- Lo devuelto que ya no esta en la bolsa, cuando hay una subasta tuya de
+    -- ese objeto creada despues de cancelarlo: lo has vuelto a poner a mano.
+    -- Con el buzon de TSM el addon no ve el correo y no podria notarlo alli, y
+    -- se quedaria en la cola pidiendo ir al buzon. Una subasta que ya estaba
+    -- antes de cancelar no cuenta: la copia cancelada puede seguir en el correo.
+    local porObjeto, objetosEnOrden = {}, {}
+    for _, e in ipairs(porRepasar) do
+        local clave = claveObjeto(e.itemID, e.ilvl)
+        if not porObjeto[clave] then
+            porObjeto[clave] = {}
+            objetosEnOrden[#objetosEnOrden + 1] = clave
+        end
+        table.insert(porObjeto[clave], e)
+    end
+    local olvidadas = {}
+    for _, clave in ipairs(objetosEnOrden) do
+        local lista = porObjeto[clave]
+        local sinCopia = #lista - copiasEnBolsa(lista[1].itemID, lista[1].ilvl)
+        for k = #lista, 1, -1 do   -- de la mas vieja a la mas nueva
+            local e = lista[k]
+            if sinCopia <= 0 then
+                break
+            end
+            if hayUnaNueva(clave, e.idTopeCancelada or e.auctionID) then
+                traza("olvido %s: repuesta a mano (sin copia en la bolsa y con una subasta nueva)", e.auctionID)
+                olvidadas[e] = true
+                sinCopia = sinCopia - 1
+            end
+        end
+    end
+    for i = #entradas, 1, -1 do
+        if olvidadas[entradas[i]] then
+            table.remove(entradas, i)
+        end
+    end
+    for _, e in ipairs(porRepasar) do
+        if not olvidadas[e] then
+            local grupo = anadirAGrupo(e.itemKey)
+            grupo.devueltas[#grupo.devueltas + 1] = e
+        end
+    end
+
+    -- Se salta lo que se acaba de ver sin nadie delante, si no hay nada
+    -- devuelto de ese objeto que necesite su precio al dia.
+    local quedan = {}
+    for _, clave in ipairs(ordenGrupos) do
+        local grupo = grupos[clave]
+        local reciente = #grupo.devueltas == 0
+        for _, m in ipairs(grupo.mias) do
+            local vista = vistaLimpiaEn[m.auctionID]
+            if not vista or GetTime() - vista >= SEGUNDOS_VISTA_LIMPIA then
+                reciente = false
+            end
+        end
+        if reciente then
+            traza("me salto %s: visto hace poco sin nadie delante", clave)
+            grupos[clave] = nil
+        else
+            quedan[#quedan + 1] = clave
+        end
+    end
+    ordenGrupos = quedan
+
+    local vigiladas = 0
+    for _ in pairs(activas) do
+        vigiladas = vigiladas + 1
+    end
+    traza("leo %s subastas tuyas, %s de objetos vigilados; %s objetos que buscar. Cola: %s",
+        C_AuctionHouse.GetNumOwnedAuctions(), vigiladas, #ordenGrupos, resumenCola())
 end
 
 local function lanzarSiguiente()
@@ -262,11 +433,13 @@ local function lanzarSiguiente()
     if not C_AuctionHouse.IsThrottledMessageSystemReady() then
         -- La casa limita las consultas seguidas. Se reintenta con
         -- AUCTION_HOUSE_THROTTLED_SYSTEM_READY.
+        traza("casa ocupada: la busqueda %s/%s espera", siguienteGrupo, #ordenGrupos)
         return
     end
     esperando = ordenGrupos[siguienteGrupo]
     consulta = consulta + 1
     local esta = consulta
+    traza("busco %s (%s/%s)", esperando, siguienteGrupo, #ordenGrupos)
     C_AuctionHouse.SendSearchQuery(
         grupos[esperando].itemKey,
         { { sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false } },
@@ -274,8 +447,13 @@ local function lanzarSiguiente()
     )
     C_Timer.After(SEGUNDOS_DE_ESPERA, function()
         if esperando and consulta == esta then
+            traza("sin respuesta de %s en %s s: se salta", esperando, SEGUNDOS_DE_ESPERA)
             esperando = nil
             siguienteGrupo = siguienteGrupo + 1
+            if not buscando() then
+                traza("busqueda terminada. Cola: %s", resumenCola())
+                comprobarFin()
+            end
             lanzarSiguiente()
             R.refrescarPanel()
         end
@@ -298,10 +476,18 @@ local function mejorRival(itemKey, mia)
 end
 
 local function procesarGrupo(grupo)
+    local adelantadas = 0
     for _, m in ipairs(grupo.mias) do
         local precio = mejorRival(grupo.itemKey, m)
         local entrada = buscarEntrada(m.auctionID)
         if precio then
+            vistaLimpiaEn[m.auctionID] = nil
+        else
+            vistaLimpiaEn[m.auctionID] = GetTime()
+        end
+        if precio then
+            adelantadas = adelantadas + 1
+            traza("  tu %s a %s: te adelanta uno a %s", m.auctionID, oro(m.buyout), oro(precio))
             if not entrada then
                 entrada = {
                     auctionID = m.auctionID,
@@ -317,9 +503,11 @@ local function procesarGrupo(grupo)
             end
             if entrada.estado == "cancelar" then
                 entrada.precio = precio
+                entrada.precioEn = time()
                 confirmadas[m.auctionID] = true
             end
         elseif entrada and entrada.estado == "cancelar" then
+            traza("olvido %s: ya nadie la adelanta", m.auctionID)
             quitarEntrada(m.auctionID)
         end
     end
@@ -330,17 +518,30 @@ local function procesarGrupo(grupo)
     for _, e in ipairs(grupo.devueltas) do
         local rival = mejorRival(grupo.itemKey, { auctionID = math.huge, buyout = e.precioAnterior })
         e.precio = rival or e.precioAnterior
+        e.precioEn = time()
         repasadas[e.auctionID] = true
+        traza("  devuelta %s: se repostea a %s (antes %s)", e.auctionID, oro(e.precio), oro(e.precioAnterior))
     end
+    traza("%s: %s resultados, %s tuyas, %s adelantadas, %s devueltas",
+        claveDe(grupo.itemKey), C_AuctionHouse.GetNumItemSearchResults(grupo.itemKey),
+        #grupo.mias, adelantadas, #grupo.devueltas)
 end
 
 local function alResponder(itemKey)
-    if not esperando or not itemKey or claveDe(itemKey) ~= esperando then
+    if not esperando or not itemKey then
+        return
+    end
+    if claveDe(itemKey) ~= esperando then
+        traza("llega la respuesta de otra busqueda (%s); espero %s", claveDe(itemKey), esperando)
         return
     end
     procesarGrupo(grupos[esperando])
     esperando = nil
     siguienteGrupo = siguienteGrupo + 1
+    if not buscando() then
+        traza("busqueda terminada. Cola: %s", resumenCola())
+        comprobarFin()
+    end
     lanzarSiguiente()
 end
 
@@ -348,14 +549,22 @@ local function empezarBusqueda()
     buscadoEnEstaVisita = true
     prepararBusqueda()
     lanzarSiguiente()
+    if not buscando() then
+        -- No habia nada que mirar: el aviso sale ya.
+        comprobarFin()
+    end
 end
 
 -- ---------------------------------------------------------------------------
 --  El buzon y la bolsa
 -- ---------------------------------------------------------------------------
 
+-- TSM oculta la ventana del buzon de Blizzard y pone la suya, pero el juego
+-- avisa igual con MAIL_SHOW y MAIL_CLOSED.
+local buzonPorEventos = false
+
 local function buzonAbierto()
-    return MailFrame ~= nil and MailFrame:IsShown()
+    return buzonPorEventos or (MailFrame ~= nil and MailFrame:IsShown())
 end
 
 -- El asunto de las cartas de subasta cancelada, como patron. Sale del texto
@@ -392,7 +601,7 @@ local function sePuedeVender(bolsa, hueco)
     return true
 end
 
-local function copiasEnBolsa(itemID, ilvl)
+copiasEnBolsa = function(itemID, ilvl)
     local n = 0
     enLaBolsa(itemID, ilvl, function(bolsa, hueco)
         if sePuedeVender(bolsa, hueco) then
@@ -400,6 +609,29 @@ local function copiasEnBolsa(itemID, ilvl)
         end
     end)
     return n
+end
+
+resumenCola = function()
+    local por = { cancelar = 0, cancelando = 0, devuelta = 0, posteando = 0 }
+    local sinConfirmar, sinRepasar = 0, 0
+    local copias, contadas = 0, {}
+    for _, e in ipairs(cola()) do
+        por[e.estado] = (por[e.estado] or 0) + 1
+        if e.estado == "cancelar" and not confirmadas[e.auctionID] then
+            sinConfirmar = sinConfirmar + 1
+        elseif e.estado == "devuelta" then
+            if not repasadas[e.auctionID] then
+                sinRepasar = sinRepasar + 1
+            end
+            local clave = claveObjeto(e.itemID, e.ilvl)
+            if not contadas[clave] then
+                contadas[clave] = true
+                copias = copias + copiasEnBolsa(e.itemID, e.ilvl)
+            end
+        end
+    end
+    return formatear("%s por cancelar (%s sin confirmar), %s cancelando, %s devueltas (%s sin repasar, %s copias en la bolsa), %s posteando",
+        por.cancelar, sinConfirmar, por.cancelando, por.devuelta, sinRepasar, copias, por.posteando)
 end
 
 -- Cartas ya pedidas y aun sin respuesta: indice -> { clave, en }. Se olvidan
@@ -522,6 +754,7 @@ local function olvidarSinCarta()
                     pendiente = true
                 elseif GetTime() - faltan[e.auctionID] >= SEGUNDOS_FALTANDO then
                     faltan[e.auctionID] = nil
+                    traza("olvido %s: no esta ni en el buzon ni en la bolsa", e.auctionID)
                     table.remove(entradas, i)
                 else
                     pendiente = true
@@ -578,11 +811,20 @@ local function hayPosteandoDe(clave)
     return false
 end
 
--- La primera devuelta con el precio al dia en esta visita y una copia libre y
--- vendible en la bolsa, y donde esta esa copia.
+-- Segundos que vale el precio de una busqueda para repostear sin buscar otra
+-- vez. Tu ciclo (cancelar, buzon, volver a la casa) dura menos de un minuto:
+-- en ese rato el rival rara vez se mueve, y ahorra la busqueda y la espera.
+local SEGUNDOS_PRECIO_RECIENTE = 120
+
+local function precioReciente(e)
+    return e.precio ~= nil and e.precioEn ~= nil and time() - e.precioEn < SEGUNDOS_PRECIO_RECIENTE
+end
+
+-- La primera devuelta con el precio al dia (repasado en esta visita, o de hace
+-- un momento) y una copia libre y vendible en la bolsa, y donde esta esa copia.
 local function paraPostear()
     for _, e in ipairs(cola()) do
-        if e.estado == "devuelta" and repasadas[e.auctionID] and e.precio
+        if e.estado == "devuelta" and (repasadas[e.auctionID] or precioReciente(e)) and e.precio
             and not hayPosteandoDe(claveObjeto(e.itemID, e.ilvl)) then
             local sitio = nil
             enLaBolsa(e.itemID, e.ilvl, function(bolsa, hueco, info)
@@ -636,10 +878,26 @@ end
 -- atascado: el boton deja de decir que espera y pide volver a buscar.
 local SEGUNDOS_SIN_RESPUESTA = 10
 
+-- Segundos tras pedir una cancelacion en los que un aviso de consulta
+-- descartada se toma por ella. En el juego el descarte llega en una decima.
+local SEGUNDOS_DESCARTE = 1
+
 local function hayReciente(estadoBuscado, campo)
     for _, e in ipairs(cola()) do
         if e.estado == estadoBuscado and e[campo]
             and GetTime() - e[campo] < SEGUNDOS_SIN_RESPUESTA then
+            return true
+        end
+    end
+    return false
+end
+
+-- Si hay un posteo de esta visita esperando respuesta. Uno de una visita
+-- anterior ya no va a responder: de ese se encarga la busqueda.
+local function posteoEnCurso()
+    for _, e in ipairs(cola()) do
+        if e.estado == "posteando" and e.posteandoEn and abiertaEn and e.posteandoEn > abiertaEn
+            and GetTime() - e.posteandoEn < SEGUNDOS_SIN_RESPUESTA then
             return true
         end
     end
@@ -663,11 +921,86 @@ local function hayAtascada()
     return false
 end
 
+-- Pone `d` a la venta desde `sitio` y devuelve el detalle para la traza.
+local function postear(d, sitio)
+    local duracion = vigilados().duracion
+    -- La entrada sale de la cola cuando el juego crea la subasta
+    -- (AUCTION_HOUSE_AUCTION_CREATED), no al pedirlo: un posteo rechazado, o
+    -- aceptado desde el aviso de Blizzard, dejaria la cola descuadrada. Se
+    -- marca antes de llamar porque ese evento puede llegar enseguida.
+    d.estado = "posteando"
+    d.posteandoEn = GetTime()
+    d.idTope = maxIdVisto
+    local pideConfirmar = C_AuctionHouse.PostItem(sitio, duracion, 1, nil, d.precio)
+    if pideConfirmar then
+        confirmacion = {
+            sitio = sitio,
+            duracion = duracion,
+            precio = d.precio,
+            auctionID = d.auctionID,
+            itemID = d.itemID,
+            ilvl = d.ilvl,
+        }
+    end
+    -- Pasado el margen no llega ningun evento: se refresca a mano para que el
+    -- boton deje de decir "Posteando...".
+    C_Timer.After(SEGUNDOS_SIN_RESPUESTA + 0.1, function()
+        R.refrescarPanel()
+    end)
+    return formatear(" %s ilvl %s a %s (pide confirmar: %s)",
+        d.itemID, d.ilvl, oro(d.precio), tostring(pideConfirmar))
+end
+
+-- Lo unico que el reposteo escribe en el chat: que ya no queda nada que hacer
+-- en esta ventana, una sola vez, para poder machacar la tecla sin mirar.
+local ultimoAviso = nil
+
+-- Subastas de la cola canceladas en esta visita a la casa, para el aviso.
+local canceladasEnVisita = 0
+
+-- Sale en el chat, en el centro de la pantalla y con un sonido: se machaca la
+-- tecla sin mirar el chat.
+local function avisarFin()
+    local texto = R.Estado()
+    if texto == ultimoAviso then
+        return
+    end
+    ultimoAviso = texto
+    local mensaje = texto
+    if texto == "Recoge lo devuelto en el buzon" and canceladasEnVisita > 0 then
+        mensaje = ("Todas canceladas (%s). %s"):format(canceladasEnVisita, texto)
+    end
+    print("|cff33ccffReposteo:|r " .. mensaje)
+    if RaidNotice_AddMessage and RaidWarningFrame then
+        RaidNotice_AddMessage(RaidWarningFrame, mensaje, ChatTypeInfo and ChatTypeInfo["RAID_WARNING"])
+    end
+    if PlaySound and SOUNDKIT and SOUNDKIT.READY_CHECK then
+        PlaySound(SOUNDKIT.READY_CHECK)
+    end
+end
+
+-- Avisa en cuanto no queda nada que hacer en la casa, sin esperar a otra
+-- pulsacion: al llegar la ultima cancelacion, el ultimo posteo o el final de
+-- la busqueda.
+comprobarFin = function()
+    if not casaAbierta() or not buscadoEnEstaVisita or buscando() or confirmacion
+        or primeraPorCancelar() or paraPostear()
+        or hayReciente("cancelando", "cancelandoEn") or hayReciente("posteando", "posteandoEn") then
+        return
+    end
+    avisarFin()
+end
+
 -- Hace UNA accion y devuelve cual ("buscar", "cancelar", "recoger", "postear",
 -- "confirmar"), o nil si no habia nada que hacer. Nunca llama a mas de una
 -- funcion protegida.
 function R.Siguiente()
-    local hecho = nil
+    local hecho, motivo, detalle = nil, nil, ""
+    -- Si no se ha hecho nada porque no queda nada, y no porque haya que esperar.
+    local fin = false
+    local ocupada = "la casa esta ocupada con otra consulta"
+    local b = WowAlertsReposteoBoton
+    local decia = (b and b:GetText()) or "?"
     if casaAbierta() then
         if confirmacion then
             if C_AuctionHouse.IsThrottledMessageSystemReady() then
@@ -685,75 +1018,109 @@ function R.Siguiente()
                         R.refrescarPanel()
                     end)
                     hecho = "confirmar"
-                elseif e and e.estado == "posteando" then
+                    detalle = formatear(" %s a %s", c.itemID, oro(c.precio))
+                else
                     -- Si no se confirma, la entrada se queda "posteando": la
                     -- busqueda siguiente decide (la crease el juego aunque se
                     -- perdiera el aviso, o no), en vez de darla por libre aqui.
                     -- No se sabe si llego a crearse (el aviso de Blizzard pudo
                     -- aceptarse).
+                    motivo = "el objeto ya no esta en su hueco de la bolsa: no se confirma"
                 end
                 cerrarAvisoDePrecio()
+            else
+                motivo = ocupada
             end
         elseif not buscadoEnEstaVisita then
-            if subastasListas() then
+            -- Lo devuelto con precio de hace un momento se postea antes de
+            -- buscar, sin esperar a la lista de subastas: al volver del buzon
+            -- no hace falta nada mas. La busqueda viene despues, y no empieza
+            -- con un posteo sin responder, que aun no estaria en la lista.
+            local d, sitio = paraPostear()
+            if posteoEnCurso() then
+                motivo = "el posteo anterior aun espera respuesta del juego"
+            elseif d and not C_AuctionHouse.IsThrottledMessageSystemReady() then
+                motivo = ocupada
+            elseif d then
+                detalle = postear(d, sitio)
+                hecho = "postear"
+            elseif subastasListas() then
                 empezarBusqueda()
                 hecho = "buscar"
+            else
+                motivo = "aun leyendo tus subastas"
             end
-        elseif not buscando() then
-            -- Con la casa saturada de consultas, cancelar o postear podria
-            -- perderse sin aviso: mejor no hacer nada y que se vuelva a pulsar.
+        else
+            -- Con la casa saturada de consultas, postear podria perderse sin
+            -- aviso: mejor no hacer nada y que se vuelva a pulsar. Cancelar no
+            -- lo necesita (Auctionator tampoco lo mira): basta con esperar a
+            -- que el juego responda a la cancelacion anterior. Por eso lo ya
+            -- confirmado se cancela mientras sigue la busqueda de lo demas, y
+            -- postear espera a que termine.
             local listo = C_AuctionHouse.IsThrottledMessageSystemReady()
             local e = primeraPorCancelar()
             if e then
-                if listo then
+                if hayReciente("cancelando", "cancelandoEn") then
+                    motivo = "la cancelacion anterior aun espera respuesta del juego"
+                else
                     C_AuctionHouse.CancelAuction(e.auctionID)
                     e.estado = "cancelando"
                     e.cancelandoEn = GetTime()
                     hecho = "cancelar"
+                    detalle = formatear(" %s (%s ilvl %s, la tuya a %s, rival a %s)",
+                        e.auctionID, e.itemID, e.ilvl, oro(e.precioAnterior), oro(e.precio))
                 end
-            elseif listo then
+            elseif buscando() then
+                motivo = formatear("buscando %s/%s", siguienteGrupo, #ordenGrupos)
+            elseif not listo then
+                motivo = ocupada
+            else
                 local d, sitio = paraPostear()
                 -- Mientras un posteo espera a AUCTION_HOUSE_AUCTION_CREATED,
                 -- postear otro dejaria ambiguo a cual de los dos pertenece el
                 -- aviso cuando llegue.
-                if d and not hayReciente("posteando", "posteandoEn") then
-                    local duracion = vigilados().duracion
-                    -- La entrada sale de la cola cuando el juego crea la subasta
-                    -- (AUCTION_HOUSE_AUCTION_CREATED), no al pedirlo: un posteo
-                    -- rechazado, o aceptado desde el aviso de Blizzard, dejaria
-                    -- la cola descuadrada. Se marca antes de llamar porque ese
-                    -- evento puede llegar enseguida.
-                    d.estado = "posteando"
-                    d.posteandoEn = GetTime()
-                    d.idTope = maxIdVisto
-                    if C_AuctionHouse.PostItem(sitio, duracion, 1, nil, d.precio) then
-                        confirmacion = {
-                            sitio = sitio,
-                            duracion = duracion,
-                            precio = d.precio,
-                            auctionID = d.auctionID,
-                            itemID = d.itemID,
-                            ilvl = d.ilvl,
-                        }
-                    end
-                    -- Pasado el margen no llega ningun evento: se refresca a mano
-                    -- para que el boton deje de decir "Posteando...".
-                    C_Timer.After(SEGUNDOS_SIN_RESPUESTA + 0.1, function()
-                        R.refrescarPanel()
-                    end)
+                if not d then
+                    motivo = "nada que cancelar ni postear. Cola: " .. resumenCola()
+                    fin = true
+                elseif hayReciente("posteando", "posteandoEn") then
+                    motivo = "el posteo anterior aun espera respuesta del juego"
+                else
+                    detalle = postear(d, sitio)
                     hecho = "postear"
                 end
             end
         end
     elseif buzonAbierto() then
         local indice, clave = cartaPorRecoger()
-        if indice then
+        if C_Mail and C_Mail.IsCommandPending and C_Mail.IsCommandPending() then
+            -- La recogida automatica ya tiene una carta en camino.
+            motivo = "el buzon esta atendiendo otra carta"
+        elseif indice then
             TakeInboxItem(indice, 1)
             tomadas[indice] = { clave = clave, en = GetTime() }
             hecho = "recoger"
+            detalle = formatear(" carta %s (%s)", indice, clave)
+        else
+            motivo = "ninguna carta que recoger. Cola: " .. resumenCola()
+            fin = true
         end
+    else
+        motivo = "ni la casa ni el buzon estan abiertos"
     end
     R.refrescarPanel()
+    b = WowAlertsReposteoBoton
+    local ahora = (b and b:GetText()) or "?"
+    if hecho then
+        traza("[%s] -> %s%s. Ahora dice [%s]", decia, hecho, detalle, ahora)
+    else
+        traza("[%s] -> nada: %s. Ahora dice [%s]", decia, motivo or "?", ahora)
+        -- Con una cancelacion, un posteo o una carta aun en camino, lo que
+        -- falta llega en un momento: eso no es haber terminado.
+        if fin and not hayReciente("cancelando", "cancelandoEn")
+            and not hayReciente("posteando", "posteandoEn") and not hayTomasRecientes() then
+            avisarFin()
+        end
+    end
     return hecho
 end
 
@@ -811,16 +1178,23 @@ function R.Estado()
     end
     if casaAbierta() then
         if not buscadoEnEstaVisita then
+            if posteoEnCurso() then
+                return "Posteando..."
+            end
+            if paraPostear() then
+                return "Postear"
+            end
             if subastasListas() then
                 return "Buscar undercuts"
             end
             return "Leyendo tus subastas..."
         end
-        if buscando() then
-            return ("Buscando %s/%s..."):format(siguienteGrupo, #ordenGrupos)
-        end
+        -- Lo ya confirmado se cancela aunque la busqueda siga.
         if primeraPorCancelar() then
             return ("Cancelar (%s)"):format(contarCancelables())
+        end
+        if buscando() then
+            return ("Buscando %s/%s..."):format(siguienteGrupo, #ordenGrupos)
         end
         if paraPostear() and not hayReciente("posteando", "posteandoEn") then
             return "Postear"
@@ -888,7 +1262,7 @@ function R.refrescarPanel()
         return
     end
     boton:SetText(R.Estado())
-    if buscando() then
+    if buscando() and not primeraPorCancelar() then
         boton:Disable()
     else
         boton:Enable()
@@ -898,6 +1272,97 @@ end
 -- ---------------------------------------------------------------------------
 --  Eventos
 -- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+--  Recoger solo
+-- ---------------------------------------------------------------------------
+--  Al abrir el buzon se recogen solas las cartas de lo cancelado, una detras
+--  de otra, como hace el "abrir todo" de TSM. Recoger correo no necesita una
+--  tecla por carta: solo cancelar, postear y confirmar la necesitan.
+
+local SEGUNDOS_ENTRE_CARTAS = 0.3
+local recogiendo = false
+local recogidaParada = false   -- un error del juego en el buzon la para
+
+-- Cuantas cartas habia al pedir la ultima, y cuando. Hasta que el buzon tenga
+-- otro numero de cartas no se pide la siguiente: los indices se reordenan al
+-- salir una, y pedir antes daba "No se ha encontrado el objeto" (visto en el
+-- juego). Pasado el margen de toma se sigue igual.
+local cartaPedida = nil
+
+local function recogerSolo()
+    if not buzonAbierto() or recogidaParada then
+        recogiendo = false
+        return
+    end
+    local pendiente = (C_Mail and C_Mail.IsCommandPending and C_Mail.IsCommandPending())
+        or hayTomasRecientes()
+    if cartaPedida then
+        if (GetInboxNumItems()) == cartaPedida.cuantas and GetTime() - cartaPedida.en < SEGUNDOS_DE_TOMA then
+            pendiente = true
+        else
+            cartaPedida = nil
+        end
+    end
+    if not pendiente then
+        local indice, clave = cartaPorRecoger()
+        if not indice then
+            recogiendo = false
+            traza("buzon: no queda nada que recoger")
+            if contar("devuelta") > 0 then
+                avisarFin()
+            end
+            R.refrescarPanel()
+            return
+        end
+        cartaPedida = { cuantas = (GetInboxNumItems()), en = GetTime() }
+        TakeInboxItem(indice, 1)
+        tomadas[indice] = { clave = clave, en = GetTime() }
+        traza("buzon: recojo la carta %s (%s)", indice, clave)
+    end
+    C_Timer.After(SEGUNDOS_ENTRE_CARTAS, recogerSolo)
+end
+
+local function empezarARecoger()
+    if recogiendo then
+        return
+    end
+    recogiendo = true
+    C_Timer.After(SEGUNDOS_ENTRE_CARTAS, recogerSolo)
+end
+
+-- ---------------------------------------------------------------------------
+--  La tecla de interaccion
+-- ---------------------------------------------------------------------------
+--  Con la casa o el buzon abiertos, las teclas de "Interactuar con el
+--  objetivo" hacen el siguiente paso del reposteo; al cerrar vuelven a abrir
+--  lo que tengas delante. Asi una sola tecla abre la casa, cancela, abre el
+--  buzon y repostea. Es lo mismo que hace Auctionator con sus atajos.
+
+local teclado = CreateFrame("Frame")
+local soltarAlSalirDeCombate = false
+
+local function tomarTecla()
+    if InCombatLockdown() then
+        return
+    end
+    ClearOverrideBindings(teclado)
+    local teclas = { GetBindingKey("INTERACTTARGET") }
+    for _, tecla in ipairs(teclas) do
+        SetOverrideBinding(teclado, false, tecla, "WOWALERTS_SIGUIENTE")
+    end
+    traza("tomo la tecla de interaccion: %s", table.concat(teclas, ", "))
+end
+
+local function soltarTecla()
+    if InCombatLockdown() then
+        -- En combate no se pueden tocar las teclas: se sueltan al salir.
+        soltarAlSalirDeCombate = true
+        return
+    end
+    soltarAlSalirDeCombate = false
+    ClearOverrideBindings(teclado)
+end
 
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("AUCTION_HOUSE_SHOW")
@@ -912,47 +1377,114 @@ frame:RegisterEvent("MAIL_SHOW")
 frame:RegisterEvent("MAIL_CLOSED")
 frame:RegisterEvent("MAIL_INBOX_UPDATE")
 frame:RegisterEvent("BAG_UPDATE_DELAYED")
+-- Solo para la traza: lo que el juego rechaza o bloquea.
+frame:RegisterEvent("UI_ERROR_MESSAGE")
+frame:RegisterEvent("ADDON_ACTION_BLOCKED")
+frame:RegisterEvent("ADDON_ACTION_FORBIDDEN")
+frame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
-frame:SetScript("OnEvent", function(_, evento, arg1)
+frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
     if evento == "AUCTION_HOUSE_SHOW" then
+        ultimoAviso = nil
+        canceladasEnVisita = 0
         abiertaEn = GetTime()
+        cuentaAnterior = nil
+        listaRepetida = false
         buscadoEnEstaVisita = false
         repasadas = {}
         confirmadas = {}
         reiniciarBusqueda()
         colocarBoton(AuctionHouseFrame)
+        traza("casa abierta (ventana de Blizzard cargada: %s). En %s s digo como esta el boton",
+            tostring(AuctionHouseFrame ~= nil), SEGUNDOS_PARA_FIARSE)
+        listaPedidaEn = nil
+        faltaPedirLista = true
+        pedirLista()
+        tomarTecla()
         -- Pasada la espera no llega ningun evento: se refresca a mano para que
         -- el boton deje de decir "Leyendo tus subastas...".
         C_Timer.After(SEGUNDOS_PARA_FIARSE, function()
             R.refrescarPanel()
+            pcall(function()
+                local b = WowAlertsReposteoBoton
+                traza("boton creado: %s, visible: %s, escala: %s, borde de abajo a %s px del suelo, dice [%s]. Tecla: %s. Casa visible: %s, escala %s",
+                    b ~= nil, b and b:IsVisible(), b and b:GetEffectiveScale(), b and b:GetBottom(),
+                    b and b:GetText(), GetBindingKey("WOWALERTS_SIGUIENTE"),
+                    AuctionHouseFrame and AuctionHouseFrame:IsVisible(),
+                    AuctionHouseFrame and AuctionHouseFrame:GetEffectiveScale())
+            end)
         end)
     elseif evento == "AUCTION_HOUSE_CLOSED" then
         abiertaEn = nil
         -- La entrada de una confirmacion pendiente se queda "posteando": la
         -- busqueda siguiente decide, igual que en R.Siguiente (I-2).
         confirmacion = nil
+        faltaPedirLista = false
         reiniciarBusqueda()
+        if not buzonAbierto() then
+            soltarTecla()
+        end
     elseif evento == "OWNED_AUCTIONS_UPDATED" then
         recibidasEn = GetTime()
+        if abiertaEn then
+            local cuenta = C_AuctionHouse.GetNumOwnedAuctions()
+            listaRepetida = cuenta > 0 and cuenta == cuentaAnterior
+            cuentaAnterior = cuenta
+        end
+        if not buscadoEnEstaVisita then
+            traza("llega la lista de tus subastas: %s", C_AuctionHouse.GetNumOwnedAuctions())
+            -- Pasada la calma no llega ningun evento: se refresca a mano para
+            -- que el boton deje de decir "Leyendo tus subastas...".
+            C_Timer.After(SEGUNDOS_DE_CALMA + 0.05, function()
+                R.refrescarPanel()
+            end)
+        end
     elseif evento == "ITEM_SEARCH_RESULTS_UPDATED" then
         alResponder(arg1)
     elseif evento == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
+        pedirLista()
         lanzarSiguiente()
     elseif evento == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
         -- El servidor ha descartado una consulta: se vuelve a pedir la que
-        -- estaba en curso.
+        -- estaba en curso, y la lista si aun no ha llegado respuesta.
+        traza("la casa descarta una consulta (esperaba %s)", tostring(esperando))
+        -- Una cancelacion recien pedida y sin respuesta puede ser lo descartado
+        -- (visto en el juego: la tecla se quedaba 10 s esperando). Vuelve a la
+        -- fila para que la siguiente pulsacion la repita; si no era ella, el
+        -- AUCTION_CANCELED que llegue la da por devuelta igual.
+        for _, e in ipairs(cola()) do
+            if e.estado == "cancelando" and e.cancelandoEn
+                and GetTime() - e.cancelandoEn < SEGUNDOS_DESCARTE then
+                traza("  %s vuelve a la fila para cancelarla otra vez", e.auctionID)
+                e.estado = "cancelar"
+                e.cancelandoEn = nil
+            end
+        end
+        if listaPedidaEn and (recibidasEn == nil or recibidasEn < listaPedidaEn) then
+            faltaPedirLista = true
+            pedirLista()
+        end
         esperando = nil
         lanzarSiguiente()
     elseif evento == "AUCTION_CANCELED" then
         -- arg1 es el id de la subasta. El exportador apunta la cancelacion por
         -- su cuenta, con su propio frame.
         local e = buscarEntrada(arg1)
+        traza("el juego cancela la subasta %s (en la cola: %s)", tostring(arg1), e and e.estado or "no")
         if e and (e.estado == "cancelando" or e.estado == "cancelar") then
             e.estado = "devuelta"
             e.canceladaEn = time()
+            -- Tus subastas con id mayor que este se crearon despues de la
+            -- busqueda que la mando cancelar: si alguna es de este objeto, se
+            -- ha vuelto a poner (ver prepararBusqueda).
+            e.idTopeCancelada = (maxIdVisto > 0 and maxIdVisto) or e.auctionID
+            canceladasEnVisita = canceladasEnVisita + 1
+            comprobarFin()
         end
     elseif evento == "AUCTION_HOUSE_AUCTION_CREATED" then
         local entradas = cola()
+        local nuestra = false   -- si la subasta creada es un posteo de la tecla
+        traza("el juego crea la subasta %s (confirmacion pendiente: %s)", tostring(arg1), tostring(confirmacion ~= nil))
         if confirmacion then
             -- Se acepto desde el aviso de Blizzard: la subasta creada es la que
             -- esperaba confirmacion.
@@ -962,6 +1494,7 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
             end
             confirmacion = nil
             cerrarAvisoDePrecio()
+            nuestra = true
         else
             -- La mas reciente de las que se estan posteando, si es de hace un
             -- momento. Una subasta creada mucho despues es otra cosa, como un
@@ -976,12 +1509,30 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
             end
             if elegida then
                 table.remove(entradas, elegida)
+                nuestra = true
             end
+            traza("  quitada de la cola: %s", tostring(elegida ~= nil))
         end
+        if nuestra and type(arg1) == "number" then
+            -- Se ha puesto al precio del rival y es la mas nueva: va la primera,
+            -- y la busqueda siguiente no necesita mirarla.
+            vistaLimpiaEn[arg1] = GetTime()
+        end
+        comprobarFin()
     elseif evento == "MAIL_SHOW" or evento == "MAIL_CLOSED" or evento == "MAIL_INBOX_UPDATE" then
         if evento == "MAIL_SHOW" then
             -- Una marca de otra visita al buzon no debe saltarse la espera.
             faltan = {}
+            ultimoAviso = nil
+            buzonPorEventos = true
+            recogidaParada = false
+            cartaPedida = nil
+            tomarTecla()
+        elseif evento == "MAIL_CLOSED" then
+            buzonPorEventos = false
+            if not casaAbierta() then
+                soltarTecla()
+            end
         end
         -- Justo despues de recoger, la carta ya no esta y el objeto puede no
         -- haber llegado a la bolsa: ese momento no sirve para olvidar nada.
@@ -992,8 +1543,32 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
         if evento == "MAIL_SHOW" then
             colocarBoton(MailFrame)
         end
+        if evento ~= "MAIL_CLOSED" then
+            empezarARecoger()
+        end
     elseif evento == "BAG_UPDATE_DELAYED" then
         olvidarSinCarta()
+    elseif evento == "UI_ERROR_MESSAGE" then
+        if casaAbierta() or buzonAbierto() then
+            traza("el juego dice: %s", tostring(arg2))
+        end
+        if recogiendo then
+            -- Con la bolsa llena, por ejemplo: no se insiste. Se reintenta al
+            -- volver a abrir el buzon.
+            traza("buzon: paro de recoger")
+            recogidaParada = true
+        end
+        return
+    elseif evento == "PLAYER_REGEN_ENABLED" then
+        if soltarAlSalirDeCombate and not casaAbierta() and not buzonAbierto() then
+            soltarTecla()
+        end
+        return
+    elseif evento == "ADDON_ACTION_BLOCKED" or evento == "ADDON_ACTION_FORBIDDEN" then
+        if arg1 == "WowAlertsExport" then
+            traza("|cffff4040ACCION BLOQUEADA|r (%s): %s", evento, tostring(arg2))
+        end
+        return
     end
     R.refrescarPanel()
 end)

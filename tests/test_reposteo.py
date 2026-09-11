@@ -172,6 +172,34 @@ function RESPONDER()
     DISPARAR("ITEM_SEARCH_RESULTS_UPDATED", itemKey)
 end
 
+-- Teclas: TECLAS dice que tecla tiene cada accion; ENLACES, que teclas ha
+-- tomado prestadas el addon (SetOverrideBinding).
+TECLAS = { INTERACTTARGET = "º" }
+ENLACES = {}
+EN_COMBATE = false
+function GetBindingKey(accion) return TECLAS[accion] end
+function SetOverrideBinding(_, _, tecla, accion)
+    if EN_COMBATE then error("SetOverrideBinding en combate") end
+    ENLACES[tecla] = accion
+end
+function ClearOverrideBindings()
+    if EN_COMBATE then error("ClearOverrideBindings en combate") end
+    ENLACES = {}
+end
+function InCombatLockdown() return EN_COMBATE end
+
+CORREO_PENDIENTE = false
+C_Mail = { IsCommandPending = function() return CORREO_PENDIENTE end }
+
+-- Avisos en el centro de la pantalla y sonidos.
+PANTALLA = {}
+SONIDOS = {}
+RaidWarningFrame = {}
+ChatTypeInfo = { RAID_WARNING = {} }
+function RaidNotice_AddMessage(_, texto) PANTALLA[#PANTALLA + 1] = texto end
+SOUNDKIT = { READY_CHECK = 8960 }
+function PlaySound(id) SONIDOS[#SONIDOS + 1] = id end
+
 AUCTION_REMOVED_MAIL_SUBJECT = "Auction cancelled: %s"
 CORREO = {}   -- { asunto, nombre, itemID, enlace }
 function GetInboxNumItems() return #CORREO, #CORREO end
@@ -642,6 +670,148 @@ def test_no_busca_si_la_lista_de_subastas_no_ha_llegado_tras_abrir():
     assert pulsar(lua) == "buscar"
 
 
+def contar_peticiones_de_lista(lua, responde=True):
+    """Cuenta las QueryOwnedAuctions en PEDIDAS; sin `responde`, nunca llega
+    la respuesta."""
+    lua.execute("PEDIDAS = 0")
+    lua.execute(
+        "local original = C_AuctionHouse.QueryOwnedAuctions\n"
+        "C_AuctionHouse.QueryOwnedAuctions = function(...)\n"
+        "    PEDIDAS = PEDIDAS + 1\n"
+        + ("    original(...)\n" if responde else "")
+        + "end"
+    )
+
+
+def test_al_abrir_pide_la_lista_y_busca_en_cuanto_llega():
+    """Sin esperar los segundos de margen: como Auctionator, la respuesta a la
+    peticion propia es de fiar."""
+    lua = runtime(subastas=[mia(10, 100_000)])
+    abrir_casa(lua, esperar=False)
+    # La lista puede llegar a trozos: se deja medio segundo sin cambios.
+    assert pulsar(lua) is None
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 0.5
+    assert pulsar(lua) == "buscar"
+
+
+def test_una_lista_vacia_no_basta_y_se_esperan_los_segundos_de_margen():
+    lua = runtime(subastas=[])
+    abrir_casa(lua, esperar=False)
+    lua.globals().RELOJ = lua.globals().RELOJ + 0.5
+    assert pulsar(lua) is None
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 5
+    assert pulsar(lua) == "buscar"
+
+
+def test_una_lista_de_antes_de_pedirla_no_vale():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    contar_peticiones_de_lista(lua)
+    lua.globals().SISTEMA_LISTO = False
+    abrir_casa(lua, esperar=False)
+    peticiones = lua.globals().PEDIDAS  # la del exportador, que no mira si la casa esta libre
+
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    lua.globals().RELOJ = lua.globals().RELOJ + 0.5
+    assert pulsar(lua) is None
+
+    lua.globals().SISTEMA_LISTO = True
+    lua.globals().DISPARAR("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    assert lua.globals().PEDIDAS == peticiones + 1
+    lua.globals().RELOJ = lua.globals().RELOJ + 0.5
+    assert pulsar(lua) == "buscar"
+
+
+def test_si_se_descarta_la_peticion_de_la_lista_se_repite():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    contar_peticiones_de_lista(lua, responde=False)
+    abrir_casa(lua, esperar=False)
+    peticiones = lua.globals().PEDIDAS
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED")
+    assert lua.globals().PEDIDAS == peticiones + 1
+
+
+def test_el_boton_deja_de_decir_leyendo_cuando_la_lista_se_calma():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    abrir_casa(lua, esperar=False)
+    assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Leyendo tus subastas..."
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 0.5
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Buscar undercuts"
+
+
+# -- Lo visto hace poco ----------------------------------------------------------
+
+
+def cerrar_casa(lua):
+    lua.globals().CASA_ABIERTA = False
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+
+
+def test_no_repite_la_busqueda_de_lo_que_acaba_de_ver_sin_adelantar():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+    assert lua.globals().BUSCADAS == 1
+    cerrar_casa(lua)
+
+    detectar(lua)
+    assert lua.globals().BUSCADAS == 1
+    assert estado(lua) == "Nada que repostear"
+
+
+def test_pasados_unos_minutos_si_vuelve_a_buscarlo():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+    cerrar_casa(lua)
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 300
+    detectar(lua)
+    assert lua.globals().BUSCADAS == 2
+
+
+def test_lo_adelantado_se_vuelve_a_buscar_en_cada_visita():
+    """Cancelar cuesta el deposito: se confirma con datos de esta visita."""
+    lua = runtime()
+    adelantadas(lua, 10)
+    cerrar_casa(lua)
+
+    detectar(lua)
+    assert lua.globals().BUSCADAS == 2
+    assert pulsar(lua) == "cancelar"
+
+
+def test_una_subasta_nueva_del_mismo_objeto_se_busca():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+    cerrar_casa(lua)
+
+    poner(lua, "SUBASTAS", [mia(10, 100_000), mia(12, 100_000)])
+    detectar(lua)
+    assert lua.globals().BUSCADAS == 2
+
+
+def test_lo_devuelto_se_busca_aunque_su_objeto_se_viera_hace_poco():
+    lua = runtime(subastas=[mia(10, 100_000), mia(12, 80_000)])
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    detectar(lua)  # la 12 va primera; la 10 esta adelantada
+    pulsar(lua)
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+    cerrar_casa(lua)
+
+    poner(lua, "SUBASTAS", [mia(12, 80_000)])
+    en_la_bolsa(lua, 3)
+    envejecer_precios(lua)
+    detectar(lua)
+    assert lua.globals().BUSCADAS == 2
+    assert pulsar(lua) == "postear"
+
+
 # -- Cancelar --------------------------------------------------------------------
 
 
@@ -656,11 +826,34 @@ def test_cada_pulsacion_cancela_una_sola():
     lua = runtime()
     adelantadas(lua, 10, 12, 14)
 
-    for esperadas in (1, 2, 3):
+    for esperadas, id_ in ((1, 10), (2, 12), (3, 14)):
         assert pulsar(lua) == "cancelar"
         assert len(llamadas(lua)) == esperadas
+        lua.globals().DISPARAR("AUCTION_CANCELED", id_)
 
     assert llamadas(lua) == [("CancelAuction", 10), ("CancelAuction", 12), ("CancelAuction", 14)]
+
+
+def test_no_cancela_otra_hasta_que_el_juego_confirma_la_anterior():
+    lua = runtime()
+    adelantadas(lua, 10, 12)
+    assert pulsar(lua) == "cancelar"
+
+    assert pulsar(lua) is None
+    assert llamadas(lua) == [("CancelAuction", 10)]
+
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+    assert pulsar(lua) == "cancelar"
+
+
+def test_si_la_cancelacion_no_responde_pasado_el_margen_sigue_con_la_siguiente():
+    lua = runtime()
+    adelantadas(lua, 10, 12)
+    assert pulsar(lua) == "cancelar"
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 10
+    assert pulsar(lua) == "cancelar"
+    assert llamadas(lua) == [("CancelAuction", 10), ("CancelAuction", 12)]
 
 
 def test_cuando_el_juego_confirma_la_cancelacion_pasa_a_devuelta():
@@ -756,16 +949,57 @@ def test_no_cancela_lo_que_el_juego_no_deja_cancelar():
     assert llamadas(lua) == [("CancelAuction", 12)]
 
 
-def test_con_la_casa_saturada_de_consultas_no_cancela():
+def test_cancela_lo_ya_confirmado_mientras_sigue_buscando_lo_demas():
+    """Abrir y machacar: se cancela en cuanto se sabe, sin esperar a buscar todo."""
+    lua = runtime(subastas=[mia(10, 100_000), mia(20, 50_000, ilvl=298)])
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    abrir_casa(lua)
+    assert pulsar(lua) == "buscar"
+    lua.globals().RESPONDER()  # la de ilvl 311 esta adelantada; falta la de 298
+
+    assert estado(lua) == "Cancelar (1)"
+    assert lua.eval("WowAlertsReposteoBoton:IsEnabled()") is True
+    assert pulsar(lua) == "cancelar"
+    assert llamadas(lua) == [("CancelAuction", 10)]
+    assert lua.eval("#BUSQUEDAS") == 1
+
+
+def test_mientras_busca_no_postea_aunque_haya_algo_listo():
+    """Postear si necesita la casa libre, y la busqueda la ocupa: se deja para
+    el final."""
+    lua = runtime(subastas=[mia(10, 100_000), mia(11, 100_000, ilvl=298)])
+    poner(lua, "RESULTADOS", {
+        f"{GREBAS}:311:0": [en_venta(999, 90_000)],
+        f"{GREBAS}:298:0": [en_venta(998, 90_000)],
+    })
+    detectar(lua)
+    for i in (10, 11):
+        assert pulsar(lua) == "cancelar"
+        lua.globals().DISPARAR("AUCTION_CANCELED", i)
+    cerrar_casa(lua)
+
+    poner(lua, "SUBASTAS", [])
+    poner(lua, "LLAMADAS", [])
+    en_la_bolsa(lua, 3, ilvl=298)
+    envejecer_precios(lua)
+    abrir_casa(lua)
+    assert pulsar(lua) == "buscar"
+    lua.globals().RESPONDER()  # repasada la de 298, que esta en la bolsa; falta la de 311
+    assert lua.eval("#BUSQUEDAS") == 1
+
+    assert pulsar(lua) is None
+    assert llamadas(lua) == []
+
+
+def test_cancela_aunque_la_casa_este_ocupada_con_consultas():
+    """Como Auctionator: cancelar no espera a que la casa atienda consultas,
+    solo a que el juego responda a la cancelacion anterior."""
     lua = runtime()
     adelantadas(lua, 10)
     lua.globals().SISTEMA_LISTO = False
 
-    assert pulsar(lua) is None
-    assert llamadas(lua) == []
-    assert cola(lua)[0]["estado"] == "cancelar"
-    lua.globals().SISTEMA_LISTO = True
     assert pulsar(lua) == "cancelar"
+    assert llamadas(lua) == [("CancelAuction", 10)]
 
 
 # -- El correo -------------------------------------------------------------------
@@ -781,6 +1015,8 @@ def devolver(lua, *ids, precio=100_000, rival=90_000):
     lua.globals().CASA_ABIERTA = False
     lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
     poner(lua, "LLAMADAS", [])
+    # El aviso de "todas canceladas" de esta preparacion no es lo que se prueba.
+    lua.execute("mensajes = {}; PANTALLA = {}; SONIDOS = {}")
 
 
 def carta(item_id=GREBAS, ilvl=311, asunto="Auction cancelled: Greaves of the Noxious Depths"):
@@ -947,10 +1183,18 @@ def en_la_bolsa(lua, *huecos, ilvl=311):
     )
 
 
+def envejecer_precios(lua):
+    """Pasan minutos: el precio de la ultima busqueda ya no vale para postear
+    sin buscar otra vez."""
+    lua.globals().AHORA = lua.globals().AHORA + 600
+
+
 def volver_a_la_casa(lua, filas):
-    """Con lo devuelto ya recogido, vuelves a la casa y pulsas para buscar."""
+    """Con lo devuelto ya recogido, vuelves a la casa pasados unos minutos, con el
+    precio de la cancelacion ya viejo, y pulsas para buscar."""
     lua.globals().BUZON_ABIERTO = False
     lua.globals().DISPARAR("MAIL_CLOSED")
+    lua.globals().AHORA = lua.globals().AHORA + 600
     en_la_casa(lua, filas)
     detectar(lua)
     poner(lua, "LLAMADAS", [])
@@ -998,9 +1242,10 @@ def test_un_rival_mas_caro_que_tu_precio_anterior_no_sube_el_precio():
 
 
 def test_sin_buscar_en_esta_visita_no_postea():
-    """El precio de lo devuelto se recalcula en cada visita antes de postear."""
+    """Con el precio de hace minutos, se recalcula antes de postear."""
     lua = runtime()
     devolver(lua, 10)
+    envejecer_precios(lua)
     en_la_bolsa(lua, 3)
     en_la_casa(lua, [en_venta(999, 90_000)])
     abrir_casa(lua)
@@ -1109,6 +1354,7 @@ def test_una_confirmacion_no_se_repite():
 def test_si_la_busqueda_no_repasa_el_precio_no_se_postea():
     lua = runtime()
     devolver(lua, 10)
+    envejecer_precios(lua)
     en_la_bolsa(lua, 3)
     en_la_casa(lua, [en_venta(999, 90_000)])
     abrir_casa(lua)
@@ -1125,6 +1371,7 @@ def test_el_precio_repasado_no_vale_para_la_visita_siguiente():
     en_la_bolsa(lua, 3)
     volver_a_la_casa(lua, [en_venta(999, 90_000)])
     lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    envejecer_precios(lua)
 
     abrir_casa(lua)
     assert pulsar(lua) == "buscar"
@@ -1392,6 +1639,7 @@ def test_en_la_casa_el_panel_dice_si_postear_o_ir_al_buzon():
 def test_si_no_se_pudo_repasar_el_precio_el_panel_lo_dice():
     lua = runtime()
     devolver(lua, 10)
+    envejecer_precios(lua)
     en_la_bolsa(lua, 3)
     en_la_casa(lua, [en_venta(999, 90_000)])
     abrir_casa(lua)
@@ -1487,8 +1735,8 @@ def test_ninguna_pulsacion_llama_a_mas_de_una_funcion_protegida():
             assert len(llamadas(lua)) - antes <= 1
 
     adelantadas(lua, 10, 12)
-    pulsar_contando(3)
     for i in (10, 12):
+        pulsar_contando(2)
         lua.globals().DISPARAR("AUCTION_CANCELED", i)
     poner(lua, "SUBASTAS", [])
     lua.globals().CASA_ABIERTA = False
@@ -1664,12 +1912,12 @@ def test_un_posteo_sin_respuesta_vuelve_a_la_fila_en_la_visita_siguiente():
     assert cola(lua) == []
 
 
-def test_si_la_repusiste_a_mano_se_olvida_al_abrir_el_buzon():
+def test_si_la_vendiste_o_la_enviaste_se_olvida_al_abrir_el_buzon():
     lua = runtime()
     devolver(lua, 10)
-    poner(lua, "SUBASTAS", [mia(50, 90_000)])  # puesta a mano con Auctionator
+    poner(lua, "SUBASTAS", [])  # sin subasta nueva: en la casa no hay pista
     volver_a_la_casa(lua, [])
-    assert len(cola(lua)) == 1  # en la casa no se sabe si es la misma copia
+    assert len(cola(lua)) == 1
 
     lua.globals().CASA_ABIERTA = False
     lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
@@ -2081,3 +2329,513 @@ def test_el_boton_deja_de_decir_posteando_al_pasar_la_espera():
     lua.globals().RELOJ = lua.globals().RELOJ + 11
     lua.globals().VENCER_TEMPORIZADORES()
     assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Cierra y abre la casa para repasar precios"
+
+
+# ---------------------------------------------------------------------------
+#  El chat
+# ---------------------------------------------------------------------------
+
+
+def avisos(lua):
+    """Lo que el reposteo ha escrito en el chat."""
+    m = lua.globals().mensajes
+    return [m[i] for i in range(1, len(m) + 1) if "Reposteo" in m[i]]
+
+
+def test_mientras_hay_trabajo_no_escribe_nada_en_el_chat():
+    lua = runtime()
+    adelantadas(lua, 10, 12)
+    pulsar(lua)
+    pulsar(lua)
+
+    assert avisos(lua) == []
+
+
+def test_avisa_una_sola_vez_cuando_ya_no_queda_nada_que_cancelar():
+    lua = runtime()
+    adelantadas(lua, 10)
+    pulsar(lua)
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+    for _ in range(3):
+        assert pulsar(lua) is None
+
+    assert len(avisos(lua)) == 1
+    assert "Recoge lo devuelto en el buzon" in avisos(lua)[0]
+
+
+def test_no_avisa_mientras_espera_a_que_el_juego_cancele():
+    lua = runtime()
+    adelantadas(lua, 10)
+    pulsar(lua)
+    pulsar(lua)
+    pulsar(lua)
+
+    assert avisos(lua) == []
+
+
+def test_no_avisa_si_la_casa_esta_ocupada():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().SISTEMA_LISTO = False
+    pulsar(lua)
+    pulsar(lua)
+
+    assert avisos(lua) == []
+
+
+def test_no_avisa_mientras_busca():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    abrir_casa(lua)
+    pulsar(lua)
+    pulsar(lua)
+
+    assert avisos(lua) == []
+
+
+def test_avisa_si_no_hay_nada_que_repostear():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+    pulsar(lua)
+    pulsar(lua)
+
+    assert len(avisos(lua)) == 1
+    assert "Nada que repostear" in avisos(lua)[0]
+
+
+def test_vuelve_a_avisar_en_otra_visita():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+    pulsar(lua)
+    lua.globals().CASA_ABIERTA = False
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    detectar(lua)
+    pulsar(lua)
+
+    assert len(avisos(lua)) == 2
+
+
+def test_en_el_buzon_avisa_cuando_ya_no_queda_nada_que_recoger():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    abrir_buzon(lua)
+    assert pulsar(lua) == "recoger"
+    assert avisos(lua) == []
+
+    poner(lua, "CORREO", [])
+    en_la_bolsa(lua, 3)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+    pulsar(lua)
+    pulsar(lua)
+
+    assert len(avisos(lua)) == 1
+    assert "Vuelve a la casa a postear" in avisos(lua)[0]
+
+
+def test_en_el_buzon_no_avisa_mientras_llega_la_carta_pedida():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    abrir_buzon(lua)
+    assert pulsar(lua) == "recoger"
+    pulsar(lua)
+
+    assert avisos(lua) == []
+
+
+# ---------------------------------------------------------------------------
+#  El ciclo rapido: entrar, cancelar, buzon, repostear y cambiar de personaje
+# ---------------------------------------------------------------------------
+
+
+def test_si_la_casa_descarta_la_cancelacion_se_puede_volver_a_pulsar():
+    """Visto en el juego: una cancelacion descartada dejaba la tecla 10 s parada."""
+    lua = runtime()
+    adelantadas(lua, 10, 12)
+    assert pulsar(lua) == "cancelar"
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED")
+    assert cola(lua)[0]["estado"] == "cancelar"
+    assert pulsar(lua) == "cancelar"
+    assert llamadas(lua) == [("CancelAuction", 10), ("CancelAuction", 10)]
+
+
+def test_un_descarte_de_bastante_despues_no_toca_la_cancelacion():
+    lua = runtime()
+    adelantadas(lua, 10)
+    pulsar(lua)
+    lua.globals().RELOJ = lua.globals().RELOJ + 2
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED")
+    assert cola(lua)[0]["estado"] == "cancelando"
+
+
+def test_dos_listas_seguidas_iguales_bastan_para_fiarse():
+    """Visto en el juego: la lista llega varias veces por segundo, siempre igual."""
+    lua = runtime(subastas=[mia(10, 100_000)])
+    contar_peticiones_de_lista(lua, responde=False)
+    abrir_casa(lua, esperar=False)
+    assert pulsar(lua) is None
+
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    assert pulsar(lua) is None
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    assert pulsar(lua) == "buscar"
+
+
+def test_si_la_lista_cambia_entre_dos_llegadas_no_se_fia_aun():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    contar_peticiones_de_lista(lua, responde=False)
+    abrir_casa(lua, esperar=False)
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    poner(lua, "SUBASTAS", [mia(10, 100_000), mia(12, 100_000)])
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+    assert pulsar(lua) is None
+
+
+def test_dos_listas_vacias_no_bastan():
+    lua = runtime(subastas=[])
+    contar_peticiones_de_lista(lua, responde=False)
+    abrir_casa(lua, esperar=False)
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+    assert pulsar(lua) is None
+
+
+def test_al_volver_enseguida_postea_sin_buscar_otra_vez():
+    """El precio de hace un momento vale: se ahorra la busqueda y la espera."""
+    lua = runtime()
+    devolver(lua, 10, precio=100_000, rival=90_000)
+    en_la_bolsa(lua, 3)
+    buscadas = lua.globals().BUSCADAS
+    abrir_casa(lua, esperar=False)
+
+    assert estado(lua) == "Postear"
+    assert pulsar(lua) == "postear"
+    assert llamadas(lua) == [("PostItem", 0, 3, 1, 1, 90_000)]
+    assert lua.globals().BUSCADAS == buscadas
+
+
+def test_con_el_precio_de_hace_minutos_si_vuelve_a_buscar():
+    lua = runtime()
+    devolver(lua, 10, precio=100_000, rival=90_000)
+    en_la_bolsa(lua, 3)
+    lua.globals().AHORA = lua.globals().AHORA + 121
+    abrir_casa(lua)
+
+    assert pulsar(lua) == "buscar"
+    assert llamadas(lua) == []
+
+
+def test_no_empieza_a_buscar_mientras_un_posteo_espera_respuesta():
+    lua = runtime()
+    devolver(lua, 10, 12)
+    en_la_bolsa(lua, 3, 4)
+    lua.globals().CREAR_SUBASTA = False
+    abrir_casa(lua)
+    assert pulsar(lua) == "postear"
+    buscadas = lua.globals().BUSCADAS
+
+    assert pulsar(lua) is None
+    assert lua.globals().BUSCADAS == buscadas
+
+
+def test_tras_postear_lo_reciente_la_siguiente_pulsacion_busca():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    abrir_casa(lua)
+    assert pulsar(lua) == "postear"
+
+    assert pulsar(lua) == "buscar"
+
+
+def test_lo_devuelto_que_repusiste_a_mano_sale_de_la_cola():
+    """Con el buzon de TSM el addon no ve el correo: lo nota en la casa, al ver
+    una subasta nueva de ese objeto y ninguna copia en la bolsa."""
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "SUBASTAS", [mia(50, 95_000)])
+    en_la_casa(lua, [])
+    lua.globals().AHORA = lua.globals().AHORA + 600
+    detectar(lua)
+
+    assert cola(lua) == []
+    assert estado(lua) == "Nada que repostear"
+
+
+def test_si_la_copia_sigue_en_la_bolsa_no_se_olvida():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "SUBASTAS", [mia(50, 95_000)])
+    en_la_casa(lua, [])
+    en_la_bolsa(lua, 3)
+    lua.globals().AHORA = lua.globals().AHORA + 600
+    detectar(lua)
+
+    assert [e["auctionID"] for e in cola(lua)] == [10]
+
+
+def test_una_subasta_de_antes_de_cancelar_no_cuenta_como_repuesta():
+    """Otra copia que ya estaba puesta no dice nada de la cancelada, que puede
+    seguir en el buzon."""
+    lua = runtime(subastas=[mia(10, 100_000), mia(20, 80_000)])
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    detectar(lua)
+    assert pulsar(lua) == "cancelar"
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+    cerrar_casa(lua)
+
+    poner(lua, "SUBASTAS", [mia(20, 80_000)])
+    lua.globals().AHORA = lua.globals().AHORA + 600
+    detectar(lua)
+
+    assert [e["auctionID"] for e in cola(lua)] == [10]
+
+
+# ---------------------------------------------------------------------------
+#  Todo con una tecla: la de interaccion, el buzon de TSM y recoger solo
+# ---------------------------------------------------------------------------
+
+
+def test_el_buzon_de_tsm_tambien_cuenta_como_buzon():
+    """TSM oculta el buzon de Blizzard, pero el juego avisa igual al abrirlo."""
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    lua.globals().DISPARAR("MAIL_SHOW")  # MailFrame sigue oculto
+
+    assert pulsar(lua) == "recoger"
+
+
+def test_al_abrir_el_buzon_recoge_solo_las_cartas_de_lo_cancelado():
+    lua = runtime()
+    devolver(lua, 10, 12)
+    poner(lua, "CORREO", [carta(), carta(asunto="Hola"), carta()])
+    abrir_buzon(lua)
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert llamadas(lua) == [("TakeInboxItem", 1, 1)]
+
+    # La carta sale del buzon y el objeto llega a la bolsa.
+    poner(lua, "CORREO", [carta(asunto="Hola"), carta()])
+    en_la_bolsa(lua, 3)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert llamadas(lua) == [("TakeInboxItem", 1, 1), ("TakeInboxItem", 2, 1)]
+
+    poner(lua, "CORREO", [carta(asunto="Hola")])
+    en_la_bolsa(lua, 3, 4)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert len(llamadas(lua)) == 2
+    assert len(avisos(lua)) == 1
+    assert "Vuelve a la casa a postear" in avisos(lua)[0]
+
+
+def test_no_recoge_solo_mientras_el_juego_atiende_otra_carta():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    lua.globals().CORREO_PENDIENTE = True
+    abrir_buzon(lua)
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert llamadas(lua) == []
+
+    lua.globals().CORREO_PENDIENTE = False
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert llamadas(lua) == [("TakeInboxItem", 1, 1)]
+
+
+def test_si_el_juego_da_un_error_en_el_buzon_deja_de_recoger_solo():
+    """Con la bolsa llena, por ejemplo: no se insiste cada pocos segundos."""
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    abrir_buzon(lua)
+    lua.globals().VENCER_TEMPORIZADORES()
+    lua.globals().DISPARAR("UI_ERROR_MESSAGE", 1, "Inventario lleno")
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 5
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert llamadas(lua) == [("TakeInboxItem", 1, 1)]
+
+
+def test_cerrar_el_buzon_para_la_recogida():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    abrir_buzon(lua)
+    lua.globals().BUZON_ABIERTO = False
+    lua.globals().DISPARAR("MAIL_CLOSED")
+    lua.globals().VENCER_TEMPORIZADORES()
+
+    assert llamadas(lua) == []
+
+
+def enlaces(lua):
+    return a_python(lua.globals().ENLACES)
+
+
+def test_con_la_casa_abierta_la_tecla_de_interaccion_hace_el_reposteo():
+    lua = runtime()
+    abrir_casa(lua)
+    assert enlaces(lua) == {"º": "WOWALERTS_SIGUIENTE"}
+
+    cerrar_casa(lua)
+    assert enlaces(lua) == []
+
+
+def test_con_el_buzon_abierto_tambien():
+    lua = runtime()
+    abrir_buzon(lua)
+    assert enlaces(lua) == {"º": "WOWALERTS_SIGUIENTE"}
+
+    lua.globals().BUZON_ABIERTO = False
+    lua.globals().DISPARAR("MAIL_CLOSED")
+    assert enlaces(lua) == []
+
+
+def test_sin_tecla_de_interaccion_no_toma_ninguna():
+    lua = runtime()
+    lua.execute("TECLAS = {}")
+    abrir_casa(lua)
+
+    assert enlaces(lua) == []
+
+
+def test_en_combate_no_toca_las_teclas_y_las_suelta_al_salir():
+    lua = runtime()
+    abrir_casa(lua)
+    lua.globals().EN_COMBATE = True
+    cerrar_casa(lua)
+    assert enlaces(lua) == {"º": "WOWALERTS_SIGUIENTE"}
+
+    lua.globals().EN_COMBATE = False
+    lua.globals().DISPARAR("PLAYER_REGEN_ENABLED")
+    assert enlaces(lua) == []
+
+
+# ---------------------------------------------------------------------------
+#  Avisar al terminar, sin pulsar mas
+# ---------------------------------------------------------------------------
+
+
+def pantalla(lua):
+    return a_python(lua.globals().PANTALLA)
+
+
+def test_avisa_en_cuanto_el_juego_confirma_la_ultima_cancelacion():
+    lua = runtime()
+    adelantadas(lua, 10, 12)
+    assert pulsar(lua) == "cancelar"
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+    assert avisos(lua) == []
+
+    assert pulsar(lua) == "cancelar"
+    lua.globals().DISPARAR("AUCTION_CANCELED", 12)
+    assert len(avisos(lua)) == 1
+    assert "Todas canceladas (2)" in avisos(lua)[0]
+    assert "Recoge lo devuelto en el buzon" in avisos(lua)[0]
+
+
+def test_el_aviso_sale_en_el_centro_de_la_pantalla_y_suena():
+    lua = runtime()
+    adelantadas(lua, 10)
+    pulsar(lua)
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+
+    assert len(pantalla(lua)) == 1
+    assert "Todas canceladas (1)" in pantalla(lua)[0]
+    assert len(a_python(lua.globals().SONIDOS)) == 1
+
+
+def test_no_avisa_de_cancelado_todo_mientras_sigue_buscando():
+    lua = runtime(subastas=[mia(10, 100_000), mia(20, 50_000, ilvl=298)])
+    poner(lua, "RESULTADOS", {
+        f"{GREBAS}:311:0": [en_venta(900, 90_000)],
+        f"{GREBAS}:298:0": [en_venta(901, 40_000)],
+    })
+    abrir_casa(lua)
+    assert pulsar(lua) == "buscar"
+    lua.globals().RESPONDER()
+    assert pulsar(lua) == "cancelar"
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+    assert avisos(lua) == []
+
+    lua.globals().RESPONDER()
+    assert pulsar(lua) == "cancelar"
+    lua.globals().DISPARAR("AUCTION_CANCELED", 20)
+    assert len(avisos(lua)) == 1
+    assert "Todas canceladas (2)" in avisos(lua)[0]
+
+
+def test_si_la_busqueda_acaba_sin_nada_adelantado_lo_dice_sin_pulsar():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    assert len(avisos(lua)) == 1
+    assert "Nada que repostear" in avisos(lua)[0]
+
+
+def test_avisa_en_cuanto_se_crea_el_ultimo_posteo():
+    lua = runtime()
+    devolver(lua, 10, 12)
+    en_la_bolsa(lua, 3, 4)
+    envejecer_precios(lua)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    assert pulsar(lua) == "postear"
+    assert avisos(lua) == []
+    assert pulsar(lua) == "postear"
+
+    assert len(avisos(lua)) == 1
+    assert "Nada que repostear" in avisos(lua)[0]
+
+
+# ---------------------------------------------------------------------------
+#  Lo recien posteado y el orden del buzon
+# ---------------------------------------------------------------------------
+
+
+def test_lo_que_acabas_de_postear_no_se_vuelve_a_buscar():
+    """Visto en el juego: tras postear, la busqueda miraba otra vez lo recien
+    puesto, que va el primero a precio de rival."""
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    abrir_casa(lua)
+    assert pulsar(lua) == "postear"  # el juego la crea como 5001
+    buscadas = lua.globals().BUSCADAS
+
+    poner(lua, "SUBASTAS", [mia(5001, 90_000)])
+    assert pulsar(lua) == "buscar"
+    assert lua.globals().BUSCADAS == buscadas
+    assert len(avisos(lua)) == 1
+    assert "Nada que repostear" in avisos(lua)[0]
+
+
+def test_tras_recoger_una_carta_espera_a_que_el_buzon_cambie():
+    """Visto en el juego: pedir la siguiente antes de que el buzon se reordene
+    daba "No se ha encontrado el objeto" y paraba la recogida."""
+    lua = runtime()
+    devolver(lua, 10, 12)
+    poner(lua, "CORREO", [carta(), carta()])
+    abrir_buzon(lua)
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert llamadas(lua) == [("TakeInboxItem", 1, 1)]
+
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")  # aun con las dos cartas
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert llamadas(lua) == [("TakeInboxItem", 1, 1)]
+
+    poner(lua, "CORREO", [carta()])
+    en_la_bolsa(lua, 3)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert llamadas(lua) == [("TakeInboxItem", 1, 1), ("TakeInboxItem", 1, 1)]

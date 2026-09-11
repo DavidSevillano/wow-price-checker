@@ -672,16 +672,44 @@ Casa de Subastas y del buzon, que ademas dice que va a hacer.
 
 **El ciclo:**
 
-1. Abre la Casa de Subastas. El boton dice `Leyendo tus subastas...` unos cinco
-   segundos, mientras llega la lista de lo que tienes puesto. Cuando diga
-   `Buscar undercuts`, pulsa: busca tus objetos vigilados.
-2. `Cancelar (N)`: pulsa una vez por cada subasta adelantada.
+1. Abre la Casa de Subastas. El boton dice `Leyendo tus subastas...` un momento,
+   mientras llega la lista de lo que tienes puesto (hasta cinco segundos si no
+   tienes nada puesto). Cuando diga `Buscar undercuts`, pulsa: busca tus objetos
+   vigilados.
+2. `Cancelar (N)`: pulsa una vez por cada subasta adelantada. No hace falta
+   esperar a que termine la busqueda: lo que ya sabe que esta adelantado lo
+   cancela mientras sigue mirando lo demas.
 3. Ve al buzon. `Recoger del buzon`: pulsa una vez por cada carta. Solo recoge
    lo cancelado, el resto del correo no lo toca.
-4. Vuelve a la casa y pulsa para buscar otra vez, por si el rival se ha movido.
+4. Vuelve a la casa. Si han pasado menos de dos minutos desde la busqueda que
+   lo cancelo, `Postear` sale nada mas abrir, con el precio de entonces, sin
+   buscar ni esperar. Si ha pasado mas, pulsa para buscar otra vez, por si el
+   rival se ha movido: solo busca lo devuelto, porque lo que la busqueda anterior
+   vio sin nadie delante no se vuelve a mirar durante cinco minutos.
 5. `Postear`: pulsa una vez por cada objeto. Si el juego pide confirmar el
    precio, el boton dice `Confirmar posteo` y la siguiente pulsacion confirma.
    Mientras el juego crea la subasta, el boton dice `Posteando...`.
+
+**El buzon se recoge solo:** al abrirlo (el de Blizzard o el de TSM), el addon
+recoge una detras de otra las cartas de lo cancelado que tiene en la cola, y nada
+mas, como el "abrir todo" de TSM. Si el juego da un error (bolsa llena), para, y
+vuelve a intentarlo la proxima vez que abras el buzon.
+
+**Todo con una tecla:** si tienes asignada la tecla de interaccion del juego
+(`Interactuar con el objetivo`, la que abre el PNJ o el buzon que tienes
+delante), mientras la casa o el buzon esten abiertos esa tecla hace el
+siguiente paso del reposteo, y al cerrarlos vuelve a ser la de interaccion. El
+ciclo queda en: acercarte y pulsar (abre la casa), machacar (cancela), ir al
+buzon y pulsar (abre y recoge solo), volver y pulsar (abre la casa), machacar
+(repostea), y cambiar de personaje. Si la tecla es la rueda del raton, cuenta
+cuando el cursor esta sobre el mundo; sobre una lista, la rueda sigue haciendo
+scroll. En combate el addon no toca las teclas.
+
+Puedes machacar la tecla sin mirar: las pulsaciones que llegan mientras el juego
+responde no hacen nada. En cuanto en esa ventana ya no queda nada que hacer, sin
+esperar a otra pulsacion, sale un aviso en el centro de la pantalla, en el chat
+y con un sonido: `Todas canceladas (N). Recoge lo devuelto en el buzon`, `Vuelve
+a la casa a postear` o `Nada que repostear`.
 
 **El precio** es el del rival mas barato que va por delante de ti. Si mientras
 ibas al buzon ha desaparecido, se repostea a tu precio de antes: nunca sube.
@@ -702,9 +730,12 @@ Lo que conviene saber:
   precios`.
 - La cola se guarda por personaje y sobrevive a `/reload`. Lo que lleve mas de
   48 horas desde que se detecto se descarta, aunque este en la bolsa.
-- Si vuelves a poner algo a mano, o lo vendes o lo envias, el addon lo saca de
-  la cola la proxima vez que abras el buzon y vea que no esta ni alli ni en la
-  bolsa.
+- Si vuelves a poner algo a mano, el addon lo saca de la cola la proxima vez que
+  busque en la casa: ve una subasta tuya de ese objeto creada despues de
+  cancelarlo y ninguna copia en la bolsa. Si lo vendes o lo envias, lo saca al
+  abrir el buzon de Blizzard y ver que no esta ni alli ni en la bolsa. Excepcion:
+  si pones a mano otra copia del mismo objeto e ilvl mientras la cancelada sigue
+  sin recoger en el buzon, el addon da la cancelada por repuesta.
 - Si tienes mas de 50 cartas en el buzon, el juego solo deja ver las primeras:
   el addon no olvida nada mientras tanto. Recoge o borra correo para bajar de 50.
 - **Si cambias los objetos, `orden_personajes` o `listing_hours`**, regenera la
