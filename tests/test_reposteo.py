@@ -45,7 +45,7 @@ NULO = setmetatable({}, { __index = function() return function() return NULO end
 -- Cada frame se acuerda de que eventos ha registrado. Antes DISPARAR llamaba
 -- a todos los manejadores para cualquier evento, y un RegisterEvent olvidado
 -- en el addon de verdad nunca se habria notado aqui.
-function CreateFrame(_, nombre)
+function CreateFrame(_, nombre, padre)
     local registro = { eventos = {} }
     local frame = setmetatable({}, { __index = function() return function() return NULO end end })
     frame.RegisterEvent = function(self, evento) registro.eventos[evento] = true end
@@ -54,6 +54,20 @@ function CreateFrame(_, nombre)
         if script == "OnEvent" then registro.onEvent = fn end
         rawset(self, "script_" .. script, fn)
     end
+    rawset(frame, "_texto", "")
+    rawset(frame, "_habilitado", true)
+    rawset(frame, "_padre", padre)
+    rawset(frame, "_visible", true)
+    frame.SetText = function(self, texto) rawset(self, "_texto", texto) end
+    frame.GetText = function(self) return rawget(self, "_texto") end
+    frame.Enable = function(self) rawset(self, "_habilitado", true) end
+    frame.Disable = function(self) rawset(self, "_habilitado", false) end
+    frame.IsEnabled = function(self) return rawget(self, "_habilitado") end
+    frame.SetParent = function(self, p) rawset(self, "_padre", p) end
+    frame.GetParent = function(self) return rawget(self, "_padre") end
+    frame.Show = function(self) rawset(self, "_visible", true) end
+    frame.Hide = function(self) rawset(self, "_visible", false) end
+    frame.IsShown = function(self) return rawget(self, "_visible") end
     registro.frame = frame
     marcos[#marcos + 1] = registro
     if nombre then _G[nombre] = frame end
@@ -97,6 +111,14 @@ AuctionHouseFrame = { IsShown = function() return CASA_ABIERTA end }
 BUZON_ABIERTO = false
 MailFrame = { IsShown = function() return BUZON_ABIERTO end }
 
+AVISO_VISIBLE = nil
+OCULTADOS = {}
+function StaticPopup_Visible(nombre) return AVISO_VISIBLE == nombre end
+function StaticPopup_Hide(nombre)
+    OCULTADOS[#OCULTADOS + 1] = nombre
+    if AVISO_VISIBLE == nombre then AVISO_VISIBLE = nil end
+end
+
 Enum = { AuctionHouseSortOrder = { Price = 0 } }
 
 local function clave(k)
@@ -125,6 +147,11 @@ C_AuctionHouse = {
         -- Como el juego: el objeto queda bloqueado mientras se publica.
         local hueco = BOLSA[loc.bagID .. ":" .. loc.slotIndex]
         if hueco then hueco.isLocked = true end
+        if NECESITA_CONFIRMAR then
+            -- El AuctionHouseFrame de Blizzard abre su aviso de precio al
+            -- pedir confirmacion.
+            AVISO_VISIBLE = "AUCTION_HOUSE_POST_WARNING"
+        end
         return NECESITA_CONFIRMAR
     end,
     ConfirmPostItem = function(loc, duracion, cantidad, puja, precio)
@@ -165,10 +192,7 @@ local function enHueco(loc) return BOLSA[loc.bagID .. ":" .. loc.slotIndex] end
 C_Item = {
     DoesItemExist = function(loc) return enHueco(loc) ~= nil end,
     GetItemID = function(loc) local h = enHueco(loc); return h and h.itemID end,
-    GetCurrentItemLevel = function(loc)
-        local h = enHueco(loc)
-        return h and GetDetailedItemLevelInfo(h.hyperlink)
-    end,
+    GetItemLink = function(loc) local h = enHueco(loc); return h and h.hyperlink end,
     IsBound = function(loc) local h = enHueco(loc); return h ~= nil and h.isBound == true end,
 }
 C_AuctionHouse.IsSellItemValid = function(loc)
@@ -1138,6 +1162,99 @@ def test_si_el_objeto_cambia_de_hueco_antes_de_confirmar_no_se_confirma():
     assert llamadas(lua)[-1][:3] == ("PostItem", 0, 4)
 
 
+def test_no_postea_una_copia_que_la_casa_no_acepta():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3, 4)
+    lua.execute("C_AuctionHouse.IsSellItemValid = function(loc) return loc.slotIndex ~= 3 end")
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+
+    assert pulsar(lua) == "postear"
+    assert llamadas(lua)[-1][:3] == ("PostItem", 0, 4)
+
+
+def test_una_copia_ligada_no_se_postea_aunque_la_casa_la_acepte():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(
+        lua,
+        "BOLSA",
+        {
+            "0:3": {"itemID": GREBAS, "hyperlink": "[Grebas]ilvl311", "isLocked": False, "isBound": True},
+            "0:4": {"itemID": GREBAS, "hyperlink": "[Grebas]ilvl311", "isLocked": False},
+        },
+    )
+    lua.execute("C_AuctionHouse.IsSellItemValid = function() return true end")
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+
+    assert pulsar(lua) == "postear"
+    assert llamadas(lua)[-1][:3] == ("PostItem", 0, 4)
+
+
+def test_la_misma_pieza_de_otro_ilvl_en_el_hueco_no_se_confirma():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+    assert pulsar(lua) == "postear"
+
+    # Se ordena la bolsa: en el hueco 3 queda la misma pieza pero de otro ilvl.
+    poner(
+        lua,
+        "BOLSA",
+        {"0:3": {"itemID": GREBAS, "hyperlink": "[Grebas]ilvl298", "isLocked": False}},
+    )
+    assert pulsar(lua) is None
+    assert "ConfirmPostItem" not in [c[0] for c in llamadas(lua)]
+
+
+def test_al_confirmar_se_cierra_el_aviso_de_precio_de_blizzard():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+
+    assert pulsar(lua) == "postear"
+    assert lua.eval("AVISO_VISIBLE") == "AUCTION_HOUSE_POST_WARNING"
+
+    assert pulsar(lua) == "confirmar"
+    assert a_python(lua.globals().OCULTADOS) == ["AUCTION_HOUSE_POST_WARNING"]
+
+
+def test_si_se_descarta_la_confirmacion_tambien_se_cierra_el_aviso():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().NECESITA_CONFIRMAR = True
+    assert pulsar(lua) == "postear"
+
+    # Se ordena la bolsa: en el hueco 3 queda otra cosa y las grebas pasan al 4.
+    poner(
+        lua,
+        "BOLSA",
+        {
+            "0:3": {"itemID": 999, "hyperlink": "[Otra]ilvl311", "isLocked": False},
+            "0:4": {"itemID": GREBAS, "hyperlink": "[Grebas]ilvl311", "isLocked": False},
+        },
+    )
+    assert pulsar(lua) is None
+    assert a_python(lua.globals().OCULTADOS) == ["AUCTION_HOUSE_POST_WARNING"]
+    assert "ConfirmPostItem" not in [c[0] for c in llamadas(lua)]
+
+
+def test_sin_confirmacion_no_se_toca_ningun_aviso():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+
+    assert pulsar(lua) == "postear"
+    assert a_python(lua.globals().OCULTADOS) == []
+
+
 def test_con_la_casa_saturada_la_confirmacion_espera():
     lua = runtime()
     devolver(lua, 10)
@@ -1200,7 +1317,7 @@ def test_el_panel_dice_que_toca():
     assert estado(lua) == "Buscar undercuts"
 
     adelantadas(lua, 10, 12)
-    assert estado(lua) == "Siguiente · 2 por cancelar · 0 por postear"
+    assert estado(lua) == "Cancelar · quedan 2"
 
 
 def test_mientras_busca_el_panel_lo_dice():
@@ -1230,6 +1347,84 @@ def test_con_una_confirmacion_pendiente_el_panel_la_pide():
     assert estado(lua) == "Confirmar posteo"
 
 
+def test_en_el_buzon_el_panel_dice_si_hay_que_recoger():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "CORREO", [carta()])
+    abrir_buzon(lua)
+    assert estado(lua) == "Recoger del buzon"
+
+    poner(lua, "CORREO", [])
+    assert estado(lua) == "Vuelve a la casa a postear"
+
+    otro = runtime()
+    abrir_buzon(otro)
+    assert estado(otro) == "Nada que recoger"
+
+
+def test_en_la_casa_el_panel_dice_si_postear_o_ir_al_buzon():
+    lua = runtime()
+    devolver(lua, 10)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    assert estado(lua) == "Recoge lo devuelto en el buzon"
+
+    en_la_bolsa(lua, 3)
+    assert estado(lua) == "Postear · quedan 1"
+
+
+def test_si_no_se_pudo_repasar_el_precio_el_panel_lo_dice():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    abrir_casa(lua)
+    pulsar(lua)
+    lua.globals().VENCER_TEMPORIZADORES()  # la respuesta no llega
+
+    assert estado(lua) == "Cierra y abre la casa para repasar precios"
+
+
+def test_el_boton_dice_que_toca_y_se_desactiva_mientras_busca():
+    lua = runtime(subastas=[mia(10, 100_000), mia(20, 50_000, ilvl=298)])
+    abrir_casa(lua, esperar=False)
+    assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Leyendo tus subastas..."
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 5
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Buscar undercuts"
+    assert lua.eval("WowAlertsReposteoBoton:IsEnabled()")
+
+    pulsar(lua)
+    assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Buscando 1/2..."
+    assert not lua.eval("WowAlertsReposteoBoton:IsEnabled()")
+
+
+def test_el_boton_se_muda_al_buzon():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    abrir_casa(lua)
+    assert lua.eval("WowAlertsReposteoBoton:GetParent() == AuctionHouseFrame")
+
+    lua.globals().CASA_ABIERTA = False
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    abrir_buzon(lua)
+    assert lua.eval("WowAlertsReposteoBoton:GetParent() == MailFrame")
+
+
+def test_si_la_casa_aun_no_habia_cargado_el_boton_aparece_despues():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    original = lua.globals().AuctionHouseFrame
+    lua.globals().AuctionHouseFrame = None
+    lua.globals().CASA_ABIERTA = True
+    lua.globals().DISPARAR("AUCTION_HOUSE_SHOW")
+    lua.globals().AuctionHouseFrame = original
+
+    assert lua.eval("WowAlertsReposteoBoton") is None
+
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+    assert lua.eval("WowAlertsReposteoBoton") is not None
+    assert lua.eval("WowAlertsReposteoBoton:GetParent() == AuctionHouseFrame")
+
+
 def test_las_entradas_de_mas_de_48_horas_se_descartan():
     lua = runtime()
     devolver(lua, 10)
@@ -1256,6 +1451,8 @@ def test_la_tecla_asignable_llama_a_siguiente():
     [binding] = arbol.getroot().findall("Binding")
     assert binding.get("name") == "WOWALERTS_SIGUIENTE"
     assert binding.text.strip() == "WowAlertsReposteo.Siguiente()"
+
+    assert binding.get("header") == "WOWALERTS"
 
     lua = runtime()
     assert lua.globals().BINDING_NAME_WOWALERTS_SIGUIENTE

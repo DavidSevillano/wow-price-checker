@@ -449,13 +449,26 @@ local confirmacion = nil
 
 -- Si en el hueco guardado sigue el mismo objeto. Entre postear y confirmar se
 -- puede ordenar la bolsa, y confirmar leeria lo que haya ahora en ese hueco.
+-- El ilvl se lee del enlace, igual que al buscar en la bolsa: otra funcion
+-- podria dar otro numero y la confirmacion no llegaria nunca.
 local function sigueEnSuSitio(c)
     if not (C_Item and C_Item.DoesItemExist) then
         return true
     end
-    return C_Item.DoesItemExist(c.sitio)
-        and C_Item.GetItemID(c.sitio) == c.itemID
-        and C_Item.GetCurrentItemLevel(c.sitio) == c.ilvl
+    if not C_Item.DoesItemExist(c.sitio) or C_Item.GetItemID(c.sitio) ~= c.itemID then
+        return false
+    end
+    local enlace = C_Item.GetItemLink(c.sitio)
+    return enlace ~= nil and GetDetailedItemLevelInfo(enlace) == c.ilvl
+end
+
+-- La casa de Blizzard abre su propio aviso de precio al postear, y tapa la
+-- ventana hasta que se cierra. Su boton de aceptar no confirma lo nuestro, asi
+-- que en cuanto la confirmacion se usa o se descarta, el aviso sobra.
+local function cerrarAvisoDePrecio()
+    if StaticPopup_Visible and StaticPopup_Hide and StaticPopup_Visible("AUCTION_HOUSE_POST_WARNING") then
+        StaticPopup_Hide("AUCTION_HOUSE_POST_WARNING")
+    end
 end
 
 -- Hace UNA accion y devuelve cual ("buscar", "cancelar", "recoger", "postear",
@@ -471,13 +484,9 @@ function R.Siguiente()
                 if sigueEnSuSitio(c) then
                     C_AuctionHouse.ConfirmPostItem(c.sitio, c.duracion, 1, nil, c.precio)
                     quitarEntrada(c.auctionID)
-                    if StaticPopup_Hide then
-                        -- La casa de Blizzard abre su propio aviso de precio;
-                        -- ya confirmado, sobra.
-                        StaticPopup_Hide("AUCTION_HOUSE_POST_WARNING")
-                    end
                     hecho = "confirmar"
                 end
+                cerrarAvisoDePrecio()
             end
         elseif not buscadoEnEstaVisita then
             if subastasListas() then
@@ -546,6 +555,15 @@ local function contar(estadoBuscado)
     return n
 end
 
+local function devueltaEnBolsa()
+    for _, e in ipairs(cola()) do
+        if e.estado == "devuelta" and copiasEnBolsa(e.itemID, e.ilvl) > 0 then
+            return true
+        end
+    end
+    return false
+end
+
 function R.Estado()
     if confirmacion then
         return "Confirmar posteo"
@@ -560,13 +578,34 @@ function R.Estado()
         if buscando() then
             return ("Buscando %s/%s..."):format(siguienteGrupo, #ordenGrupos)
         end
-    end
-    local porCancelar = contar("cancelar")
-    local devueltas = contar("devuelta")
-    if porCancelar + devueltas + contar("cancelando") == 0 then
+        if primeraPorCancelar() then
+            return ("Cancelar · quedan %s"):format(contar("cancelar"))
+        end
+        if paraPostear() then
+            return ("Postear · quedan %s"):format(contar("devuelta"))
+        end
+        if contar("cancelando") > 0 then
+            return "Cancelando..."
+        end
+        if devueltaEnBolsa() then
+            -- Esta en la bolsa pero su precio no se ha podido repasar.
+            return "Cierra y abre la casa para repasar precios"
+        end
+        if contar("devuelta") > 0 then
+            return "Recoge lo devuelto en el buzon"
+        end
         return "Nada que repostear"
     end
-    return ("Siguiente · %s por cancelar · %s por postear"):format(porCancelar, devueltas)
+    if buzonAbierto() then
+        if cartaPorRecoger() then
+            return "Recoger del buzon"
+        end
+        if contar("devuelta") > 0 then
+            return "Vuelve a la casa a postear"
+        end
+        return "Nada que recoger"
+    end
+    return "Nada que repostear"
 end
 
 local boton = nil
@@ -589,6 +628,13 @@ local function colocarBoton(padre)
 end
 
 function R.refrescarPanel()
+    -- La interfaz de la casa se carga bajo demanda: si al abrir aun no existia,
+    -- el boton se coloca en el siguiente refresco.
+    if casaAbierta() and (not boton or boton:GetParent() ~= AuctionHouseFrame) then
+        colocarBoton(AuctionHouseFrame)
+    elseif buzonAbierto() and (not boton or boton:GetParent() ~= MailFrame) then
+        colocarBoton(MailFrame)
+    end
     if not boton then
         return
     end
