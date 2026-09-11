@@ -681,6 +681,7 @@ Casa de Subastas y del buzon, que ademas dice que va a hacer.
 4. Vuelve a la casa y pulsa para buscar otra vez, por si el rival se ha movido.
 5. `Postear`: pulsa una vez por cada objeto. Si el juego pide confirmar el
    precio, el boton dice `Confirmar posteo` y la siguiente pulsacion confirma.
+   Mientras el juego crea la subasta, el boton dice `Posteando...`.
 
 **El precio** es el del rival mas barato que va por delante de ti. Si mientras
 ibas al buzon ha desaparecido, se repostea a tu precio de antes: nunca sube.
@@ -700,7 +701,9 @@ Lo que conviene saber:
   segundos, se salta, y el boton te pide `Cierra y abre la casa para repasar
   precios`.
 - La cola se guarda por personaje y sobrevive a `/reload`. Lo que lleve mas de
-  48 horas se descarta.
+  48 horas desde que se detecto se descarta, aunque este en la bolsa.
+- Si vuelves a poner algo a mano, o lo vendes o lo envias, el addon se da
+  cuenta al buscar o al abrir el buzon y lo saca de la cola.
 - **Si cambias los objetos, `orden_personajes` o `listing_hours`**, regenera la
   lista del addon y vuelve a copiarlo (apartado 5.1):
 
