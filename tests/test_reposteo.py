@@ -1582,3 +1582,15 @@ def test_en_el_buzon_no_mira_la_bolsa_por_cartas_ajenas():
 
     assert pulsar(lua) is None
     assert lua.eval("MIRADAS") == 0
+
+
+def test_la_version_del_toc_es_la_del_addon():
+    """/wa dice la version del codigo; la lista de addons del juego, la del .toc."""
+    import re
+
+    toc = (CARPETA / "WowAlertsExport.toc").read_text(encoding="utf-8")
+    lua = (CARPETA / "WowAlertsExport.lua").read_text(encoding="utf-8")
+
+    en_toc = re.search(r"^## Version: (.+)$", toc, re.MULTILINE).group(1).strip()
+    en_lua = re.search(r'^local ADDON_VERSION = "(.+)"$', lua, re.MULTILINE).group(1)
+    assert en_toc == en_lua == "1.15"

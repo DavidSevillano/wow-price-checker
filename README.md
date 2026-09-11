@@ -660,6 +660,56 @@ detallan las subastas adelantadas: listar las que van bien seria ilegible.
 No se publica uno nuevo cada hora: se reescribe el mismo, cuyo id se guarda en
 `.state/panel.json`. Si lo borras, la pasada siguiente crea otro.
 
+### 5.10 Repostear con una tecla
+
+El addon puede hacer el ciclo de reposteo por ti: cancelar lo que te han
+adelantado, recoger lo devuelto del buzon y volver a ponerlo **al precio del que
+te adelanto**. Tu solo pulsas una tecla.
+
+**Asignar la tecla**, una vez: `Opciones > Atajos de teclado > AddOns > WoW
+Alerts > Reposteo: siguiente paso`. Tambien vale el boton que sale debajo de la
+Casa de Subastas y del buzon, que ademas dice que va a hacer.
+
+**El ciclo:**
+
+1. Abre la Casa de Subastas. El boton dice `Leyendo tus subastas...` unos cinco
+   segundos, mientras llega la lista de lo que tienes puesto. Cuando diga
+   `Buscar undercuts`, pulsa: busca tus objetos vigilados.
+2. `Cancelar (N)`: pulsa una vez por cada subasta adelantada.
+3. Ve al buzon. `Recoger del buzon`: pulsa una vez por cada carta. Solo recoge
+   lo cancelado, el resto del correo no lo toca.
+4. Vuelve a la casa y pulsa para buscar otra vez, por si el rival se ha movido.
+5. `Postear`: pulsa una vez por cada objeto. Si el juego pide confirmar el
+   precio, el boton dice `Confirmar posteo` y la siguiente pulsacion confirma.
+
+**El precio** es el del rival mas barato que va por delante de ti. Si mientras
+ibas al buzon ha desaparecido, se repostea a tu precio de antes: nunca sube.
+
+**Una pulsacion es una accion, siempre.** El juego solo deja cancelar y postear
+en respuesta a una tecla o un clic tuyo, igual que la tecla de "Cancel Undercut"
+de Auctionator. No uses programas ni teclados que repitan la tecla por ti.
+
+Lo que conviene saber:
+
+- Solo repostea los objetos de `config.yaml` con avisos de undercut, y no toca
+  mascotas.
+- Tus personajes de `orden_personajes` no cuentan como rivales. Si vendes con
+  uno que no esta en la lista, anadelo.
+- Solo cancela lo que la busqueda de esta visita ha confirmado: cancelar cuesta
+  el deposito. Si la casa no responde a la busqueda de un objeto en diez
+  segundos, se salta, y el boton te pide `Cierra y abre la casa para repasar
+  precios`.
+- La cola se guarda por personaje y sobrevive a `/reload`. Lo que lleve mas de
+  48 horas se descarta.
+- **Si cambias los objetos, `orden_personajes` o `listing_hours`**, regenera la
+  lista del addon y vuelve a copiarlo (apartado 5.1):
+
+```bash
+.venv\Scripts\python.exe generar_vigilados.py
+```
+
+Un test falla si se te olvida.
+
 ## 6. Avisos de venta
 
 Ademas de avisarte de los undercuts, el vigilante te dice **que se te ha
