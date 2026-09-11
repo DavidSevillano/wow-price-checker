@@ -35,12 +35,16 @@ def test_una_duracion_que_el_juego_no_admite_se_explica():
         duracion_de(6)
 
 
-def test_solo_entran_los_objetos_con_avisos_de_undercut():
+def test_entran_los_objetos_marcados_para_repostear():
     reglas = {
         1: ItemRule(name="Grebas", max_price=10),
         2: ItemRule(name="Patron", max_price=10, avisar_undercut=False),
+        3: ItemRule(
+            name="Receta", max_price=10, avisar_undercut=False, repostear=True
+        ),
+        4: ItemRule(name="Montura", max_price=10, repostear=False),
     }
-    assert objetos_a_repostear(reglas) == {1: "Grebas"}
+    assert objetos_a_repostear(reglas) == {1: "Grebas", 3: "Receta"}
 
 
 def test_las_mascotas_no_entran_en_objetos_a_repostear():
@@ -77,9 +81,7 @@ def test_el_fichero_del_repositorio_esta_al_dia_con_config_yaml():
     lua.execute(texto)
     vigilados = lua.globals().WowAlertsVigilados
 
-    esperados = {
-        r.name for r in config.items if r.avisar_undercut and not r.es_mascota
-    }
+    esperados = {r.name for r in config.items if r.se_repostea and not r.es_mascota}
     assert set(vigilados.objetos.values()) == esperados
     assert list(vigilados.personajes.values()) == list(config.orden_personajes)
     assert vigilados.duracion == duracion_de(config.settings.listing_hours)

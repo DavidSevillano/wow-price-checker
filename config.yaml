@@ -80,11 +80,13 @@ items:
     item_id: 258126
     max_price: 60000
     avisar_undercut: false
+    repostear: true
 
   - name: "Pattern: Luxurious Silvermoon Lounge Cushion"
     item_id: 258131
     max_price: 40000
     avisar_undercut: false
+    repostear: true
 
   # --------------------------------------------------------------------------
   #  Monturas caras

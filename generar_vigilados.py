@@ -53,14 +53,17 @@ def duracion_de(listing_hours: int) -> int:
 
 
 def objetos_a_repostear(reglas: Mapping[int, ItemRule]) -> dict[int, str]:
-    """{item_id: nombre} de los objetos con avisos de undercut.
+    """{item_id: nombre} de los objetos que el addon repostea con la tecla.
+
+    Lo dice `repostear` en config.yaml, que sin valor sigue a `avisar_undercut`:
+    de las recetas no quieres avisos de undercut, pero si repostearlas.
 
     Las mascotas se quedan fuera: en la casa todas son la misma jaula.
     """
     return {
         item_id: regla.name
         for item_id, regla in sorted(reglas.items())
-        if regla.avisar_undercut and not regla.es_mascota
+        if regla.se_repostea and not regla.es_mascota
     }
 
 
