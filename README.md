@@ -705,6 +705,8 @@ Lo que conviene saber:
 - Si vuelves a poner algo a mano, o lo vendes o lo envias, el addon lo saca de
   la cola la proxima vez que abras el buzon y vea que no esta ni alli ni en la
   bolsa.
+- Si tienes mas de 50 cartas en el buzon, el juego solo deja ver las primeras:
+  el addon no olvida nada mientras tanto. Recoge o borra correo para bajar de 50.
 - **Si cambias los objetos, `orden_personajes` o `listing_hours`**, regenera la
   lista del addon y vuelve a copiarlo (apartado 5.1):
 
