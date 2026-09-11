@@ -23,6 +23,17 @@ items:
     max_price: 100
 """
 
+CONFIG_REPOSTEO_SIN_UNDERCUT = """
+region: eu
+items:
+  - name: "Grebas"
+    max_price: 100
+  - name: "Receta"
+    max_price: 100
+    avisar_undercut: false
+    repostear: true
+"""
+
 
 def test_la_duracion_sale_de_listing_hours():
     assert duracion_de(12) == 1
@@ -98,6 +109,34 @@ def test_credenciales_invalidas_no_rompen_con_traceback(tmp_path, monkeypatch):
 
     config_path = tmp_path / "config.yaml"
     config_path.write_text(CONFIG_MINIMO, encoding="utf-8")
+    salida = tmp_path / "Vigilados.lua"
+
+    codigo = generar_vigilados.main(
+        [
+            "--config", str(config_path),
+            "--state-dir", str(tmp_path / "estado"),
+            "--salida", str(salida),
+        ]
+    )
+
+    assert codigo == generar_vigilados.EXIT_ERROR
+    assert not salida.exists()
+
+
+def test_falta_un_repostear_sin_undercut_no_escribe_nada_y_avisa(tmp_path, monkeypatch):
+    """Un objeto con `repostear: true` y `avisar_undercut: false` sin id
+    resuelto debe avisar igual: no lleva undercut, pero si tiene que repostearse.
+    """
+    monkeypatch.setattr(generar_vigilados, "load_dotenv", lambda *a, **k: None)
+
+    def _resuelve_a_medias(client, config, cache):
+        # Falta "Receta": simula que no se ha podido identificar su id.
+        return {1: ItemRule(name="Grebas", max_price=100)}
+
+    monkeypatch.setattr(generar_vigilados, "resolve_item_ids", _resuelve_a_medias)
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(CONFIG_REPOSTEO_SIN_UNDERCUT, encoding="utf-8")
     salida = tmp_path / "Vigilados.lua"
 
     codigo = generar_vigilados.main(
