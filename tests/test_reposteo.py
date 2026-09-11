@@ -1059,10 +1059,7 @@ def test_cancelar_va_antes_que_postear():
     lua = runtime()
     devolver(lua, 10)
     en_la_bolsa(lua, 3)
-    # Un id menor que el de la ya cancelada: una subasta distinta y mas
-    # antigua, no una posterior a la cancelacion, que confundiria al addon con
-    # una copia repuesta a mano.
-    poner(lua, "SUBASTAS", [mia(5, 100_000)])
+    poner(lua, "SUBASTAS", [mia(20, 100_000)])
     volver_a_la_casa(lua, [en_venta(999, 90_000)])
 
     assert pulsar(lua) == "cancelar"
@@ -1659,12 +1656,22 @@ def test_un_posteo_sin_respuesta_vuelve_a_la_fila_en_la_visita_siguiente():
     assert cola(lua) == []
 
 
-def test_si_la_repusiste_a_mano_sale_de_la_cola():
+def test_si_la_repusiste_a_mano_se_olvida_al_abrir_el_buzon():
     lua = runtime()
     devolver(lua, 10)
     poner(lua, "SUBASTAS", [mia(50, 90_000)])  # puesta a mano con Auctionator
     volver_a_la_casa(lua, [])
+    assert len(cola(lua)) == 1  # en la casa no se sabe si es la misma copia
 
+    lua.globals().CASA_ABIERTA = False
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    lua.globals().AHORA = lua.globals().AHORA + 120
+    abrir_buzon(lua)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+    assert len(cola(lua)) == 1  # primera vez que falta: aun no se olvida
+
+    lua.globals().AHORA = lua.globals().AHORA + 4
+    lua.globals().VENCER_TEMPORIZADORES()
     assert cola(lua) == []
 
 
@@ -1691,7 +1698,10 @@ def test_lo_devuelto_que_ya_no_esta_ni_en_el_buzon_ni_en_la_bolsa_se_olvida():
     lua.globals().AHORA = lua.globals().AHORA + 120
     abrir_buzon(lua)
     lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+    assert len(cola(lua)) == 1
 
+    lua.globals().AHORA = lua.globals().AHORA + 4
+    lua.globals().VENCER_TEMPORIZADORES()
     assert cola(lua) == []
 
 
@@ -1797,3 +1807,103 @@ def test_con_las_ventanas_cerradas_el_panel_no_recalcula():
     lua.globals().DISPARAR("BAG_UPDATE_DELAYED")
 
     assert lua.globals().MIRADAS == 0
+
+
+def test_la_segunda_copia_sigue_en_la_cola_tras_postear_la_primera():
+    lua = runtime()
+    devolver(lua, 10, 12)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    assert pulsar(lua) == "postear"
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    poner(lua, "SUBASTAS", [mia(60, 90_000)])  # la que acaba de crear la tecla
+    poner(lua, "BOLSA", {"0:4": {"itemID": GREBAS, "hyperlink": "[Grebas]ilvl311", "isLocked": False}})
+    volver_a_la_casa(lua, [])
+
+    assert [e["auctionID"] for e in cola(lua)] == [12]
+    assert pulsar(lua) == "postear"
+
+
+def test_poner_otra_copia_a_mano_no_saca_de_la_cola_lo_devuelto():
+    lua = runtime()
+    devolver(lua, 10)
+    poner(lua, "SUBASTAS", [mia(50, 70_000)])  # stock nuevo puesto a mano
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [])
+
+    assert [e["auctionID"] for e in cola(lua)] == [10]
+    assert pulsar(lua) == "postear"
+
+
+def test_un_posteo_creado_sin_aviso_sale_en_la_visita_siguiente():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().CREAR_SUBASTA = False
+    assert pulsar(lua) == "postear"
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    poner(lua, "SUBASTAS", [mia(60, 90_000)])  # si se creo, a ese precio
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    assert cola(lua) == []
+
+
+def test_una_subasta_del_mismo_objeto_a_otro_precio_no_cierra_un_posteo():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().CREAR_SUBASTA = False
+    pulsar(lua)
+
+    lua.globals().DISPARAR("AUCTION_HOUSE_CLOSED")
+    poner(lua, "SUBASTAS", [mia(60, 95_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    assert [(e["auctionID"], e["estado"]) for e in cola(lua)] == [(10, "devuelta")]
+
+
+def test_no_olvida_lo_que_llega_a_la_bolsa_poco_despues():
+    """Una carta recogida a mano o por otro addon tarda en llegar a la bolsa."""
+    lua = runtime()
+    devolver(lua, 10)
+    lua.globals().AHORA = lua.globals().AHORA + 120
+    abrir_buzon(lua)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+
+    en_la_bolsa(lua, 3)
+    lua.globals().AHORA = lua.globals().AHORA + 4
+    lua.globals().VENCER_TEMPORIZADORES()
+
+    assert len(cola(lua)) == 1
+
+
+def test_con_el_buzon_cerrado_no_olvida_nada():
+    lua = runtime()
+    devolver(lua, 10)
+    lua.globals().AHORA = lua.globals().AHORA + 120
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+    lua.globals().AHORA = lua.globals().AHORA + 4
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+    lua.globals().VENCER_TEMPORIZADORES()
+
+    assert len(cola(lua)) == 1
+
+
+def test_una_subasta_creada_mucho_despues_no_cierra_un_posteo_viejo():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    volver_a_la_casa(lua, [en_venta(999, 90_000)])
+    lua.globals().CREAR_SUBASTA = False
+    pulsar(lua)
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 60
+    lua.globals().DISPARAR("AUCTION_HOUSE_AUCTION_CREATED", 7777)  # un posteo a mano de otra cosa
+
+    assert len(cola(lua)) == 1

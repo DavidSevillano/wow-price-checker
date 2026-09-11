@@ -58,8 +58,9 @@ end
 -- ---------------------------------------------------------------------------
 --  Una lista por personaje en WowAlertsExportDB.reposteo, para que sobreviva a
 --  la ida al buzon, a un /reload y a cerrar el juego. Cada entrada pasa por
---  tres estados: "cancelar", "cancelando" (esperando AUCTION_CANCELED) y
---  "devuelta", y sale de la cola al postearse.
+--  cuatro estados: "cancelar", "cancelando" (esperando AUCTION_CANCELED),
+--  "devuelta" y "posteando" (esperando AUCTION_HOUSE_AUCTION_CREATED), y sale
+--  de la cola cuando el juego crea la subasta (o cuando se olvida).
 
 -- Horas que vive una entrada. Con listados de 12 h, algo que lleva dos dias en
 -- la cola ya no describe nada que haya que repostear.
@@ -124,9 +125,9 @@ local repasadas = {}     -- auctionID -> true: devueltas con el precio al dia
 -- Cancelar cuesta el deposito, asi que no se cancela con datos de otra visita.
 local confirmadas = {}
 
--- El mayor id de subasta propia visto en la ultima busqueda. Los ids crecen con
--- el tiempo: una subasta tuya con id mayor que el apuntado al cancelar o al
--- postear es posterior, y dice que ese objeto ya se volvio a poner.
+-- El mayor id de subasta propia visto en la ultima busqueda. Los ids crecen
+-- con el tiempo: sirve solo para reconocer, al buscar, un posteo de la tecla
+-- cuyo aviso de creacion nunca llego, comparando con el id apuntado al postear.
 local maxIdVisto = 0
 
 -- La lista de subastas propias llega por partes, y la primera respuesta tras
@@ -200,17 +201,17 @@ local function prepararBusqueda()
             }
             local clave = claveObjeto(itemKey.itemID, ilvl)
             nuevas[clave] = nuevas[clave] or {}
-            table.insert(nuevas[clave], info.auctionID)
+            table.insert(nuevas[clave], { id = info.auctionID, buyout = info.buyoutAmount })
         end
     end
 
-    -- Si hay una subasta activa de ese objeto posterior a `tope` que no haya
-    -- servido ya para otra entrada.
+    -- Si hay una subasta activa de ese objeto posterior a `tope` y a `precio`
+    -- que no haya servido ya para otra entrada.
     local usadas = {}
-    local function hayUnaPosterior(clave, tope)
-        for _, id in ipairs(nuevas[clave] or {}) do
-            if id > tope and not usadas[id] then
-                usadas[id] = true
+    local function hayUnaPosterior(clave, tope, precio)
+        for _, s in ipairs(nuevas[clave] or {}) do
+            if s.id > tope and s.buyout == precio and not usadas[s.id] then
+                usadas[s.id] = true
                 return true
             end
         end
@@ -233,9 +234,12 @@ local function prepararBusqueda()
                 table.remove(entradas, i)
             end
         elseif e.estado == "devuelta" or e.estado == "posteando" then
-            if e.idTope and hayUnaPosterior(claveObjeto(e.itemID, e.ilvl), e.idTope) then
-                -- Ya hay una subasta tuya de ese objeto posterior: se volvio a
-                -- poner, con la tecla o a mano, y no queda nada que hacer.
+            if e.estado == "posteando" and e.idTope
+                and hayUnaPosterior(claveObjeto(e.itemID, e.ilvl), e.idTope, e.precio) then
+                -- El posteo de la tecla si se creo aunque no llegara el aviso
+                -- (o se acepto desde el aviso de Blizzard): hay una subasta tuya
+                -- de ese objeto, posterior y a ese precio. Con lo devuelto no se
+                -- hace: otra copia puesta a mano no dice nada de esta.
                 table.remove(entradas, i)
             else
                 -- Un posteo del que no llego respuesta vuelve a la fila.
@@ -456,11 +460,19 @@ end
 -- tenido tiempo de llegar.
 local SEGUNDOS_PARA_QUE_LLEGUE_LA_CARTA = 60
 
+-- Segundos que tiene que seguir faltando algo antes de olvidarlo: una carta
+-- recogida a mano o por otro addon tarda un momento en llegar a la bolsa.
+local SEGUNDOS_FALTANDO = 3
+
 -- Devueltas cuyo objeto ya no esta ni en el buzon ni en la bolsa (se vendio,
 -- se envio o se puso a mano): se olvidan, para que el boton no mande de la
--- casa al buzon y vuelta. Solo con el buzon entero cargado, con todas las
--- cartas de subastas canceladas legibles y pasado un rato desde la cancelacion.
+-- casa al buzon y vuelta. Solo con el buzon abierto y entero cargado, con
+-- todas las cartas de subastas canceladas legibles, pasado un rato desde la
+-- cancelacion, y si sigue faltando unos segundos despues de verlo faltar.
 local function olvidarSinCarta()
+    if not buzonAbierto() then
+        return
+    end
     local mostradas, total = GetInboxNumItems()
     if mostradas ~= total then
         return
@@ -482,18 +494,37 @@ local function olvidarSinCarta()
         end
     end
 
+    local ahora = time()
     local entradas = cola()
     local vistas = {}
+    local pendiente = false
     for i = #entradas, 1, -1 do
         local e = entradas[i]
         if e.estado == "devuelta" and e.canceladaEn
-            and time() - e.canceladaEn > SEGUNDOS_PARA_QUE_LLEGUE_LA_CARTA then
+            and ahora - e.canceladaEn > SEGUNDOS_PARA_QUE_LLEGUE_LA_CARTA then
             local clave = claveObjeto(e.itemID, e.ilvl)
             vistas[clave] = (vistas[clave] or 0) + 1
             if vistas[clave] > (cartas[clave] or 0) + copiasEnBolsa(e.itemID, e.ilvl) then
-                table.remove(entradas, i)
+                if not e.faltaEn then
+                    e.faltaEn = ahora
+                    pendiente = true
+                elseif ahora - e.faltaEn >= SEGUNDOS_FALTANDO then
+                    table.remove(entradas, i)
+                else
+                    pendiente = true
+                end
+            else
+                e.faltaEn = nil
             end
         end
+    end
+
+    if pendiente then
+        -- Se vuelve a mirar pasado el margen, llegue o no otro evento.
+        C_Timer.After(SEGUNDOS_FALTANDO, function()
+            olvidarSinCarta()
+            R.refrescarPanel()
+        end)
     end
 end
 
@@ -610,7 +641,6 @@ function R.Siguiente()
                     C_AuctionHouse.CancelAuction(e.auctionID)
                     e.estado = "cancelando"
                     e.cancelandoEn = GetTime()
-                    e.idTope = maxIdVisto
                     hecho = "cancelar"
                 end
             elseif listo then
@@ -716,7 +746,12 @@ end
 local function hayAtascada()
     for _, e in ipairs(cola()) do
         if e.estado == "cancelando" or e.estado == "posteando" then
-            local desde = e.cancelandoEn or e.posteandoEn
+            local desde
+            if e.estado == "cancelando" then
+                desde = e.cancelandoEn
+            else
+                desde = e.posteandoEn
+            end
             if not desde or GetTime() - desde >= SEGUNDOS_SIN_RESPUESTA then
                 return true
             end
@@ -876,19 +911,31 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
             e.canceladaEn = time()
         end
     elseif evento == "AUCTION_HOUSE_AUCTION_CREATED" then
-        -- La subasta ya existe: sale de la cola la entrada que se estaba
-        -- posteando. Si se acepto desde el aviso de Blizzard, la confirmacion
-        -- pendiente sobra.
         local entradas = cola()
-        for i, e in ipairs(entradas) do
-            if e.estado == "posteando" then
-                table.remove(entradas, i)
-                break
-            end
-        end
         if confirmacion then
+            -- Se acepto desde el aviso de Blizzard: la subasta creada es la que
+            -- esperaba confirmacion.
+            local _, i = buscarEntrada(confirmacion.auctionID)
+            if i then
+                table.remove(entradas, i)
+            end
             confirmacion = nil
             cerrarAvisoDePrecio()
+        else
+            -- La mas reciente de las que se estan posteando, si es de hace un
+            -- momento. Una subasta creada mucho despues es otra cosa, como un
+            -- posteo a mano: de los posteos viejos se encarga la busqueda.
+            local elegida, reciente = nil, nil
+            for i, e in ipairs(entradas) do
+                if e.estado == "posteando" and e.posteandoEn
+                    and GetTime() - e.posteandoEn < SEGUNDOS_SIN_RESPUESTA
+                    and (not reciente or e.posteandoEn >= reciente) then
+                    elegida, reciente = i, e.posteandoEn
+                end
+            end
+            if elegida then
+                table.remove(entradas, elegida)
+            end
         end
     elseif evento == "MAIL_SHOW" or evento == "MAIL_CLOSED" or evento == "MAIL_INBOX_UPDATE" then
         -- Justo despues de recoger, la carta ya no esta y el objeto puede no
@@ -900,6 +947,8 @@ frame:SetScript("OnEvent", function(_, evento, arg1)
         if evento == "MAIL_SHOW" then
             colocarBoton(MailFrame)
         end
+    elseif evento == "BAG_UPDATE_DELAYED" then
+        olvidarSinCarta()
     end
     R.refrescarPanel()
 end)
