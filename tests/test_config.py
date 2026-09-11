@@ -365,3 +365,54 @@ def test_la_especie_tiene_que_ser_un_numero(tmp_path):
                 max_price: 100000
             """,
         ))
+
+
+# -- repostear ----------------------------------------------------------------
+
+
+CON_RECETA = """
+region: eu
+items:
+  - name: "Grebas"
+    max_price: 100
+  - name: "Patron"
+    max_price: 100
+    avisar_undercut: false
+  - name: "Receta"
+    max_price: 100
+    avisar_undercut: false
+    repostear: true
+  - name: "Montura"
+    max_price: 100
+    repostear: false
+"""
+
+
+def test_repostear_sin_valor_sigue_a_avisar_undercut(tmp_path):
+    config = load_config(write(tmp_path, CON_RECETA))
+    grebas, patron, _, _ = config.items
+
+    assert grebas.se_repostea is True
+    assert patron.se_repostea is False
+
+
+def test_repostear_se_enciende_y_se_apaga_aparte_de_los_avisos(tmp_path):
+    config = load_config(write(tmp_path, CON_RECETA))
+    _, _, receta, montura = config.items
+
+    assert receta.avisar_undercut is False
+    assert receta.se_repostea is True
+    assert montura.avisar_undercut is True
+    assert montura.se_repostea is False
+
+
+def test_repostear_solo_admite_true_o_false(tmp_path):
+    texto = """
+region: eu
+items:
+  - name: "Patron"
+    max_price: 100
+    repostear: "si"
+"""
+    with pytest.raises(ConfigError, match="'repostear' solo admite true o false"):
+        load_config(write(tmp_path, texto))

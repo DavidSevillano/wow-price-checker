@@ -49,6 +49,11 @@ class ItemRule:
     # Los undercuts se apagan por objeto: de algunas cosas quieres que te avisen
     # de chollos y de ventas, pero te da igual que alguien se ponga por debajo.
     avisar_undercut: bool = True
+    # El reposteo con la tecla del addon se enciende y se apaga aparte de los
+    # avisos: de las recetas no quieres avisos de undercut en Discord, pero si
+    # quieres cancelarlas y volver a ponerlas desde el juego. Sin valor, manda
+    # `avisar_undercut`.
+    repostear: bool | None = None
 
     @property
     def sin_ilvl(self) -> bool:
@@ -58,6 +63,13 @@ class ItemRule:
     @property
     def es_mascota(self) -> bool:
         return self.pet_species_id is not None
+
+    @property
+    def se_repostea(self) -> bool:
+        """Si el addon lo repostea con la tecla."""
+        if self.repostear is None:
+            return self.avisar_undercut
+        return self.repostear
 
     def threshold_gold(self, ilvl: int) -> int | None:
         """Precio maximo para ese ilvl, o None si ese ilvl no interesa."""
@@ -255,6 +267,11 @@ def _parse_items(value: Any) -> tuple[ItemRule, ...]:
                 pet_species_id=especie,
                 avisar_undercut=_parse_bool(
                     entry.get("avisar_undercut"), name, "avisar_undercut", True
+                ),
+                repostear=(
+                    None
+                    if entry.get("repostear") is None
+                    else _parse_bool(entry.get("repostear"), name, "repostear", True)
                 ),
             )
         )
