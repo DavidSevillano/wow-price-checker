@@ -709,9 +709,18 @@ scroll. En combate el addon no toca las teclas.
 
 **La ventana de tus subastas:** al abrir la casa sale a su derecha una ventana
 con todo lo que tienes puesto, agrupado en `ADELANTADAS` (en rojo, con el precio
-del rival), `VAS PRIMERO`, `SIN MIRAR TODAVIA` y `NO VIGILADAS`. Se va llenando
-sola conforme avanza la busqueda y se actualiza al cancelar y al repostear. La
-`x` la cierra hasta la proxima vez que abras la casa.
+del rival), `RECIEN REPUESTAS` (en azul: lo que acabas de repostear en esta
+visita, para ver de un vistazo lo que ya esta hecho), `VAS PRIMERO`, `SIN MIRAR
+TODAVIA` y `NO VIGILADAS`. Se va llenando sola conforme avanza la busqueda y se
+actualiza al cancelar y al repostear. La `x` de arriba la cierra hasta la
+proxima vez que abras la casa.
+
+Cada fila dice el precio, el ilvl y **lo que le queda de listado** (`11h 32m`),
+y lleva a la derecha un boton **`X` que cancela esa subasta**, te hayan
+adelantado o no. Cancela una sola con cada clic, igual que la tecla, y lo que
+cancelas asi entra en el ciclo normal: se recoge del buzon y se vuelve a poner.
+Lo que no esta vigilado se cancela y ya, porque de eso el addon no sabe a que
+precio reponerlo. Ojo, que cancelar cuesta el deposito.
 
 Puedes machacar la tecla sin mirar: las pulsaciones que llegan mientras el juego
 responde no hacen nada. En cuanto en esa ventana ya no queda nada que hacer, sin

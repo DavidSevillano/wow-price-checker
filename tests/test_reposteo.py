@@ -279,9 +279,9 @@ def a_python(valor):
     return {k: a_python(valor[k]) for k in claves}
 
 
-def mia(auction_id, precio, item_id=GREBAS, ilvl=311, status=0):
+def mia(auction_id, precio, item_id=GREBAS, ilvl=311, status=0, segundos=None, banda=None):
     """Una subasta tuya, como la devuelve GetOwnedAuctionInfo."""
-    return {
+    info = {
         "auctionID": auction_id,
         "itemKey": {"itemID": item_id, "itemLevel": ilvl},
         "itemLink": f"[Grebas]ilvl{ilvl}",
@@ -289,6 +289,13 @@ def mia(auction_id, precio, item_id=GREBAS, ilvl=311, status=0):
         "quantity": 1,
         "status": status,
     }
+    # Lo que le queda de listado: en segundos, o en la banda de Blizzard para
+    # los clientes que no dan el numero exacto.
+    if segundos is not None:
+        info["timeLeftSeconds"] = segundos
+    if banda is not None:
+        info["timeLeft"] = banda
+    return info
 
 
 def en_venta(auction_id, precio, dueno="Extrano", propia=False, de_la_cuenta=False):
@@ -1961,7 +1968,7 @@ def test_la_version_del_toc_es_la_del_addon():
 
     en_toc = re.search(r"^## Version: (.+)$", toc, re.MULTILINE).group(1).strip()
     en_lua = re.search(r'^local ADDON_VERSION = "(.+)"$', lua, re.MULTILINE).group(1)
-    assert en_toc == en_lua == "1.17"
+    assert en_toc == en_lua == "1.18"
 
 
 # -- Lo que el juego confirma y lo que se repone por fuera --------------------
@@ -3054,7 +3061,148 @@ def test_la_lista_cambia_al_cancelar_y_al_postear():
     # El doble crea la subasta con 5000 + el numero de llamadas protegidas.
     nueva = 5000 + len(llamadas(lua))
     poner(lua, "SUBASTAS", [mia(nueva, 90_000)])
-    assert [(f["auctionID"], f["grupo"]) for f in subastas(lua)] == [(nueva, "primera")]
+    assert [(f["auctionID"], f["grupo"]) for f in subastas(lua)] == [(nueva, "reposteada")]
+
+
+def test_lo_recien_repuesto_sale_aunque_la_lista_del_juego_no_lo_traiga():
+    """La lista de tus subastas tarda en traer la nueva, y machacando la tecla
+    quieres ver ya que esa esta hecha."""
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    abrir_casa(lua)
+    assert pulsar(lua) == "postear"
+
+    nueva = 5000 + len(llamadas(lua))
+    (fila,) = subastas(lua)   # SUBASTAS sigue vacia
+    assert (fila["auctionID"], fila["grupo"]) == (nueva, "reposteada")
+    assert fila["itemID"] == GREBAS
+    assert fila["ilvl"] == 311
+
+
+def test_la_fila_de_lo_recien_repuesto_no_se_queda_colgada():
+    """Si se vende, sale de la lista del juego sin avisar: pasado un rato esa
+    fila inventada desaparece en vez de mentir."""
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    abrir_casa(lua)
+    pulsar(lua)
+    assert len(subastas(lua)) == 1
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 31
+    assert subastas(lua) == []
+
+
+def test_lo_repuesto_deja_de_serlo_al_volver_a_abrir_la_casa():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    abrir_casa(lua)
+    pulsar(lua)
+    nueva = 5000 + len(llamadas(lua))
+    poner(lua, "SUBASTAS", [mia(nueva, 90_000)])
+    assert [f["grupo"] for f in subastas(lua)] == ["reposteada"]
+
+    # En la visita siguiente ya es una mas: sigue sabiendose que va la primera
+    # (eso dura cinco minutos), pero el grupo de "recien repuestas" es de la
+    # visita en la que la pusiste.
+    cerrar_casa(lua)
+    abrir_casa(lua)
+    assert [f["grupo"] for f in subastas(lua)] == ["primera"]
+
+
+def test_la_lista_dice_lo_que_le_queda_a_cada_subasta():
+    lua = runtime(subastas=[mia(10, 100_000, segundos=41_520, banda=3)])
+    abrir_casa(lua)
+
+    (fila,) = subastas(lua)
+    assert fila["segundos"] == 41_520
+    assert fila["banda"] == 3
+
+
+# -- El boton de cancelar de cada fila ---------------------------------------
+
+
+def cancelar(lua, auction_id):
+    return lua.globals().WowAlertsReposteo.Cancelar(auction_id)
+
+
+def test_el_boton_de_la_fila_cancela_esa_subasta():
+    """Un clic es un evento de raton de verdad: vale igual que la tecla."""
+    lua = runtime(subastas=[mia(10, 100_000), mia(12, 80_000)])
+    abrir_casa(lua)
+
+    assert cancelar(lua, 12) is None
+    assert llamadas(lua) == [("CancelAuction", 12)]
+
+
+def test_cancelar_desde_la_ventana_deja_la_subasta_lista_para_reponerla():
+    """Aunque nadie te haya adelantado: entra en la cola para recogerla del
+    buzon y volver a ponerla, como lo que cancela la tecla."""
+    lua = runtime(subastas=[mia(10, 100_000)])
+    abrir_casa(lua)
+    cancelar(lua, 10)
+    assert [(e["auctionID"], e["estado"]) for e in cola(lua)] == [(10, "cancelando")]
+
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+    entrada = cola(lua)[0]
+    assert entrada["estado"] == "devuelta"
+    assert entrada["precioAnterior"] == 100_000
+    assert entrada["itemID"] == GREBAS
+    assert entrada["ilvl"] == 311
+
+
+def test_cancelar_desde_la_ventana_no_encola_lo_que_no_se_repostea():
+    """De lo que no esta vigilado el addon no sabe el precio ni la duracion:
+    se cancela y ya, sin prometer que lo va a reponer."""
+    lua = runtime(subastas=[mia(10, 100_000, item_id=999)])
+    abrir_casa(lua)
+
+    assert cancelar(lua, 10) is None
+    assert llamadas(lua) == [("CancelAuction", 10)]
+    assert cola(lua) == []
+
+
+def test_cancelar_desde_la_ventana_espera_a_la_cancelacion_anterior():
+    lua = runtime(subastas=[mia(10, 100_000), mia(12, 80_000)])
+    abrir_casa(lua)
+    cancelar(lua, 10)
+
+    assert cancelar(lua, 12) is not None
+    assert llamadas(lua) == [("CancelAuction", 10)]
+
+
+def test_cancelar_desde_la_ventana_respeta_lo_que_el_juego_no_deja():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    abrir_casa(lua)
+    lua.execute("C_AuctionHouse.CanCancelAuction = function(id) return id ~= 10 end")
+
+    assert cancelar(lua, 10) is not None
+    assert llamadas(lua) == []
+
+
+def test_cancelar_desde_la_ventana_con_la_casa_cerrada_no_hace_nada():
+    lua = runtime(subastas=[mia(10, 100_000)])
+
+    assert cancelar(lua, 10) is not None
+    assert llamadas(lua) == []
+
+
+def test_cancelar_lo_recien_repuesto_lo_saca_de_su_grupo():
+    lua = runtime()
+    devolver(lua, 10)
+    en_la_bolsa(lua, 3)
+    abrir_casa(lua)
+    pulsar(lua)
+    nueva = 5000 + len(llamadas(lua))
+    poner(lua, "SUBASTAS", [mia(nueva, 90_000)])
+    assert [f["grupo"] for f in subastas(lua)] == ["reposteada"]
+
+    cancelar(lua, nueva)
+    lua.globals().DISPARAR("AUCTION_CANCELED", nueva)
+    poner(lua, "SUBASTAS", [])
+    assert subastas(lua) == []
 
 
 def test_la_ventana_se_redibuja_con_el_boton():

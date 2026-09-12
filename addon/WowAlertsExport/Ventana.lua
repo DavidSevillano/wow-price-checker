@@ -6,18 +6,19 @@
 local V = {}
 WowAlertsVentana = V
 
-local ANCHO = 330
+local ANCHO = 360
 local ALTO_FILA = 34
 local ALTO_TITULO = 18
 local ALTO_MAXIMO = 560
 
 local COLORES = {
     adelantada = { 1, 0.29, 0.24, "ADELANTADAS" },
+    reposteada = { 0.35, 0.7, 1, "RECIEN REPUESTAS" },
     primera = { 0.25, 0.85, 0.29, "VAS PRIMERO" },
     sinmirar = { 0.56, 0.53, 0.48, "SIN MIRAR TODAVIA" },
     novigilada = { 0.56, 0.53, 0.48, "NO VIGILADAS" },
 }
-local ORDEN = { "adelantada", "primera", "sinmirar", "novigilada" }
+local ORDEN = { "adelantada", "reposteada", "primera", "sinmirar", "novigilada" }
 
 local marco, contenido, filas, cabecera
 local ocultaAdrede = false
@@ -34,6 +35,26 @@ local function precioTexto(cobre)
         return "solo puja"
     end
     return oro(cobre)
+end
+
+-- Las bandas de Blizzard, para los clientes que no dan los segundos exactos.
+local BANDAS = { [0] = "corto", [1] = "medio", [2] = "largo", [3] = "muy largo" }
+
+-- Lo que le queda de listado: "11h 32m", "45m" o, sin segundos, la banda.
+local function tiempoTexto(datos)
+    local segundos = datos.segundos
+    if segundos and segundos > 0 then
+        local horas = math.floor(segundos / 3600)
+        local minutos = math.floor((segundos % 3600) / 60)
+        if horas > 0 then
+            return ("%dh %02dm"):format(horas, minutos)
+        end
+        if minutos > 0 then
+            return ("%dm"):format(minutos)
+        end
+        return "<1m"
+    end
+    return BANDAS[datos.banda] or ""
 end
 
 local function crearMarco()
@@ -104,13 +125,52 @@ local function fila(indice)
     f.icono:SetSize(26, 26)
     f.icono:SetPoint("LEFT", f, "LEFT", 0, 0)
     f.nombre = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    f.nombre:SetWidth(ANCHO - 130)
+    f.nombre:SetWidth(ANCHO - 170)
     f.nombre:SetJustifyH("LEFT")
     f.nombre:SetWordWrap(false)
     f.detalle = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     f.detalle:SetPoint("TOPLEFT", f.nombre, "BOTTOMLEFT", 0, -2)
+    f.detalle:SetWidth(ANCHO - 170)
+    f.detalle:SetJustifyH("LEFT")
+    f.detalle:SetWordWrap(false)
+
+    -- La columna de la derecha va pegada al lado del boton, y cada linea a la
+    -- altura de la suya de la izquierda: dos anclas, una para la x (RIGHT del
+    -- marco) y otra para la y (TOP de nombre y de detalle). Asi sigue cuadrada
+    -- aunque el ilvl venga vacio, que pasa en las recetas.
     f.ilvl = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    f.ilvl:SetPoint("RIGHT", f, "RIGHT", 0, 0)
+    f.ilvl:SetPoint("RIGHT", f, "RIGHT", -26, 0)
+    f.ilvl:SetPoint("TOP", f.nombre, "TOP", 0, 0)
+    f.tiempo = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    f.tiempo:SetPoint("RIGHT", f, "RIGHT", -26, 0)
+    f.tiempo:SetPoint("TOP", f.detalle, "TOP", 0, 0)
+
+    -- Cancelar es una funcion protegida: el juego solo la deja en respuesta a
+    -- una tecla o un clic tuyo. Este clic lo es, asi que vale igual que la
+    -- tecla del reposteo. Un clic, una cancelacion: nada encadenado.
+    f.boton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    f.boton:SetSize(22, 20)
+    f.boton:SetPoint("RIGHT", f, "RIGHT", 0, 0)
+    f.boton:SetText("X")
+    f.boton:SetScript("OnClick", function(self)
+        local id = self:GetParent().auctionID
+        if not id or not WowAlertsReposteo or not WowAlertsReposteo.Cancelar then
+            return
+        end
+        local motivo = WowAlertsReposteo.Cancelar(id)
+        if motivo then
+            print("|cff33ccffReposteo:|r no la he cancelado: " .. motivo)
+        end
+    end)
+    f.boton:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:SetText("Cancelar esta subasta")
+        GameTooltip:Show()
+    end)
+    f.boton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
     filas[indice] = f
     return f
 end
@@ -127,6 +187,9 @@ local function titulo(indice, texto, r, g, b)
     f.nombre:SetTextColor(r, g, b)
     f.detalle:SetText("")
     f.ilvl:SetText("")
+    f.tiempo:SetText("")
+    f.auctionID = nil
+    f.boton:Hide()
     f:Show()
     return f
 end
@@ -139,6 +202,8 @@ local colorDeCalidad = (C_Item and C_Item.GetItemQualityColor) or GetItemQuality
 local function pintarFila(indice, datos)
     local f = fila(indice)
     f:SetHeight(ALTO_FILA)
+    f.auctionID = datos.auctionID
+    f.boton:Show()
     f.nombre:ClearAllPoints()
     f.nombre:SetPoint("TOPLEFT", f.icono, "TOPRIGHT", 6, 0)
 
@@ -169,6 +234,7 @@ local function pintarFila(indice, datos)
     end
     -- Las recetas y lo que no escala salen con ilvl 1: no se muestra.
     f.ilvl:SetText((datos.ilvl and datos.ilvl > 1) and tostring(datos.ilvl) or "")
+    f.tiempo:SetText(tiempoTexto(datos))
     f:Show()
 end
 

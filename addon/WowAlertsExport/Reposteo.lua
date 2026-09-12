@@ -173,6 +173,13 @@ local repasadas = {}     -- auctionID -> true: devueltas con el precio al dia
 -- Cancelar cuesta el deposito, asi que no se cancela con datos de otra visita.
 local confirmadas = {}
 
+-- auctionID -> lo que hace falta para pintar en la ventana una subasta que
+-- acabas de poner con la tecla, hasta que cierres la casa. La lista de tus
+-- subastas tarda un momento en traer la nueva, asi que mientras tanto la
+-- ventana la pinta con esto (ver SEGUNDOS_SIN_LISTA y R.Subastas).
+local reposteadas = {}
+local SEGUNDOS_SIN_LISTA = 30
+
 -- auctionID -> GetTime() de la ultima busqueda que la vio sin nadie delante.
 -- Sobrevive a cerrar la casa: al volver a repostear un momento despues no hace
 -- falta mirar otra vez esos objetos, solo lo devuelto. Con un /reload se
@@ -1157,6 +1164,72 @@ function R.Siguiente()
     return hecho
 end
 
+-- La subasta tuya con ese id, si el juego la tiene en su lista.
+local function subastaPropia(auctionID)
+    for i = 1, C_AuctionHouse.GetNumOwnedAuctions() do
+        local info = C_AuctionHouse.GetOwnedAuctionInfo(i)
+        if info and info.auctionID == auctionID then
+            return info
+        end
+    end
+    return nil
+end
+
+-- Cancela una subasta desde el boton de su fila en la ventana. El clic es un
+-- evento de raton de verdad, que es lo unico que el juego exige para cancelar:
+-- un clic, una cancelacion, igual que la tecla. Devuelve por que no se ha
+-- podido, o nil si se ha pedido la cancelacion.
+function R.Cancelar(auctionID)
+    if not casaAbierta() then
+        return "la casa no esta abierta"
+    end
+    if C_AuctionHouse.CanCancelAuction and not C_AuctionHouse.CanCancelAuction(auctionID) then
+        return "el juego no deja cancelar esa subasta"
+    end
+    if hayReciente("cancelando", "cancelandoEn") then
+        return "la cancelacion anterior aun espera respuesta del juego"
+    end
+    local e = buscarEntrada(auctionID)
+    if not e then
+        -- Entra en la cola para que el ciclo siga: recogerla del buzon y
+        -- volver a ponerla. Solo lo vigilado, que es lo unico que el addon
+        -- sabe repostear, y solo con precio de compra, que es a partir del
+        -- que se calcula el nuevo. Lo demas se cancela y ya.
+        local info = subastaPropia(auctionID)
+        local itemKey = info and info.itemKey
+        if itemKey and vigilados().objetos[itemKey.itemID] and (info.buyoutAmount or 0) > 0 then
+            e = {
+                auctionID = auctionID,
+                itemKey = {
+                    itemID = itemKey.itemID,
+                    itemLevel = itemKey.itemLevel,
+                    itemSuffix = itemKey.itemSuffix,
+                },
+                itemID = itemKey.itemID,
+                ilvl = ilvlDe(info, itemKey),
+                precioAnterior = info.buyoutAmount,
+                estado = "cancelar",
+                desde = time(),
+            }
+            local entradas = cola()
+            entradas[#entradas + 1] = e
+        end
+    end
+    if e then
+        e.estado = "cancelando"
+        e.cancelandoEn = GetTime()
+        -- Cancelar cuesta el deposito, y por eso la tecla solo cancela lo que
+        -- la busqueda ha confirmado. Aqui lo confirmas tu con el clic: queda
+        -- marcada para que, si el juego descarta la peticion, la tecla pueda
+        -- repetirla en vez de dejarla tirada en la cola.
+        confirmadas[auctionID] = true
+    end
+    traza("cancelo %s desde la ventana (en la cola: %s)", auctionID, e ~= nil)
+    C_AuctionHouse.CancelAuction(auctionID)
+    R.refrescarPanel()
+    return nil
+end
+
 -- ---------------------------------------------------------------------------
 --  El panel
 -- ---------------------------------------------------------------------------
@@ -1264,7 +1337,9 @@ end
 -- ---------------------------------------------------------------------------
 
 -- El orden en que se muestran los grupos: primero lo que hay que arreglar.
-local ORDEN_GRUPOS = { adelantada = 1, primera = 2, sinmirar = 3, novigilada = 4 }
+local ORDEN_GRUPOS = {
+    adelantada = 1, reposteada = 2, primera = 3, sinmirar = 4, novigilada = 5,
+}
 
 -- Una fila por subasta activa tuya, ya clasificada. Solo lee lo que el
 -- reposteo ya sabe: no lanza ninguna busqueda. La ventana saca el nombre, la
@@ -1272,6 +1347,7 @@ local ORDEN_GRUPOS = { adelantada = 1, primera = 2, sinmirar = 3, novigilada = 4
 function R.Subastas()
     local objetos = vigilados().objetos
     local filas = {}
+    local vistas = {}   -- auctionID -> true: ya tiene fila de la lista del juego
     for i = 1, C_AuctionHouse.GetNumOwnedAuctions() do
         local info = C_AuctionHouse.GetOwnedAuctionInfo(i)
         local itemKey = info and info.itemKey
@@ -1286,9 +1362,16 @@ function R.Subastas()
                 -- o 0. prepararBusqueda descarta esas, pero aqui SI se
                 -- ensenan: el usuario las tiene puestas y quiere verlas.
                 precio = info.buyoutAmount,
+                -- Lo que le queda de listado. En los clientes que no lo dan en
+                -- segundos queda la banda de Blizzard (corto, medio, largo...).
+                segundos = info.timeLeftSeconds,
+                banda = info.timeLeft,
                 grupo = "novigilada",
             }
-            if objetos[itemKey.itemID] then
+            vistas[info.auctionID] = true
+            if reposteadas[info.auctionID] then
+                fila.grupo = "reposteada"
+            elseif objetos[itemKey.itemID] then
                 local e = buscarEntrada(info.auctionID)
                 local vista = vistaLimpiaEn[info.auctionID]
                 if e and (e.estado == "cancelar" or e.estado == "cancelando")
@@ -1305,6 +1388,22 @@ function R.Subastas()
             filas[#filas + 1] = fila
         end
     end
+
+    -- Lo que acabas de poner y la lista del juego aun no trae: se pinta con lo
+    -- que se apunto al crearla. Pasado un rato ya no, para no dejar colgada la
+    -- fila de una que se haya vendido (esas salen de la lista sin avisar).
+    for auctionID, d in pairs(reposteadas) do
+        if not vistas[auctionID] and GetTime() - d.en < SEGUNDOS_SIN_LISTA then
+            filas[#filas + 1] = {
+                auctionID = auctionID,
+                itemID = d.itemID,
+                ilvl = d.ilvl,
+                precio = d.precio,
+                grupo = "reposteada",
+            }
+        end
+    end
+
     table.sort(filas, function(a, b)
         if ORDEN_GRUPOS[a.grupo] ~= ORDEN_GRUPOS[b.grupo] then
             return ORDEN_GRUPOS[a.grupo] < ORDEN_GRUPOS[b.grupo]
@@ -1492,6 +1591,7 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
         listaRepetida = false
         buscadoEnEstaVisita = false
         pulsadaEnVisita = false
+        reposteadas = {}
         repasadas = {}
         confirmadas = {}
         reiniciarBusqueda()
@@ -1574,6 +1674,7 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
         -- arg1 es el id de la subasta. El exportador apunta la cancelacion por
         -- su cuenta, con su propio frame.
         local e = buscarEntrada(arg1)
+        reposteadas[arg1] = nil
         traza("el juego cancela la subasta %s (en la cola: %s)", tostring(arg1), e and e.estado or "no")
         if e and (e.estado == "cancelando" or e.estado == "cancelar") then
             e.estado = "devuelta"
@@ -1588,11 +1689,15 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
     elseif evento == "AUCTION_HOUSE_AUCTION_CREATED" then
         local entradas = cola()
         local nuestra = false   -- si la subasta creada es un posteo de la tecla
+        local vieja = nil       -- la entrada de la cola que acaba de cerrarse
         traza("el juego crea la subasta %s (confirmacion pendiente: %s)", tostring(arg1), tostring(confirmacion ~= nil))
         if confirmacion then
             -- Se acepto desde el aviso de Blizzard: la subasta creada es la que
             -- esperaba confirmacion.
-            local _, i = buscarEntrada(confirmacion.auctionID)
+            local e, i = buscarEntrada(confirmacion.auctionID)
+            -- La confirmacion guarda los mismos datos que la entrada: si esta
+            -- ya no esta en la cola, sirve igual para pintar la fila.
+            vieja = e or confirmacion
             if i then
                 table.remove(entradas, i)
             end
@@ -1612,7 +1717,7 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
                 end
             end
             if elegida then
-                table.remove(entradas, elegida)
+                vieja = table.remove(entradas, elegida)
                 nuestra = true
             end
             traza("  quitada de la cola: %s", tostring(elegida ~= nil))
@@ -1621,6 +1726,15 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
             -- Se ha puesto al precio del rival y es la mas nueva: va la primera,
             -- y la busqueda siguiente no necesita mirarla.
             vistaLimpiaEn[arg1] = GetTime()
+            -- Y tiene su propio grupo en la ventana el resto de la visita:
+            -- machacando la tecla sin mirar, eso es lo que te dice que ya
+            -- esta hecho.
+            reposteadas[arg1] = {
+                itemID = vieja and vieja.itemID,
+                ilvl = vieja and vieja.ilvl,
+                precio = vieja and vieja.precio,
+                en = GetTime(),
+            }
         end
         comprobarFin()
     elseif evento == "MAIL_SHOW" or evento == "MAIL_CLOSED" or evento == "MAIL_INBOX_UPDATE" then
