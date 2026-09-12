@@ -1318,6 +1318,15 @@ function R.refrescarPanel()
     elseif buzonAbierto() and (not boton or boton:GetParent() ~= MailFrame) then
         colocarBoton(MailFrame)
     end
+    -- La ventana se dibuja sola desde Ventana.lua, si esta cargada. Con pcall
+    -- porque un error suyo no debe dejar el boton del reposteo sin
+    -- actualizar; se deja rastro en la traza para poder notar que esta rota.
+    if WowAlertsVentana and WowAlertsVentana.Refrescar then
+        local ok, error_ = pcall(WowAlertsVentana.Refrescar)
+        if not ok then
+            traza("WowAlertsVentana.Refrescar ha fallado: %s", error_)
+        end
+    end
     if not casaAbierta() and not buzonAbierto() then
         -- Con las dos ventanas cerradas el boton no se ve: no hace falta
         -- recalcular nada, y BAG_UPDATE_DELAYED llega a menudo.

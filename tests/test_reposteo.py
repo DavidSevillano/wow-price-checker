@@ -2932,3 +2932,31 @@ def test_una_entrada_devuelta_con_el_id_viejo_no_saca_fila():
     filas = subastas(lua)
     assert [f["auctionID"] for f in filas] == [12]
     assert filas[0]["grupo"] == "primera"
+
+
+def test_la_lista_cambia_al_cancelar_y_al_postear():
+    lua = runtime()
+    adelantadas(lua, 10)
+    assert [f["grupo"] for f in subastas(lua)] == ["adelantada"]
+
+    pulsar(lua)
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+    poner(lua, "SUBASTAS", [])
+    assert subastas(lua) == []
+
+    en_la_bolsa(lua, 3)
+    assert pulsar(lua) == "postear"
+    # El doble crea la subasta con 5000 + el numero de llamadas protegidas.
+    nueva = 5000 + len(llamadas(lua))
+    poner(lua, "SUBASTAS", [mia(nueva, 90_000)])
+    assert [(f["auctionID"], f["grupo"]) for f in subastas(lua)] == [(nueva, "primera")]
+
+
+def test_la_ventana_se_redibuja_con_el_boton():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    lua.execute("REDIBUJOS = 0; WowAlertsVentana = { Refrescar = function() REDIBUJOS = REDIBUJOS + 1 end }")
+    abrir_casa(lua)
+    antes = lua.globals().REDIBUJOS
+
+    lua.globals().WowAlertsReposteo.refrescarPanel()
+    assert lua.globals().REDIBUJOS == antes + 1
