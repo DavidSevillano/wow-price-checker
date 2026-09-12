@@ -672,10 +672,12 @@ Casa de Subastas y del buzon, que ademas dice que va a hacer.
 
 **El ciclo:**
 
-1. Abre la Casa de Subastas. El boton dice `Leyendo tus subastas...` un momento,
-   mientras llega la lista de lo que tienes puesto (hasta cinco segundos si no
-   tienes nada puesto). Cuando diga `Buscar undercuts`, pulsa: busca tus objetos
-   vigilados.
+1. Abre la Casa de Subastas y no toques nada. El boton dice `Leyendo tus
+   subastas...` un momento, mientras llega la lista de lo que tienes puesto
+   (hasta cinco segundos si no tienes nada puesto), y en cuanto esta entera
+   **empieza a buscar solo**: no hace falta pulsar para saber quien te ha
+   adelantado. Buscar no es de las cosas que el juego exige que hagas tu, asi
+   que puede salir sola; cancelar y postear si, y esas siguen siendo tuyas.
 2. `Cancelar (N)`: pulsa una vez por cada subasta adelantada. No hace falta
    esperar a que termine la busqueda: lo que ya sabe que esta adelantado lo
    cancela mientras sigue mirando lo demas.
@@ -705,11 +707,18 @@ buzon y pulsar (abre y recoge solo), volver y pulsar (abre la casa), machacar
 cuando el cursor esta sobre el mundo; sobre una lista, la rueda sigue haciendo
 scroll. En combate el addon no toca las teclas.
 
+**La ventana de tus subastas:** al abrir la casa sale a su derecha una ventana
+con todo lo que tienes puesto, agrupado en `ADELANTADAS` (en rojo, con el precio
+del rival), `VAS PRIMERO`, `SIN MIRAR TODAVIA` y `NO VIGILADAS`. Se va llenando
+sola conforme avanza la busqueda y se actualiza al cancelar y al repostear. La
+`x` la cierra hasta la proxima vez que abras la casa.
+
 Puedes machacar la tecla sin mirar: las pulsaciones que llegan mientras el juego
 responde no hacen nada. En cuanto en esa ventana ya no queda nada que hacer, sin
-esperar a otra pulsacion, sale un aviso en el centro de la pantalla, en el chat
-y con un sonido: `Todas canceladas (N). Recoge lo devuelto en el buzon`, `Vuelve
-a la casa a postear` o `Nada que repostear`.
+esperar a otra pulsacion, sale un aviso en el chat y con un sonido: `Todas
+canceladas (N). Recoge lo devuelto en el buzon`, `Vuelve a la casa a postear` o
+`Nada que repostear`. Ese aviso espera a que pulses al menos una vez: abrir la
+casa para comprar no te suelta nada.
 
 **El precio** es el del rival mas barato que va por delante de ti. Si mientras
 ibas al buzon ha desaparecido, se repostea a tu precio de antes: nunca sube.
@@ -720,8 +729,10 @@ de Auctionator. No uses programas ni teclados que repitan la tecla por ti.
 
 Lo que conviene saber:
 
-- Solo repostea los objetos de `config.yaml` con avisos de undercut, y no toca
-  mascotas.
+- Solo repostea los objetos de `config.yaml` con `repostear` (por defecto, los
+  que tienen avisos de undercut), y no toca mascotas. Las recetas llevan
+  `avisar_undercut: false` y `repostear: true`: se repostean sin avisarte en
+  Discord.
 - Tus personajes de `orden_personajes` no cuentan como rivales. Si vendes con
   uno que no esta en la lista, anadelo.
 - Solo cancela lo que la busqueda de esta visita ha confirmado: cancelar cuesta

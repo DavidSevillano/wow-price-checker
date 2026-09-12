@@ -767,8 +767,8 @@ def test_una_lista_de_antes_de_pedirla_no_vale():
     lua.globals().SISTEMA_LISTO = True
     lua.globals().DISPARAR("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
     assert lua.globals().PEDIDAS == peticiones + 1
-    lua.globals().RELOJ = lua.globals().RELOJ + 0.5
-    assert pulsar(lua) == "buscar"
+    # Ahora si: la lista llega despues de pedirla, y la busqueda sale sola.
+    assert lua.eval("#BUSQUEDAS") == 1
 
 
 def test_si_se_descarta_la_peticion_de_la_lista_se_repite():
@@ -788,7 +788,67 @@ def test_el_boton_deja_de_decir_leyendo_cuando_la_lista_se_calma():
 
     lua.globals().RELOJ = lua.globals().RELOJ + 0.5
     lua.globals().VENCER_TEMPORIZADORES()
-    assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Buscar undercuts"
+    # En cuanto la lista esta entera la busqueda arranca sola, sin pulsar.
+    assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Buscando 1/1..."
+
+
+# -- La busqueda sola al abrir -----------------------------------------------
+
+
+def test_al_abrir_la_casa_busca_sin_pulsar_la_tecla():
+    """Al entrar con un personaje quieres ver quien te adelanta sin tocar nada.
+    Buscar no es una funcion protegida, asi que puede salir solo."""
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(99, 90_000)])
+    abrir_casa(lua, esperar=False)
+    assert lua.eval("#BUSQUEDAS") == 0
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 5
+    lua.globals().VENCER_TEMPORIZADORES()
+    responder_todo(lua)
+
+    assert [e["auctionID"] for e in cola(lua)] == [10]
+    assert llamadas(lua) == []   # buscar no toca ninguna funcion protegida
+
+
+def test_la_busqueda_sola_actualiza_la_ventana_con_cada_respuesta():
+    """Sin pulsaciones, la ventana solo se entera si la busqueda la refresca."""
+    lua = runtime(subastas=[mia(10, 100_000), mia(20, 50_000, ilvl=298)])
+    abrir_casa(lua, esperar=False)
+    lua.globals().RELOJ = lua.globals().RELOJ + 5
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Buscando 1/2..."
+
+    lua.globals().RESPONDER()
+    assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Buscando 2/2..."
+
+
+def test_la_busqueda_sola_no_avisa_en_el_chat_hasta_que_pulsas():
+    """Abrir la casa para comprar no puede soltarte un aviso con sonido."""
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(99, 200_000)])
+    abrir_casa(lua, esperar=False)
+    lua.globals().RELOJ = lua.globals().RELOJ + 5
+    lua.globals().VENCER_TEMPORIZADORES()
+    responder_todo(lua)
+    assert avisos(lua) == []
+
+    assert pulsar(lua) is None
+    assert avisos(lua) == ["|cff33ccffReposteo:|r Nada que repostear"]
+
+
+def test_no_busca_sola_si_hay_algo_devuelto_que_postear():
+    """Al volver del buzon, postear va antes que buscar, y postear es una
+    funcion protegida: eso lo tiene que hacer la tecla."""
+    lua = runtime()
+    devolver(lua, 10, precio=100_000, rival=90_000)
+    en_la_bolsa(lua, 3)
+    abrir_casa(lua, esperar=False)
+
+    lua.globals().RELOJ = lua.globals().RELOJ + 5
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert lua.eval("#BUSQUEDAS") == 0
+    assert estado(lua) == "Postear"
 
 
 # -- Lo visto hace poco ----------------------------------------------------------
@@ -1701,13 +1761,10 @@ def test_el_boton_dice_que_toca_y_se_desactiva_mientras_busca():
     lua = runtime(subastas=[mia(10, 100_000), mia(20, 50_000, ilvl=298)])
     abrir_casa(lua, esperar=False)
     assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Leyendo tus subastas..."
+    assert lua.eval("WowAlertsReposteoBoton:IsEnabled()")
 
     lua.globals().RELOJ = lua.globals().RELOJ + 5
     lua.globals().VENCER_TEMPORIZADORES()
-    assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Buscar undercuts"
-    assert lua.eval("WowAlertsReposteoBoton:IsEnabled()")
-
-    pulsar(lua)
     assert lua.eval("WowAlertsReposteoBoton:GetText()") == "Buscando 1/2..."
     assert not lua.eval("WowAlertsReposteoBoton:IsEnabled()")
 
@@ -1904,7 +1961,7 @@ def test_la_version_del_toc_es_la_del_addon():
 
     en_toc = re.search(r"^## Version: (.+)$", toc, re.MULTILINE).group(1).strip()
     en_lua = re.search(r'^local ADDON_VERSION = "(.+)"$', lua, re.MULTILINE).group(1)
-    assert en_toc == en_lua == "1.16"
+    assert en_toc == en_lua == "1.17"
 
 
 # -- Lo que el juego confirma y lo que se repone por fuera --------------------
@@ -2792,14 +2849,14 @@ def test_avisa_en_cuanto_el_juego_confirma_la_ultima_cancelacion():
     assert "Recoge lo devuelto en el buzon" in avisos(lua)[0]
 
 
-def test_el_aviso_sale_en_el_centro_de_la_pantalla_y_suena():
+def test_el_aviso_suena_pero_no_sale_en_el_centro_de_la_pantalla():
+    """El boton del addon ya dice como esta la cosa: el aviso grande estorbaba."""
     lua = runtime()
     adelantadas(lua, 10)
     pulsar(lua)
     lua.globals().DISPARAR("AUCTION_CANCELED", 10)
 
-    assert len(pantalla(lua)) == 1
-    assert "Todas canceladas (1)" in pantalla(lua)[0]
+    assert pantalla(lua) == []
     assert len(a_python(lua.globals().SONIDOS)) == 1
 
 

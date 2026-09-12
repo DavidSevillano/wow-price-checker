@@ -550,6 +550,9 @@ local function alResponder(itemKey)
         comprobarFin()
     end
     lanzarSiguiente()
+    -- La busqueda puede ir sola, sin pulsaciones: el boton y la ventana se
+    -- refrescan aqui para que cuenten lo que va apareciendo.
+    R.refrescarPanel()
 end
 
 local function empezarBusqueda()
@@ -962,12 +965,20 @@ end
 -- en esta ventana, una sola vez, para poder machacar la tecla sin mirar.
 local ultimoAviso = nil
 
+-- Si se ha pulsado la tecla en esta visita a la casa. La busqueda sale sola al
+-- abrir (ver buscarSolo), y avisar de que no hay nada que hacer cuando no has
+-- pedido nada seria ruido: el aviso espera a la primera pulsacion.
+local pulsadaEnVisita = false
+
 -- Subastas de la cola canceladas en esta visita a la casa, para el aviso.
 local canceladasEnVisita = 0
 
--- Sale en el chat, en el centro de la pantalla y con un sonido: se machaca la
--- tecla sin mirar el chat.
+-- Sale en el chat y con un sonido, pero no en el centro de la pantalla: el
+-- boton del addon ya dice como esta la cosa, y el aviso grande estorbaba.
 local function avisarFin()
+    if not pulsadaEnVisita then
+        return
+    end
     local texto = R.Estado()
     if texto == ultimoAviso then
         return
@@ -978,9 +989,6 @@ local function avisarFin()
         mensaje = ("Todas canceladas (%s). %s"):format(canceladasEnVisita, texto)
     end
     print("|cff33ccffReposteo:|r " .. mensaje)
-    if RaidNotice_AddMessage and RaidWarningFrame then
-        RaidNotice_AddMessage(RaidWarningFrame, mensaje, ChatTypeInfo and ChatTypeInfo["RAID_WARNING"])
-    end
     if PlaySound and SOUNDKIT and SOUNDKIT.READY_CHECK then
         PlaySound(SOUNDKIT.READY_CHECK)
     end
@@ -998,10 +1006,28 @@ comprobarFin = function()
     avisarFin()
 end
 
+-- Buscar quien te adelanta no es una funcion protegida: puede salir solo, sin
+-- tecla. Al abrir la casa se lanza en cuanto la lista de tus subastas esta
+-- entera, para que la ventana diga a quien te han adelantado sin tocar nada.
+-- Solo hace lo que haria la tecla: si hay algo devuelto listo para postear,
+-- eso va antes, y postear si es una funcion protegida y necesita la tecla.
+local function buscarSolo()
+    if buscadoEnEstaVisita or not casaAbierta() or confirmacion then
+        return
+    end
+    if not subastasListas() or posteoEnCurso() or paraPostear() then
+        return
+    end
+    traza("busco solo: la lista esta entera y no hay nada que postear")
+    empezarBusqueda()
+    R.refrescarPanel()
+end
+
 -- Hace UNA accion y devuelve cual ("buscar", "cancelar", "recoger", "postear",
 -- "confirmar"), o nil si no habia nada que hacer. Nunca llama a mas de una
 -- funcion protegida.
 function R.Siguiente()
+    pulsadaEnVisita = true
     local hecho, motivo, detalle = nil, nil, ""
     -- Si no se ha hecho nada porque no queda nada, y no porque haya que esperar.
     local fin = false
@@ -1465,6 +1491,7 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
         cuentaAnterior = nil
         listaRepetida = false
         buscadoEnEstaVisita = false
+        pulsadaEnVisita = false
         repasadas = {}
         confirmadas = {}
         reiniciarBusqueda()
@@ -1478,6 +1505,7 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
         -- Pasada la espera no llega ningun evento: se refresca a mano para que
         -- el boton deje de decir "Leyendo tus subastas...".
         C_Timer.After(SEGUNDOS_PARA_FIARSE, function()
+            buscarSolo()
             R.refrescarPanel()
             pcall(function()
                 local b = WowAlertsReposteoBoton
@@ -1510,6 +1538,7 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
             -- Pasada la calma no llega ningun evento: se refresca a mano para
             -- que el boton deje de decir "Leyendo tus subastas...".
             C_Timer.After(SEGUNDOS_DE_CALMA + 0.05, function()
+                buscarSolo()
                 R.refrescarPanel()
             end)
         end
@@ -1518,6 +1547,7 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
     elseif evento == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
         pedirLista()
         lanzarSiguiente()
+        buscarSolo()
     elseif evento == "AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED" then
         -- El servidor ha descartado una consulta: se vuelve a pedir la que
         -- estaba en curso, y la lista si aun no ha llegado respuesta.
