@@ -465,16 +465,19 @@ def test_ventana_no_pisa_su_propio_global_con_createframe():
     # tabla del modulo (WowAlertsVentana = V, arriba del fichero). A partir
     # de ahi WowAlertsVentana.Refrescar deja de existir sin dar ningun error
     # en pantalla, y Reposteo.lua no puede volver a avisar a la ventana. El
-    # marco tiene que llamarse distinto al global del modulo.
+    # marco tiene que llamarse distinto al global del modulo, y lo mismo vale
+    # para cualquier otro frame con nombre que se añada mas adelante (el de
+    # eventos, por ejemplo): se comprueban TODOS los CreateFrame con nombre,
+    # no solo el primero.
     codigo = (CARPETA / "Ventana.lua").read_text(encoding="utf-8")
 
     asignacion_modulo = re.search(r"^(\w+)\s*=\s*V\s*$", codigo, re.MULTILINE)
     assert asignacion_modulo, "no se encontro la asignacion del modulo (ej. WowAlertsVentana = V)"
     nombre_modulo = asignacion_modulo.group(1)
 
-    marco_con_nombre = re.search(r'CreateFrame\(\s*"Frame"\s*,\s*"([^"]+)"', codigo)
-    assert marco_con_nombre, "no se encontro un CreateFrame con nombre para el marco"
-    assert marco_con_nombre.group(1) != nombre_modulo
+    nombres_de_marco = re.findall(r'CreateFrame\(\s*"[^"]*"\s*,\s*"([^"]+)"', codigo)
+    assert nombres_de_marco, "no se encontro ningun CreateFrame con nombre"
+    assert nombre_modulo not in nombres_de_marco
 
 
 def test_el_exportador_sigue_funcionando_con_el_reposteo_cargado():

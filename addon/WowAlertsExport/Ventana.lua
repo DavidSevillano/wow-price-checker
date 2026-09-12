@@ -27,9 +27,10 @@ local function oro(cobre)
 end
 
 -- Las subastas solo a puja no tienen buyout, ni el rival tiene por que
--- tenerlo: en vez de ensenar "0 o", que se entienda que no hay precio fijo.
+-- tenerlo: Reposteo.lua avisa de que en esas subastas viene nil o 0. En vez
+-- de ensenar "0 o", que se entienda que no hay precio fijo.
 local function precioTexto(cobre)
-    if not cobre then
+    if not cobre or cobre == 0 then
         return "solo puja"
     end
     return oro(cobre)
@@ -47,17 +48,25 @@ local function crearMarco()
     marco = CreateFrame("Frame", "WowAlertsVentanaMarco", UIParent, "BasicFrameTemplateWithInset")
     marco:SetSize(ANCHO, 200)
     marco:SetFrameStrata("HIGH")
+    -- Sin esto los clics le atraviesan y llegan al mundo 3D de detras (mueven
+    -- la camara, cambian de objetivo...). No es movible a proposito -- cada
+    -- Refrescar() la vuelve a anclar junto a la casa, asi que arrastrarla
+    -- solo la haria saltar de vuelta en el primer evento -- pero si tiene que
+    -- parar el raton.
+    marco:EnableMouse(true)
 
-    -- No es movible a proposito: cada Refrescar() la vuelve a anclar junto a
-    -- la casa, asi que si se pudiera arrastrar volveria a su sitio en el
-    -- primer evento y solo confundiria. El diseno no pide moverla.
-    marco.CloseButton:HookScript("OnClick", function()
-        -- Solo cuenta como "cerrada a proposito" si la cierra el usuario con
-        -- este boton. AUCTION_HOUSE_CLOSED tambien la esconde, pero eso no
-        -- activa ocultaAdrede: se resetea a false en AUCTION_HOUSE_SHOW para
-        -- que vuelva a salir la proxima vez que abras la casa.
-        ocultaAdrede = true
-    end)
+    -- Consultado como hace RoutePlanner: solo se engancha si el campo existe,
+    -- para que un cambio de Blizzard en la plantilla no reviente esto.
+    if marco.CloseButton then
+        marco.CloseButton:HookScript("OnClick", function()
+            -- Solo cuenta como "cerrada a proposito" si la cierra el usuario
+            -- con este boton. AUCTION_HOUSE_CLOSED tambien la esconde, pero
+            -- eso no activa ocultaAdrede: se resetea a false en
+            -- AUCTION_HOUSE_SHOW para que vuelva a salir la proxima vez que
+            -- abras la casa.
+            ocultaAdrede = true
+        end)
+    end
 
     -- No se toca marco.TitleText: segun el cliente, la plantilla lo trae
     -- directo o metido dentro de un TitleContainer, y no siempre existe de
@@ -135,7 +144,9 @@ local function pintarFila(indice, datos)
 
     -- GetOwnedAuctionInfo deja el enlace a nil en las mercancias (Reposteo.lua
     -- ya se protege de lo mismo). Sin enlace, GetItemInfo acepta el itemID.
-    local nombre, _, calidad, _, _, _, _, _, _, icono = datosDelObjeto(datos.enlace or datos.itemID)
+    -- Si faltaran los dos (no deberia pasar), cadena vacia antes que nil.
+    local nombre, _, calidad, _, _, _, _, _, _, icono =
+        datosDelObjeto(datos.enlace or datos.itemID or "")
     f.icono:SetTexture(icono or "Interface\\Icons\\INV_Misc_QuestionMark")
     f.icono:Show()
 
@@ -162,6 +173,18 @@ local function pintarFila(indice, datos)
 end
 
 function V.Refrescar()
+    -- Se pregunta a AuctionHouseFrame, no a un flag propio tipo "casaAbierta"
+    -- actualizado en AUCTION_HOUSE_SHOW/CLOSED. Un flag asi no arreglaria la
+    -- carrera entre manejadores del mismo evento (seguiria dependiendo de si
+    -- el de aqui corre antes o despues que el de Reposteo.lua, exactamente
+    -- igual que con IsShown()) y encima rompe un caso real: si haces /reload
+    -- con la casa ya abierta, el flag nace en false y la ventana no
+    -- aparece hasta el siguiente cierre y apertura. Reposteo.lua tiene el
+    -- mismo dilema y tambien resuelve casaAbierta() mirando IsShown()
+    -- directamente. El caso de la carrera en si (un redibujado de mas en el
+    -- mismo instante en que se cierra la casa) ya queda cubierto sin que se
+    -- note: el manejador de AUCTION_HOUSE_CLOSED de aqui abajo esconde el
+    -- marco decidiendo por el evento, no por este IsShown().
     if not AuctionHouseFrame or not AuctionHouseFrame:IsShown() then
         if marco then
             marco:Hide()
@@ -191,7 +214,8 @@ function V.Refrescar()
         end
     end
 
-    cabecera:SetText(("%s puestas  -  |cffff4a3d%s adelantadas|r"):format(total, adelantadas))
+    cabecera:SetText(("%s  -  %s puestas  -  |cffff4a3d%s adelantadas|r"):format(
+        UnitName("player"), total, adelantadas))
 
     local indice, alto = 0, 0
     for _, grupo in ipairs(ORDEN) do
