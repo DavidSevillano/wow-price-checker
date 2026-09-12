@@ -427,9 +427,16 @@ def test_llamadas_tolera_un_argumento_nulo_en_medio():
 
 
 def test_el_toc_carga_los_ficheros_en_orden():
+    # El orden no es capricho: cada fichero usa lo que deja el anterior.
+    # Vigilados.lua no depende de nadie. WowAlertsExport.lua lee
+    # WowAlertsVigilados. Reposteo.lua lee WowAlertsVigilados y
+    # WowAlertsExportDB. Ventana.lua lee WowAlertsReposteo.Subastas(), asi
+    # que tiene que ir el ultimo. Si añades un fichero nuevo, piensa que
+    # necesita antes de cargar y ponlo en el sitio que le toque, no al final
+    # sin mas.
     toc = (CARPETA / "WowAlertsExport.toc").read_text(encoding="utf-8")
     ficheros = [l.strip() for l in toc.splitlines() if l.strip() and not l.startswith("##")]
-    assert ficheros == ["Vigilados.lua", "WowAlertsExport.lua", "Reposteo.lua"]
+    assert ficheros == ["Vigilados.lua", "WowAlertsExport.lua", "Reposteo.lua", "Ventana.lua"]
 
 
 def test_el_exportador_sigue_funcionando_con_el_reposteo_cargado():
