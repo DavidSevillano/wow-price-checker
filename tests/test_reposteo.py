@@ -2905,3 +2905,30 @@ def test_las_vendidas_no_salen_en_la_lista():
     detectar(lua)
 
     assert [f["auctionID"] for f in subastas(lua)] == [12]
+
+
+def test_el_orden_dentro_del_mismo_grupo_es_por_precio_y_luego_por_id():
+    lua = runtime(subastas=[mia(10, 120_000), mia(11, 100_000), mia(20, 100_000)])
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    detectar(lua)
+
+    filas = subastas(lua)
+    assert [(f["auctionID"], f["grupo"]) for f in filas] == [
+        (11, "adelantada"),
+        (20, "adelantada"),
+        (10, "adelantada"),
+    ]
+
+
+def test_una_entrada_devuelta_con_el_id_viejo_no_saca_fila():
+    lua = runtime()
+    devolver(lua, 10)
+    assert [(e["auctionID"], e["estado"]) for e in cola(lua)] == [(10, "devuelta")]
+
+    poner(lua, "SUBASTAS", [mia(12, 80_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    filas = subastas(lua)
+    assert [f["auctionID"] for f in filas] == [12]
+    assert filas[0]["grupo"] == "primera"

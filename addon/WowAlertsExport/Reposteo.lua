@@ -258,6 +258,13 @@ local function anadirAGrupo(itemKey)
     return grupos[clave]
 end
 
+-- El ilvl del enlace manda; el del itemKey es solo el recambio cuando el
+-- enlace no esta (WoW no siempre lo rellena). La cola y la ventana tienen
+-- que decir el mismo ilvl para la misma subasta, asi que las dos llaman aqui.
+local function ilvlDe(info, itemKey)
+    return (info.itemLink and GetDetailedItemLevelInfo(info.itemLink)) or itemKey.itemLevel
+end
+
 -- Agrupa por objeto e ilvl lo que hay que mirar, y de paso limpia la cola.
 local function prepararBusqueda()
     reiniciarBusqueda()
@@ -276,7 +283,7 @@ local function prepararBusqueda()
         -- el aviso, pero solo la activa entra en la busqueda de undercuts.
         if info and (info.status == 0 or info.status == 1) and (info.buyoutAmount or 0) > 0
             and itemKey and objetos[itemKey.itemID] then
-            local ilvl = (info.itemLink and GetDetailedItemLevelInfo(info.itemLink)) or itemKey.itemLevel
+            local ilvl = ilvlDe(info, itemKey)
             if info.status == 0 then
                 activas[info.auctionID] = true
                 local grupo = anadirAGrupo(itemKey)
@@ -1230,7 +1237,7 @@ end
 --  La lista para la ventana
 -- ---------------------------------------------------------------------------
 
--- El orden en que se enseñan los grupos: primero lo que hay que arreglar.
+-- El orden en que se muestran los grupos: primero lo que hay que arreglar.
 local ORDEN_GRUPOS = { adelantada = 1, primera = 2, sinmirar = 3, novigilada = 4 }
 
 -- Una fila por subasta activa tuya, ya clasificada. Solo lee lo que el
@@ -1244,13 +1251,14 @@ function R.Subastas()
         local itemKey = info and info.itemKey
         -- status 1 es vendida y pendiente de cobro: esa ya no esta en venta.
         if info and info.status == 0 and itemKey then
-            local ilvl = (info.itemLink and GetDetailedItemLevelInfo(info.itemLink))
-                or itemKey.itemLevel
             local fila = {
                 auctionID = info.auctionID,
                 itemID = itemKey.itemID,
                 enlace = info.itemLink,
-                ilvl = ilvl,
+                ilvl = ilvlDe(info, itemKey),
+                -- A puja sin precio de compra, `buyoutAmount` puede venir nil
+                -- o 0. prepararBusqueda descarta esas, pero aqui SI se
+                -- ensenan: el usuario las tiene puestas y quiere verlas.
                 precio = info.buyoutAmount,
                 grupo = "novigilada",
             }
