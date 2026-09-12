@@ -1226,6 +1226,63 @@ function R.Estado()
     return "Nada que repostear"
 end
 
+-- ---------------------------------------------------------------------------
+--  La lista para la ventana
+-- ---------------------------------------------------------------------------
+
+-- El orden en que se enseñan los grupos: primero lo que hay que arreglar.
+local ORDEN_GRUPOS = { adelantada = 1, primera = 2, sinmirar = 3, novigilada = 4 }
+
+-- Una fila por subasta activa tuya, ya clasificada. Solo lee lo que el
+-- reposteo ya sabe: no lanza ninguna busqueda. La ventana saca el nombre, la
+-- calidad y el icono del enlace.
+function R.Subastas()
+    local objetos = vigilados().objetos
+    local filas = {}
+    for i = 1, C_AuctionHouse.GetNumOwnedAuctions() do
+        local info = C_AuctionHouse.GetOwnedAuctionInfo(i)
+        local itemKey = info and info.itemKey
+        -- status 1 es vendida y pendiente de cobro: esa ya no esta en venta.
+        if info and info.status == 0 and itemKey then
+            local ilvl = (info.itemLink and GetDetailedItemLevelInfo(info.itemLink))
+                or itemKey.itemLevel
+            local fila = {
+                auctionID = info.auctionID,
+                itemID = itemKey.itemID,
+                enlace = info.itemLink,
+                ilvl = ilvl,
+                precio = info.buyoutAmount,
+                grupo = "novigilada",
+            }
+            if objetos[itemKey.itemID] then
+                local e = buscarEntrada(info.auctionID)
+                local vista = vistaLimpiaEn[info.auctionID]
+                if e and (e.estado == "cancelar" or e.estado == "cancelando")
+                    and confirmadas[info.auctionID] then
+                    fila.grupo = "adelantada"
+                    fila.precioRival = e.precio
+                    fila.igualada = e.precio == info.buyoutAmount
+                elseif vista and GetTime() - vista < SEGUNDOS_VISTA_LIMPIA then
+                    fila.grupo = "primera"
+                else
+                    fila.grupo = "sinmirar"
+                end
+            end
+            filas[#filas + 1] = fila
+        end
+    end
+    table.sort(filas, function(a, b)
+        if ORDEN_GRUPOS[a.grupo] ~= ORDEN_GRUPOS[b.grupo] then
+            return ORDEN_GRUPOS[a.grupo] < ORDEN_GRUPOS[b.grupo]
+        end
+        if (a.precio or 0) ~= (b.precio or 0) then
+            return (a.precio or 0) < (b.precio or 0)
+        end
+        return a.auctionID < b.auctionID
+    end)
+    return filas
+end
+
 local boton = nil
 
 local function colocarBoton(padre)

@@ -2839,3 +2839,69 @@ def test_tras_recoger_una_carta_espera_a_que_el_buzon_cambie():
     lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
     lua.globals().VENCER_TEMPORIZADORES()
     assert llamadas(lua) == [("TakeInboxItem", 1, 1), ("TakeInboxItem", 1, 1)]
+
+
+# ---------------------------------------------------------------------------
+#  La lista para la ventana
+# ---------------------------------------------------------------------------
+
+
+def subastas(lua):
+    return a_python(lua.globals().WowAlertsReposteo.Subastas())
+
+
+def test_la_lista_marca_lo_adelantado_y_lo_que_va_primero():
+    lua = runtime(subastas=[mia(10, 100_000), mia(12, 80_000)])
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    detectar(lua)
+
+    filas = subastas(lua)
+    assert [(f["auctionID"], f["grupo"]) for f in filas] == [
+        (10, "adelantada"),
+        (12, "primera"),
+    ]
+    adelantada = filas[0]
+    assert adelantada["precio"] == 100_000
+    assert adelantada["precioRival"] == 90_000
+    assert adelantada["igualada"] is False
+    assert adelantada["itemID"] == GREBAS
+    assert adelantada["ilvl"] == 311
+
+
+def test_la_lista_avisa_de_que_te_igualan():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(11, 100_000)])
+    detectar(lua)
+
+    (fila,) = subastas(lua)
+    assert fila["grupo"] == "adelantada"
+    assert fila["igualada"] is True
+
+
+def test_antes_de_buscar_todo_esta_sin_mirar():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    abrir_casa(lua)
+
+    (fila,) = subastas(lua)
+    assert fila["grupo"] == "sinmirar"
+
+
+def test_lo_que_no_esta_vigilado_sale_al_final_y_sin_estado():
+    lua = runtime(subastas=[mia(10, 100_000, item_id=999), mia(12, 80_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    filas = subastas(lua)
+    assert [(f["auctionID"], f["grupo"]) for f in filas] == [
+        (12, "primera"),
+        (10, "novigilada"),
+    ]
+    assert filas[1].get("precioRival") is None
+
+
+def test_las_vendidas_no_salen_en_la_lista():
+    lua = runtime(subastas=[mia(10, 100_000, status=1), mia(12, 80_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    assert [f["auctionID"] for f in subastas(lua)] == [12]
