@@ -176,6 +176,7 @@ def test_repostear_false_no_exige_id_resuelto(tmp_path, monkeypatch):
 
     assert codigo == generar_vigilados.EXIT_OK
     assert salida.exists()
+    assert "Montura" not in salida.read_text(encoding="utf-8")
 
 
 def test_un_objeto_no_resuelto_no_escribe_nada_y_avisa(tmp_path, monkeypatch):
