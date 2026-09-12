@@ -1332,6 +1332,56 @@ function R.Estado()
     return "Nada que repostear"
 end
 
+-- Cuantas subastas has puesto con la tecla en esta visita.
+local function cuentaRepuestas()
+    local n = 0
+    for _ in pairs(reposteadas) do
+        n = n + 1
+    end
+    return n
+end
+
+-- Por donde va lo que el addon esta haciendo ahora, para la barra de la
+-- ventana: la fase, cuantas lleva y de cuantas. nil si no hay nada en marcha.
+-- Las fases van en el orden del ciclo, y se mira la de mas atras primero: al
+-- cancelar aun quedan busquedas por responder, y lo cancelado ya cuenta como
+-- pendiente de poner mucho antes de que vayas al buzon.
+function R.Progreso()
+    if not casaAbierta() then
+        return nil
+    end
+    if buscando() then
+        local grupo = grupos[ordenGrupos[siguienteGrupo]]
+        return {
+            fase = "escaneo",
+            hechos = siguienteGrupo - 1,
+            total = #ordenGrupos,
+            -- Cual esta mirando ahora mismo, para poder decir su nombre.
+            itemID = grupo and grupo.itemKey.itemID,
+            ilvl = grupo and grupo.itemKey.itemLevel,
+        }
+    end
+    local porCancelar = contarCancelables()
+    if porCancelar > 0 or canceladasEnVisita > 0 then
+        return {
+            fase = "cancelar",
+            hechos = canceladasEnVisita,
+            total = canceladasEnVisita + porCancelar,
+        }
+    end
+    local puestas = cuentaRepuestas()
+    local porPoner = contar("devuelta") + contar("posteando")
+    if porPoner > 0 or puestas > 0 then
+        return { fase = "postear", hechos = puestas, total = puestas + porPoner }
+    end
+    -- Nada pendiente, pero el escaneo de esta visita si se hizo: la barra se
+    -- queda llena en vez de desaparecer de golpe.
+    if buscadoEnEstaVisita and #ordenGrupos > 0 then
+        return { fase = "escaneo", hechos = #ordenGrupos, total = #ordenGrupos }
+    end
+    return nil
+end
+
 -- ---------------------------------------------------------------------------
 --  La lista para la ventana
 -- ---------------------------------------------------------------------------

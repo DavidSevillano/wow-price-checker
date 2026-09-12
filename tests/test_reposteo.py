@@ -1968,7 +1968,7 @@ def test_la_version_del_toc_es_la_del_addon():
 
     en_toc = re.search(r"^## Version: (.+)$", toc, re.MULTILINE).group(1).strip()
     en_lua = re.search(r'^local ADDON_VERSION = "(.+)"$', lua, re.MULTILINE).group(1)
-    assert en_toc == en_lua == "1.18"
+    assert en_toc == en_lua == "1.19"
 
 
 # -- Lo que el juego confirma y lo que se repone por fuera --------------------
@@ -3119,6 +3119,68 @@ def test_la_lista_dice_lo_que_le_queda_a_cada_subasta():
     (fila,) = subastas(lua)
     assert fila["segundos"] == 41_520
     assert fila["banda"] == 3
+
+
+# -- La barra de progreso ----------------------------------------------------
+
+
+def progreso(lua):
+    return a_python(lua.globals().WowAlertsReposteo.Progreso())
+
+
+def test_la_barra_dice_por_donde_va_el_escaneo():
+    lua = runtime(subastas=[mia(10, 100_000), mia(12, 80_000, ilvl=298)])
+    en_la_casa(lua, [])
+    abrir_casa(lua)
+    assert pulsar(lua) == "buscar"
+
+    p = progreso(lua)
+    assert (p["fase"], p["hechos"], p["total"]) == ("escaneo", 0, 2)
+    assert p["itemID"] == GREBAS   # la que esta mirando ahora
+
+    lua.globals().RESPONDER()
+    p = progreso(lua)
+    assert (p["fase"], p["hechos"], p["total"]) == ("escaneo", 1, 2)
+
+
+def test_al_acabar_el_escaneo_la_barra_se_queda_llena():
+    """Sin nada pendiente no desaparece de golpe: dice que se miro todo."""
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    p = progreso(lua)
+    assert (p["fase"], p["hechos"], p["total"]) == ("escaneo", 1, 1)
+
+
+def test_la_barra_cuenta_las_cancelaciones():
+    lua = runtime()
+    adelantadas(lua, 10, 12)
+    p = progreso(lua)
+    assert (p["fase"], p["hechos"], p["total"]) == ("cancelar", 0, 2)
+
+    pulsar(lua)
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+    p = progreso(lua)
+    assert (p["fase"], p["hechos"], p["total"]) == ("cancelar", 1, 2)
+
+
+def test_la_barra_cuenta_lo_que_llevas_repuesto():
+    lua = runtime()
+    devolver(lua, 10, 12)
+    en_la_bolsa(lua, 3, 4)
+    abrir_casa(lua)
+    p = progreso(lua)
+    assert (p["fase"], p["hechos"], p["total"]) == ("postear", 0, 2)
+
+    assert pulsar(lua) == "postear"
+    p = progreso(lua)
+    assert (p["fase"], p["hechos"], p["total"]) == ("postear", 1, 2)
+
+
+def test_sin_la_casa_abierta_no_hay_barra():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    assert progreso(lua) is None
 
 
 # -- El boton de cancelar de cada fila ---------------------------------------

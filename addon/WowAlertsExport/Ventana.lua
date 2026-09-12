@@ -10,6 +10,10 @@ local ANCHO = 360
 local ALTO_FILA = 34
 local ALTO_TITULO = 18
 local ALTO_MAXIMO = 560
+-- Lo que ocupa la barra de progreso con su hueco. La lista empieza mas abajo
+-- cuando se ve, y la ventana crece lo mismo.
+local ALTO_BARRA = 14
+local HUECO_BARRA = 20
 
 local COLORES = {
     adelantada = { 1, 0.29, 0.24, "ADELANTADAS" },
@@ -20,8 +24,21 @@ local COLORES = {
 }
 local ORDEN = { "adelantada", "reposteada", "primera", "sinmirar", "novigilada" }
 
-local marco, contenido, filas, cabecera
+-- Cada fase del ciclo pinta la barra de su color, con el mismo codigo de
+-- siempre: rojo lo que hay que arreglar, verde lo que ya esta puesto.
+local FASES = {
+    escaneo = { 0.25, 0.55, 1, "Escaneando" },
+    cancelar = { 1, 0.45, 0.2, "Cancelando" },
+    postear = { 0.25, 0.8, 0.35, "Reposteando" },
+}
+
+local marco, contenido, filas, cabecera, barra, scroll
 local ocultaAdrede = false
+
+-- Los nombres nuevos de estas dos viven en C_Item; se deja el viejo de
+-- recambio por si el cliente aun no los tiene.
+local datosDelObjeto = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+local colorDeCalidad = (C_Item and C_Item.GetItemQualityColor) or GetItemQualityColor
 
 local function oro(cobre)
     return tostring(math.floor(cobre / 10000)) .. " o"
@@ -100,7 +117,20 @@ local function crearMarco()
     cabecera = marco:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     cabecera:SetPoint("TOPLEFT", marco, "TOPLEFT", 14, -30)
 
-    local scroll = CreateFrame("ScrollFrame", nil, marco, "UIPanelScrollFrameTemplate")
+    barra = CreateFrame("StatusBar", nil, marco)
+    barra:SetPoint("TOPLEFT", marco, "TOPLEFT", 14, -46)
+    barra:SetPoint("TOPRIGHT", marco, "TOPRIGHT", -16, -46)
+    barra:SetHeight(ALTO_BARRA)
+    barra:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+    barra:SetMinMaxValues(0, 1)
+    barra.fondo = barra:CreateTexture(nil, "BACKGROUND")
+    barra.fondo:SetAllPoints(barra)
+    barra.fondo:SetColorTexture(0, 0, 0, 0.5)
+    barra.texto = barra:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    barra.texto:SetPoint("CENTER", barra, "CENTER", 0, 0)
+    barra:Hide()
+
+    scroll = CreateFrame("ScrollFrame", nil, marco, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", marco, "TOPLEFT", 10, -48)
     scroll:SetPoint("BOTTOMRIGHT", marco, "BOTTOMRIGHT", -30, 10)
     contenido = CreateFrame("Frame", nil, scroll)
@@ -194,11 +224,6 @@ local function titulo(indice, texto, r, g, b)
     return f
 end
 
--- Los nombres nuevos de estas dos viven en C_Item; se deja el viejo de
--- recambio por si el cliente aun no los tiene.
-local datosDelObjeto = (C_Item and C_Item.GetItemInfo) or GetItemInfo
-local colorDeCalidad = (C_Item and C_Item.GetItemQualityColor) or GetItemQualityColor
-
 local function pintarFila(indice, datos)
     local f = fila(indice)
     f:SetHeight(ALTO_FILA)
@@ -236,6 +261,33 @@ local function pintarFila(indice, datos)
     f.ilvl:SetText((datos.ilvl and datos.ilvl > 1) and tostring(datos.ilvl) or "")
     f.tiempo:SetText(tiempoTexto(datos))
     f:Show()
+end
+
+-- Deja la barra contando lo que haya en marcha, o escondida si no hay nada.
+-- Devuelve lo que ocupa, para que la lista y la ventana se ajusten.
+local function pintarBarra(progreso)
+    local fase = progreso and FASES[progreso.fase]
+    if not fase or (progreso.total or 0) <= 0 then
+        barra:Hide()
+        return 0
+    end
+    local hechos = math.min(progreso.hechos or 0, progreso.total)
+    barra:SetStatusBarColor(fase[1], fase[2], fase[3])
+    barra:SetValue(hechos / progreso.total)
+
+    local que = ""
+    -- Mientras escanea dice cual esta mirando: es lo que se tarda en ver, y
+    -- asi sabes que no se ha quedado colgada. El nombre puede no estar aun en
+    -- la cache del cliente, y entonces se queda solo con el recuento.
+    if progreso.itemID and hechos < progreso.total then
+        local nombre = datosDelObjeto(progreso.itemID)
+        if nombre then
+            que = " " .. nombre
+        end
+    end
+    barra.texto:SetText(("%s%s  %s/%s"):format(fase[4], que, hechos, progreso.total))
+    barra:Show()
+    return HUECO_BARRA
 end
 
 function V.Refrescar()
@@ -283,6 +335,14 @@ function V.Refrescar()
     cabecera:SetText(("%s  -  %s puestas  -  |cffff4a3d%s adelantadas|r"):format(
         UnitName("player"), total, adelantadas))
 
+    local hueco = 0
+    if WowAlertsReposteo.Progreso then
+        hueco = pintarBarra(WowAlertsReposteo.Progreso())
+    end
+    scroll:ClearAllPoints()
+    scroll:SetPoint("TOPLEFT", marco, "TOPLEFT", 10, -48 - hueco)
+    scroll:SetPoint("BOTTOMRIGHT", marco, "BOTTOMRIGHT", -30, 10)
+
     local indice, alto = 0, 0
     for _, grupo in ipairs(ORDEN) do
         local lista = porGrupo[grupo]
@@ -308,7 +368,7 @@ function V.Refrescar()
     end
 
     contenido:SetHeight(math.max(alto, 10))
-    marco:SetHeight(math.min(alto + 70, ALTO_MAXIMO))
+    marco:SetHeight(math.min(alto + 70 + hueco, ALTO_MAXIMO))
     marco:ClearAllPoints()
     marco:SetPoint("TOPLEFT", AuctionHouseFrame, "TOPRIGHT", 4, 0)
     marco:Show()

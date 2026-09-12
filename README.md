@@ -715,6 +715,12 @@ TODAVIA` y `NO VIGILADAS`. Se va llenando sola conforme avanza la busqueda y se
 actualiza al cancelar y al repostear. La `x` de arriba la cierra hasta la
 proxima vez que abras la casa.
 
+Debajo de la cabecera hay una **barra de progreso** de lo que el addon esta
+haciendo ahora mismo, que se rellena sola: azul mientras escanea (`Escaneando
+Grebas 3/7`, diciendo cual esta mirando), naranja mientras cancelas
+(`Cancelando 2/5`) y verde mientras repones (`Reposteando 1/4`). Al acabar el
+escaneo se queda llena en vez de desaparecer.
+
 Cada fila dice el precio, el ilvl y **lo que le queda de listado** (`11h 32m`),
 y lleva a la derecha un boton **`X` que cancela esa subasta**, te hayan
 adelantado o no. Cancela una sola con cada clic, igual que la tecla, y lo que
