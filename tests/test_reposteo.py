@@ -13,6 +13,7 @@ Corre sobre lupa.lua51, la misma version 5.1 que usa el juego.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -437,6 +438,43 @@ def test_el_toc_carga_los_ficheros_en_orden():
     toc = (CARPETA / "WowAlertsExport.toc").read_text(encoding="utf-8")
     ficheros = [l.strip() for l in toc.splitlines() if l.strip() and not l.startswith("##")]
     assert ficheros == ["Vigilados.lua", "WowAlertsExport.lua", "Reposteo.lua", "Ventana.lua"]
+
+
+# -- Ventana.lua: solo dibuja, no hay dobles que lo prueben de verdad --------
+# Lo que sigue no comprueba que WoW lo pinte bien (eso es cosa de la Task 9),
+# pero si puede pillar erratas de sintaxis, texto no-ASCII colado sin querer,
+# y el fallo concreto que ya nos pillo una vez: un CreateFrame con nombre que
+# pisa el global de la tabla del modulo.
+
+
+def test_ventana_compila():
+    codigo = (CARPETA / "Ventana.lua").read_text(encoding="utf-8")
+    lupa.LuaRuntime().compile(codigo)
+
+
+def test_ventana_es_ascii_puro():
+    # El resto del addon se escribe sin tildes ni enie (Reposteo.lua escribe
+    # "dueno", no "dueño"), asi que un caracter fuera de ASCII es una errata.
+    datos = (CARPETA / "Ventana.lua").read_bytes()
+    datos.decode("ascii")
+
+
+def test_ventana_no_pisa_su_propio_global_con_createframe():
+    # El bug real: CreateFrame("Frame", "WowAlertsVentana", ...) escribe
+    # _G["WowAlertsVentana"] = marco en cuanto se crea el marco, pisando la
+    # tabla del modulo (WowAlertsVentana = V, arriba del fichero). A partir
+    # de ahi WowAlertsVentana.Refrescar deja de existir sin dar ningun error
+    # en pantalla, y Reposteo.lua no puede volver a avisar a la ventana. El
+    # marco tiene que llamarse distinto al global del modulo.
+    codigo = (CARPETA / "Ventana.lua").read_text(encoding="utf-8")
+
+    asignacion_modulo = re.search(r"^(\w+)\s*=\s*V\s*$", codigo, re.MULTILINE)
+    assert asignacion_modulo, "no se encontro la asignacion del modulo (ej. WowAlertsVentana = V)"
+    nombre_modulo = asignacion_modulo.group(1)
+
+    marco_con_nombre = re.search(r'CreateFrame\(\s*"Frame"\s*,\s*"([^"]+)"', codigo)
+    assert marco_con_nombre, "no se encontro un CreateFrame con nombre para el marco"
+    assert marco_con_nombre.group(1) != nombre_modulo
 
 
 def test_el_exportador_sigue_funcionando_con_el_reposteo_cargado():
