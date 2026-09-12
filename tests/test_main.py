@@ -1314,3 +1314,25 @@ def test_se_canta_la_venta_si_no_habia_nadie_jugando(entorno, tmp_path, caplog):
         )
 
     assert "💰 1 venta(s)" in caplog.text
+
+
+def test_se_canta_la_venta_aunque_no_hayas_jugado_en_todo_un_listado(
+    entorno, tmp_path, caplog
+):
+    """El 2026-09-11 las ventas de la noche no salieron hasta entrar al juego.
+
+    Pasadas doce horas sin jugar, todo lo que exporto el addon es de un volcado
+    viejo, y la pasada se despedia con "Nada que comprobar" antes de mirar el
+    seguimiento. Pero lo que queda por resolver en el seguimiento lo avala
+    Blizzard, no el addon: una Faja de 190.000 g vendida de madrugada se anuncio
+    a las 13:22, despues de recoger el correo.
+    """
+    with caplog.at_level(logging.INFO):
+        assert (
+            _pasada_con_una_desaparecida(
+                entorno, tmp_path, exporto_hace=timedelta(hours=13)
+            )
+            == cli.EXIT_OK
+        )
+
+    assert "💰 1 venta(s)" in caplog.text

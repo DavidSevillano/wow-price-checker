@@ -458,7 +458,15 @@ def run_mis_subastas(
     # afirmar si se vendieron, caducaron o las relistaste.
     olvidar = {s.auction_id for s in de_volcado_viejo}
 
-    if not mis_subastas:
+    seguimiento = SeguimientoVentas(state_dir / "ventas.json")
+    # Lo que queda por resolver no depende de que el addon este al dia: las
+    # subastas seguidas las avala el volcado de Blizzard. El 2026-09-11, tras
+    # doce horas sin jugar, todo lo del addon era viejo, la pasada se despedia
+    # aqui sin mirar el seguimiento y las ventas de la noche no salieron hasta
+    # volver a entrar al juego.
+    pendientes = seguimiento.reinos_con_seguimiento() if hacer_ventas else set()
+
+    if not mis_subastas and not pendientes:
         log.info(
             "😴 De tus %s subasta(s) conocidas, ninguna es de un objeto vigilado. "
             "Nada que comprobar.",
@@ -477,12 +485,22 @@ def run_mis_subastas(
             )
         return EXIT_OK
 
-    log.info(
-        "📋 %s de tus %s subastas son de objetos vigilados, en %s reino(s).",
-        len(mis_subastas),
-        len(todas),
-        len({s.realm for s in mis_subastas}),
-    )
+    if mis_subastas:
+        log.info(
+            "📋 %s de tus %s subastas son de objetos vigilados, en %s reino(s).",
+            len(mis_subastas),
+            len(todas),
+            len({s.realm for s in mis_subastas}),
+        )
+    else:
+        log.info(
+            "🔎 Nada fresco del addon, pero quedan subastas por resolver en %s "
+            "reino(s): las sigo con lo que dice Blizzard.",
+            len(pendientes),
+        )
+        # Sin subastas tuyas con las que comparar no hay undercuts que buscar,
+        # y asi el panel de undercuts se queda como estaba en vez de vaciarse.
+        hacer_undercut = False
 
     realm_cache = RealmIdCache(state_dir / "realm_ids.json")
     realm_ids_por_reino = resolve_connected_realms(
@@ -492,7 +510,9 @@ def run_mis_subastas(
         realm_cache.save()
 
     grupos = agrupar_por_reino(mis_subastas, realm_ids_por_reino)
-    if not grupos:
+    # Sin subastas frescas no hay reinos que resolver: los del seguimiento ya
+    # vienen con su id y se anaden mas abajo.
+    if mis_subastas and not grupos:
         raise RealmResolutionError(
             "No he podido resolver ninguno de tus reinos. Sin eso no puedo "
             "descargar sus subastas."
@@ -510,7 +530,6 @@ def run_mis_subastas(
         for item_id, rule in rules_by_item_id.items()
         if not rule.avisar_undercut
     }
-    seguimiento = SeguimientoVentas(state_dir / "ventas.json")
     # Los avisos salen en el orden en que tienes los personajes, no en el que
     # toque descargar los reinos: asi siempre miras al mismo sitio.
     orden = orden_de_personajes(leer_rosters(roster_path), config.orden_personajes)
@@ -627,7 +646,9 @@ def run_mis_subastas(
         )
         memoria_caducados.set("caducados_avisados", sorted(caducados))
         memoria_caducados.save()
-    elif set(caducados) != set(ya_avisados) and not dry_run:
+    elif mis_subastas and set(caducados) != set(ya_avisados) and not dry_run:
+        # Con mis_subastas vacio no se ha podido juzgar a nadie, y guardar la
+        # lista vacia volveria a cantar por Discord a todos la proxima vez.
         # Se guarda igualmente para que arreglar uno no reabra el aviso de los
         # demas la proxima vez.
         memoria_caducados.set("caducados_avisados", sorted(caducados))
