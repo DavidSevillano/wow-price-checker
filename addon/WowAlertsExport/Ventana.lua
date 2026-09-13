@@ -229,6 +229,8 @@ local function pintarFila(indice, datos)
     f:SetHeight(ALTO_FILA)
     f.auctionID = datos.auctionID
     f.boton:Show()
+    -- Apagada si ya se pidio cancelarla: un clic de mas no hace nada.
+    f.boton:SetEnabled(not datos.cancelada)
     f.nombre:ClearAllPoints()
     f.nombre:SetPoint("TOPLEFT", f.icono, "TOPRIGHT", 6, 0)
 

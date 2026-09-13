@@ -1344,16 +1344,28 @@ end
 -- un clic, una cancelacion, igual que la tecla. Devuelve por que no se ha
 -- podido, o nil si se ha pedido la cancelacion.
 function R.Cancelar(auctionID)
-    if not casaAbierta() then
-        return "la casa no esta abierta"
-    end
-    if C_AuctionHouse.CanCancelAuction and not C_AuctionHouse.CanCancelAuction(auctionID) then
-        return "el juego no deja cancelar esa subasta"
-    end
-    if hayReciente("cancelando", "cancelandoEn") then
-        return "la cancelacion anterior aun espera respuesta del juego"
-    end
     local e = buscarEntrada(auctionID)
+    local motivo = nil
+    if not casaAbierta() then
+        motivo = "la casa no esta abierta"
+    elseif e and e.estado ~= "cancelar" then
+        -- Como la tecla, solo se cancela lo que esta por cancelar. La fila de
+        -- una recien cancelada sigue en pantalla hasta que llega la lista
+        -- nueva, y un segundo clic pedia cancelar una subasta que ya no
+        -- existe: el juego no responde a eso, la entrada se quedaba
+        -- "cancelando" y bloqueaba todas las X durante SEGUNDOS_SIN_RESPUESTA.
+        motivo = "esa ya esta cancelada"
+    elseif C_AuctionHouse.CanCancelAuction and not C_AuctionHouse.CanCancelAuction(auctionID) then
+        motivo = "el juego no deja cancelar esa subasta"
+    elseif hayReciente("cancelando", "cancelandoEn") then
+        motivo = "la cancelacion anterior aun espera respuesta del juego"
+    end
+    if motivo then
+        -- Un clic que no hace nada tiene que dejar rastro, o no hay forma de
+        -- saber despues por que no se cancelo.
+        traza("no cancelo %s desde la ventana: %s", auctionID, motivo)
+        return motivo
+    end
     if not e then
         -- Entra en la cola para que el ciclo siga: recogerla del buzon y
         -- volver a ponerla. Solo lo vigilado, que es lo unico que el addon
@@ -1583,12 +1595,22 @@ function R.Subastas()
                 grupo = "novigilada",
             }
             vistas[info.auctionID] = true
+            -- Ya pedida su cancelacion: la ventana apaga su X hasta que la
+            -- lista nueva la quite (ver R.Cancelar).
+            local pedida = buscarEntrada(info.auctionID)
+            if pedida and pedida.estado ~= "cancelar" then
+                fila.cancelada = true
+            end
             if reposteadas[info.auctionID] then
                 fila.grupo = "reposteada"
             elseif objetos[itemKey.itemID] then
                 local e = buscarEntrada(info.auctionID)
+                -- Adelantada es lo que la busqueda vio con un rival delante, y eso
+                -- siempre deja su precio. Una que cancelas con su X queda
+                -- confirmada pero sin rival, y no debe cambiar de grupo mientras
+                -- el juego responde: moveria todas las filas bajo el raton.
                 if e and (e.estado == "cancelar" or e.estado == "cancelando")
-                    and confirmadas[info.auctionID] then
+                    and confirmadas[info.auctionID] and e.precio then
                     fila.grupo = "adelantada"
                     fila.precioRival = e.precio
                     fila.igualada = e.precio == info.buyoutAmount

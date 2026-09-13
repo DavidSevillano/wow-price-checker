@@ -3321,6 +3321,56 @@ def test_cancelar_desde_la_ventana_con_la_casa_cerrada_no_hace_nada():
     assert llamadas(lua) == []
 
 
+def test_una_segunda_x_en_la_fila_ya_cancelada_no_bloquea_las_demas():
+    """Visto en el juego: la fila sigue en pantalla un momento despues de
+    cancelarse. Pedir otra vez la cancelacion de una subasta que ya no existe
+    no recibe respuesta, dejaba todas las X bloqueadas 10 s y sacaba el objeto
+    del reposteo."""
+    lua = runtime(subastas=[mia(10, 100_000), mia(12, 120_000)])
+    abrir_casa(lua)
+    assert cancelar(lua, 10) is None
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+
+    assert cancelar(lua, 10) is not None            # ya esta cancelada
+    assert [(e["auctionID"], e["estado"]) for e in cola(lua)] == [(10, "devuelta")]
+    assert cancelar(lua, 12) is None                # la siguiente X funciona
+    assert llamadas(lua) == [("CancelAuction", 10), ("CancelAuction", 12)]
+
+
+def test_pulsar_una_x_no_mueve_las_filas_mientras_responde_el_juego():
+    """La fila pulsada saltaba a ADELANTADAS hasta que el juego respondia, y
+    volvia despues: aparecia un titulo de grupo, todo lo de debajo bajaba y
+    subia bajo el raton, y los clics rapidos caian fuera de las X."""
+    lua = runtime(subastas=[mia(10, 100_000), mia(12, 120_000), mia(14, 130_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+    antes = [(f["auctionID"], f["grupo"]) for f in subastas(lua)]
+
+    cancelar(lua, 10)
+    assert [(f["auctionID"], f["grupo"]) for f in subastas(lua)] == antes
+
+
+def test_la_fila_dice_si_ya_se_ha_pedido_cancelarla():
+    """Para apagar su X: la fila sigue en pantalla hasta que llega la lista."""
+    lua = runtime(subastas=[mia(10, 100_000), mia(12, 120_000)])
+    abrir_casa(lua)
+    assert [f.get("cancelada") for f in subastas(lua)] == [None, None]
+
+    cancelar(lua, 10)
+    assert {f["auctionID"]: f.get("cancelada") for f in subastas(lua)} == {10: True, 12: None}
+    lua.globals().DISPARAR("AUCTION_CANCELED", 10)
+    assert {f["auctionID"]: f.get("cancelada") for f in subastas(lua)} == {10: True, 12: None}
+
+
+def test_una_adelantada_sigue_adelantada_al_pulsar_su_x():
+    lua = runtime()
+    adelantadas(lua, 10)
+    cancelar(lua, 10)
+
+    (fila,) = subastas(lua)
+    assert (fila["grupo"], fila["precioRival"]) == ("adelantada", 90_000)
+
+
 def test_cancelar_lo_recien_repuesto_lo_saca_de_su_grupo():
     lua = runtime()
     devolver(lua, 10)
