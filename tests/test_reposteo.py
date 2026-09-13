@@ -2038,7 +2038,7 @@ def test_la_version_del_toc_es_la_del_addon():
 
     en_toc = re.search(r"^## Version: (.+)$", toc, re.MULTILINE).group(1).strip()
     en_lua = re.search(r'^local ADDON_VERSION = "(.+)"$', lua, re.MULTILINE).group(1)
-    assert en_toc == en_lua == "1.21"
+    assert en_toc == en_lua == "1.22"
 
 
 # -- Lo que el juego confirma y lo que se repone por fuera --------------------
@@ -3530,6 +3530,26 @@ def test_de_varias_copias_puestas_se_apunta_la_mas_barata():
     detectar(lua)
 
     assert precio_apuntado(lua)["precio"] == 100_000
+
+
+def test_lo_que_pones_a_mano_o_con_tsm_tambien_apunta_su_precio():
+    """Visto en el juego: lo puesto a mano despues de la busqueda no se
+    apuntaba, y la busqueda de la visita siguiente llega tarde, cuando ya ha
+    caducado. Se apunta con cada lista que llega, sin buscar."""
+    lua = runtime()
+    abrir_casa(lua)
+    poner(lua, "SUBASTAS", [mia(10, 100_000)])
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+    assert precio_apuntado(lua)["precio"] == 100_000
+
+
+def test_con_la_casa_cerrada_no_apunta_precios():
+    lua = runtime()
+    poner(lua, "SUBASTAS", [mia(10, 100_000)])
+    lua.globals().DISPARAR("OWNED_AUCTIONS_UPDATED")
+
+    assert precio_apuntado(lua) is None
 
 
 def test_lo_que_pones_con_la_tecla_apunta_su_precio_para_cuando_caduque():

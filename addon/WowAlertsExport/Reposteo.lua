@@ -328,42 +328,23 @@ local function ilvlDe(info, itemKey)
 end
 
 -- Agrupa por objeto e ilvl lo que hay que mirar, y de paso limpia la cola.
-local function prepararBusqueda()
-    reiniciarBusqueda()
+-- Apunta el precio de lo que tienes puesto, para cuando caduque (ver
+-- preciosPuestos). Se llama con cada lista de tus subastas que llega, y no solo
+-- al buscar: lo que pones a mano o con TSM despues de la busqueda tambien
+-- caduca, y la busqueda de la visita siguiente llega tarde. Solo anade o
+-- actualiza, nunca borra, asi que una lista a medias no hace dano.
+local function apuntarPrecios()
     local objetos = vigilados().objetos
-    local activas = {}
-    local nuevas = {}   -- claveObjeto -> ids de subastas activas de ese objeto
     local baratas = {}  -- claveObjeto -> { itemKey, precio } de la mas barata
-
     for i = 1, C_AuctionHouse.GetNumOwnedAuctions() do
         local info = C_AuctionHouse.GetOwnedAuctionInfo(i)
         local itemKey = info and info.itemKey
-        if info and info.auctionID and info.auctionID > maxIdVisto then
-            maxIdVisto = info.auctionID
-        end
-        -- status 0 es activa, 1 es vendida y pendiente de cobro. Las dos
-        -- prueban que el juego creo un posteo de la tecla, aunque no llegara
-        -- el aviso, pero solo la activa entra en la busqueda de undercuts.
-        if info and (info.status == 0 or info.status == 1) and (info.buyoutAmount or 0) > 0
+        if info and info.status == 0 and (info.buyoutAmount or 0) > 0
             and itemKey and objetos[itemKey.itemID] then
-            local ilvl = ilvlDe(info, itemKey)
-            if info.status == 0 then
-                activas[info.auctionID] = true
-                local clave = claveObjeto(itemKey.itemID, ilvl)
-                if not baratas[clave] or info.buyoutAmount < baratas[clave].precio then
-                    baratas[clave] = { itemKey = itemKey, precio = info.buyoutAmount }
-                end
-                local grupo = anadirAGrupo(itemKey)
-                grupo.mias[#grupo.mias + 1] = {
-                    auctionID = info.auctionID,
-                    buyout = info.buyoutAmount,
-                    itemID = itemKey.itemID,
-                    ilvl = ilvl,
-                }
+            local clave = claveObjeto(itemKey.itemID, ilvlDe(info, itemKey))
+            if not baratas[clave] or info.buyoutAmount < baratas[clave].precio then
+                baratas[clave] = { itemKey = itemKey, precio = info.buyoutAmount }
             end
-            local clave = claveObjeto(itemKey.itemID, ilvl)
-            nuevas[clave] = nuevas[clave] or {}
-            table.insert(nuevas[clave], { id = info.auctionID, buyout = info.buyoutAmount })
         end
     end
 
@@ -380,6 +361,43 @@ local function prepararBusqueda()
             precio = barata.precio,
         }
     end
+end
+
+local function prepararBusqueda()
+    reiniciarBusqueda()
+    local objetos = vigilados().objetos
+    local activas = {}
+    local nuevas = {}   -- claveObjeto -> ids de subastas activas de ese objeto
+
+    for i = 1, C_AuctionHouse.GetNumOwnedAuctions() do
+        local info = C_AuctionHouse.GetOwnedAuctionInfo(i)
+        local itemKey = info and info.itemKey
+        if info and info.auctionID and info.auctionID > maxIdVisto then
+            maxIdVisto = info.auctionID
+        end
+        -- status 0 es activa, 1 es vendida y pendiente de cobro. Las dos
+        -- prueban que el juego creo un posteo de la tecla, aunque no llegara
+        -- el aviso, pero solo la activa entra en la busqueda de undercuts.
+        if info and (info.status == 0 or info.status == 1) and (info.buyoutAmount or 0) > 0
+            and itemKey and objetos[itemKey.itemID] then
+            local ilvl = ilvlDe(info, itemKey)
+            if info.status == 0 then
+                activas[info.auctionID] = true
+                local grupo = anadirAGrupo(itemKey)
+                grupo.mias[#grupo.mias + 1] = {
+                    auctionID = info.auctionID,
+                    buyout = info.buyoutAmount,
+                    itemID = itemKey.itemID,
+                    ilvl = ilvl,
+                }
+            end
+            local clave = claveObjeto(itemKey.itemID, ilvl)
+            nuevas[clave] = nuevas[clave] or {}
+            table.insert(nuevas[clave], { id = info.auctionID, buyout = info.buyoutAmount })
+        end
+    end
+
+    apuntarPrecios()
 
     -- Si hay una subasta activa de ese objeto posterior a `tope` y a `precio`
     -- que no haya servido ya para otra entrada.
@@ -1867,6 +1885,8 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
             local cuenta = C_AuctionHouse.GetNumOwnedAuctions()
             listaRepetida = cuenta > 0 and cuenta == cuentaAnterior
             cuentaAnterior = cuenta
+            -- Con la casa cerrada la lista no es de fiar.
+            apuntarPrecios()
         end
         if not buscadoEnEstaVisita then
             traza("llega la lista de tus subastas: %s", C_AuctionHouse.GetNumOwnedAuctions())

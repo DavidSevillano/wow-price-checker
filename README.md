@@ -749,8 +749,10 @@ adelanto, simplemente no se vendio. Solo si nadie mas vende ese objeto se
 repone al precio que tenia.
 
 Para saber ese precio, el addon apunta por personaje lo que tienes puesto de
-cada objeto e ilvl (el mas barato, si hay varias copias) cada vez que lee tus
-subastas en la casa y cada vez que posteas con la tecla. Si llega la carta de
+cada objeto e ilvl (el mas barato, si hay varias copias) cada vez que la casa le
+manda la lista de tus subastas, y eso incluye lo que pones a mano o con TSM, no
+solo lo que posteas con la tecla. Basta con que la casa siga abierta un momento
+despues de postear. Si llega la carta de
 un objeto del que no tiene precio apuntado (por ejemplo, algo que caduco antes
 de tu primera visita a la casa con esta version), no la toca: esa se recoge a
 mano.
