@@ -687,7 +687,9 @@ Casa de Subastas y del buzon, que ademas dice que va a hacer.
    lo cancelo, `Postear` sale nada mas abrir, con el precio de entonces, sin
    buscar ni esperar. Si ha pasado mas, pulsa para buscar otra vez, por si el
    rival se ha movido: solo busca lo devuelto, porque lo que la busqueda anterior
-   vio sin nadie delante no se vuelve a mirar durante cinco minutos.
+   vio sin nadie delante no se vuelve a mirar durante cinco minutos. Esos cinco
+   minutos aguantan un `/reload` y un cambio de personaje, asi que saltar de un
+   alt a otro y volver no cuesta un escaneo entero.
 5. `Postear`: pulsa una vez por cada objeto. Si el juego pide confirmar el
    precio, el boton dice `Confirmar posteo` y la siguiente pulsacion confirma.
    Mientras el juego crea la subasta, el boton dice `Posteando...`.
@@ -756,6 +758,11 @@ Lo que conviene saber:
   precios`.
 - La cola se guarda por personaje y sobrevive a `/reload`. Lo que lleve mas de
   48 horas desde que se detecto se descarta, aunque este en la bolsa.
+- Lo que se vio sin nadie delante tambien se guarda, y vale para todos los
+  personajes de esa cuenta de WoW, porque va por id de subasta. Una subasta
+  nueva nunca se salta: su id no esta en la lista. Para forzar un escaneo
+  completo de algo que ya estaba puesto, espera los cinco minutos; no hay una
+  orden para vaciarlo a mano.
 - Si vuelves a poner algo a mano, el addon lo saca de la cola la proxima vez que
   busque en la casa: ve una subasta tuya de ese objeto creada despues de
   cancelarlo y ninguna copia en la bolsa. Si lo vendes o lo envias, lo saca al

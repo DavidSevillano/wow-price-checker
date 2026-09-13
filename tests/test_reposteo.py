@@ -884,9 +884,78 @@ def test_pasados_unos_minutos_si_vuelve_a_buscarlo():
     detectar(lua)
     cerrar_casa(lua)
 
+    # Se mueven los dos relojes, como al pasar el rato de verdad. El que manda
+    # aqui es AHORA (time()), porque la marca sobrevive a la sesion.
     lua.globals().RELOJ = lua.globals().RELOJ + 300
+    lua.globals().AHORA = lua.globals().AHORA + 300
     detectar(lua)
     assert lua.globals().BUSCADAS == 2
+
+
+def recargar(lua, subastas):
+    """Otro Lua con lo guardado del anterior, como al hacer /reload o al
+    cambiar de personaje: WoW vuelve a ejecutar los ficheros del addon y
+    despues le devuelve su tabla de disco."""
+    guardado = a_python(lua.globals().WowAlertsExportDB)
+    otra = runtime(subastas=subastas)
+    poner(otra, "WowAlertsExportDB", guardado)
+    otra.globals().AHORA = lua.globals().AHORA
+    return otra
+
+
+def test_lo_visto_hace_poco_sobrevive_a_un_reload():
+    """Con 21 personajes, cambiar de personaje recargaba el addon y borraba
+    esta memoria: se volvia a buscar todo en cada salto."""
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    otra = recargar(lua, [mia(10, 100_000)])
+    en_la_casa(otra, [])
+    detectar(otra)
+    assert otra.globals().BUSCADAS == 0
+
+
+def test_al_reiniciar_el_juego_las_marcas_viejas_si_caducan():
+    """GetTime() vuelve a cero al arrancar el cliente. Si la marca se guardara
+    con el, al reiniciar quedaria en el futuro y no se buscaria nunca mas."""
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    otra = recargar(lua, [mia(10, 100_000)])
+    otra.globals().RELOJ = 0            # el cliente acaba de arrancar
+    otra.globals().AHORA = lua.globals().AHORA + 300
+    en_la_casa(otra, [])
+    detectar(otra)
+    assert otra.globals().BUSCADAS == 1
+
+
+def test_lo_adelantado_borra_su_marca_y_se_vuelve_a_mirar_tras_recargar():
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [en_venta(999, 90_000)])
+    detectar(lua)
+
+    otra = recargar(lua, [mia(10, 100_000)])
+    en_la_casa(otra, [en_venta(999, 90_000)])
+    detectar(otra)
+    assert otra.globals().BUSCADAS == 1
+
+
+def test_lo_visto_hace_poco_no_crece_sin_fin():
+    """La tabla se guarda en disco: sin podar tendria una entrada por cada
+    subasta que haya pasado por la casa."""
+    lua = runtime(subastas=[mia(10, 100_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+    cerrar_casa(lua)
+
+    lua.globals().AHORA = lua.globals().AHORA + 300
+    poner(lua, "SUBASTAS", [mia(12, 100_000)])
+    detectar(lua)
+
+    guardado = a_python(lua.eval("WowAlertsExportDB.vistaLimpia"))
+    assert list(guardado) == [12]
 
 
 def test_lo_adelantado_se_vuelve_a_buscar_en_cada_visita():
@@ -1968,7 +2037,7 @@ def test_la_version_del_toc_es_la_del_addon():
 
     en_toc = re.search(r"^## Version: (.+)$", toc, re.MULTILINE).group(1).strip()
     en_lua = re.search(r'^local ADDON_VERSION = "(.+)"$', lua, re.MULTILINE).group(1)
-    assert en_toc == en_lua == "1.19"
+    assert en_toc == en_lua == "1.20"
 
 
 # -- Lo que el juego confirma y lo que se repone por fuera --------------------

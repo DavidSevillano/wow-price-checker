@@ -7,7 +7,7 @@
 
 local FORMAT_VERSION = 1
 -- Version del addon, para saber que codigo se esta ejecutando de verdad.
-local ADDON_VERSION = "1.19"
+local ADDON_VERSION = "1.20"
 
 WowAlertsExportDB = WowAlertsExportDB or {}
 

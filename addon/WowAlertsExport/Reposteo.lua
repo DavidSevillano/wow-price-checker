@@ -180,12 +180,54 @@ local confirmadas = {}
 local reposteadas = {}
 local SEGUNDOS_SIN_LISTA = 30
 
--- auctionID -> GetTime() de la ultima busqueda que la vio sin nadie delante.
--- Sobrevive a cerrar la casa: al volver a repostear un momento despues no hace
--- falta mirar otra vez esos objetos, solo lo devuelto. Con un /reload se
--- pierde, y entonces se busca todo.
-local vistaLimpiaEn = {}
+-- auctionID -> time() de la ultima busqueda que la vio sin nadie delante. Al
+-- volver a repostear un momento despues no hace falta mirar otra vez esos
+-- objetos, solo lo devuelto.
+--
+-- Vive en WowAlertsExportDB y no en una local. Cambiar de personaje recarga el
+-- entorno de Lua igual que un /reload, asi que con una local esto se borraba
+-- en cada salto y no llegaba a servir de nada: se volvia a buscar todo. Y
+-- buscar es justo lo caro, porque la casa reparte sus consultas con
+-- cuentagotas: medido sobre la traza, el 79 % de un escaneo es esperar a que
+-- admita la siguiente, no la respuesta en si.
+--
+-- Se guarda time() y no GetTime() porque esta tabla ya no muere con la sesion:
+-- GetTime() cuenta desde que arranco el cliente, asi que al reiniciar el juego
+-- vuelve a cero y las marcas guardadas quedarian en el futuro, es decir,
+-- recientes para siempre, y no se buscaria nada nunca mas.
 local SEGUNDOS_VISTA_LIMPIA = 300
+
+-- Se lee WowAlertsExportDB cada vez, como en cola(): WoW reemplaza esa tabla
+-- por la de disco despues de cargar este fichero.
+local function vistaLimpia()
+    WowAlertsExportDB = WowAlertsExportDB or {}
+    WowAlertsExportDB.vistaLimpia = WowAlertsExportDB.vistaLimpia or {}
+    return WowAlertsExportDB.vistaLimpia
+end
+
+local function esReciente(cuando)
+    return type(cuando) == "number" and time() - cuando < SEGUNDOS_VISTA_LIMPIA
+end
+
+local function vistaLimpiaReciente(auctionID)
+    return esReciente(vistaLimpia()[auctionID])
+end
+
+-- Apunta que esa subasta va primera, o lo borra con `cuando` a nil. De paso
+-- tira lo caducado: sin podar, la tabla se quedaria con una entrada por cada
+-- subasta que haya pasado por la casa y se escribiria entera en disco.
+local function apuntarVistaLimpia(auctionID, cuando)
+    local tabla = vistaLimpia()
+    tabla[auctionID] = cuando
+    -- Se poda con la misma regla que se consulta: con dos reglas distintas,
+    -- una marca justo en el borde se guardaria para siempre sin que nadie la
+    -- diera nunca por buena.
+    for id, visto in pairs(tabla) do
+        if not esReciente(visto) then
+            tabla[id] = nil
+        end
+    end
+end
 
 -- El mayor id de subasta propia visto en la ultima busqueda. Los ids crecen
 -- con el tiempo: sirve solo para reconocer, al buscar, un posteo de la tecla
@@ -418,8 +460,7 @@ local function prepararBusqueda()
         local grupo = grupos[clave]
         local reciente = #grupo.devueltas == 0
         for _, m in ipairs(grupo.mias) do
-            local vista = vistaLimpiaEn[m.auctionID]
-            if not vista or GetTime() - vista >= SEGUNDOS_VISTA_LIMPIA then
+            if not vistaLimpiaReciente(m.auctionID) then
                 reciente = false
             end
         end
@@ -495,9 +536,9 @@ local function procesarGrupo(grupo)
         local precio = mejorRival(grupo.itemKey, m)
         local entrada = buscarEntrada(m.auctionID)
         if precio then
-            vistaLimpiaEn[m.auctionID] = nil
+            apuntarVistaLimpia(m.auctionID, nil)
         else
-            vistaLimpiaEn[m.auctionID] = GetTime()
+            apuntarVistaLimpia(m.auctionID, time())
         end
         if precio then
             adelantadas = adelantadas + 1
@@ -1423,13 +1464,12 @@ function R.Subastas()
                 fila.grupo = "reposteada"
             elseif objetos[itemKey.itemID] then
                 local e = buscarEntrada(info.auctionID)
-                local vista = vistaLimpiaEn[info.auctionID]
                 if e and (e.estado == "cancelar" or e.estado == "cancelando")
                     and confirmadas[info.auctionID] then
                     fila.grupo = "adelantada"
                     fila.precioRival = e.precio
                     fila.igualada = e.precio == info.buyoutAmount
-                elseif vista and GetTime() - vista < SEGUNDOS_VISTA_LIMPIA then
+                elseif vistaLimpiaReciente(info.auctionID) then
                     fila.grupo = "primera"
                 else
                     fila.grupo = "sinmirar"
@@ -1775,7 +1815,7 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
         if nuestra and type(arg1) == "number" then
             -- Se ha puesto al precio del rival y es la mas nueva: va la primera,
             -- y la busqueda siguiente no necesita mirarla.
-            vistaLimpiaEn[arg1] = GetTime()
+            apuntarVistaLimpia(arg1, time())
             -- Y tiene su propio grupo en la ventana el resto de la visita:
             -- machacando la tecla sin mirar, eso es lo que te dice que ya
             -- esta hecho.
