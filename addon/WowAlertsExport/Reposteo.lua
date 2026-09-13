@@ -148,6 +148,19 @@ local function claveObjeto(itemID, ilvl)
     return tostring(itemID) .. ":" .. tostring(ilvl)
 end
 
+-- claveObjeto -> { itemKey, precio }: lo ultimo que se sabe que tenias puesto
+-- de cada objeto e ilvl, por personaje. Una subasta que caduca vuelve por
+-- correo sin su precio, y sin nadie mas vendiendo ese objeto se repone a este.
+-- Se guarda en disco: la subasta caduca horas despues, con el juego cerrado o
+-- en otro personaje.
+local function preciosPuestos()
+    WowAlertsExportDB = WowAlertsExportDB or {}
+    WowAlertsExportDB.preciosPuestos = WowAlertsExportDB.preciosPuestos or {}
+    local clave = clavePersonaje()
+    WowAlertsExportDB.preciosPuestos[clave] = WowAlertsExportDB.preciosPuestos[clave] or {}
+    return WowAlertsExportDB.preciosPuestos[clave]
+end
+
 -- ---------------------------------------------------------------------------
 --  La busqueda
 -- ---------------------------------------------------------------------------
@@ -320,6 +333,7 @@ local function prepararBusqueda()
     local objetos = vigilados().objetos
     local activas = {}
     local nuevas = {}   -- claveObjeto -> ids de subastas activas de ese objeto
+    local baratas = {}  -- claveObjeto -> { itemKey, precio } de la mas barata
 
     for i = 1, C_AuctionHouse.GetNumOwnedAuctions() do
         local info = C_AuctionHouse.GetOwnedAuctionInfo(i)
@@ -335,6 +349,10 @@ local function prepararBusqueda()
             local ilvl = ilvlDe(info, itemKey)
             if info.status == 0 then
                 activas[info.auctionID] = true
+                local clave = claveObjeto(itemKey.itemID, ilvl)
+                if not baratas[clave] or info.buyoutAmount < baratas[clave].precio then
+                    baratas[clave] = { itemKey = itemKey, precio = info.buyoutAmount }
+                end
                 local grupo = anadirAGrupo(itemKey)
                 grupo.mias[#grupo.mias + 1] = {
                     auctionID = info.auctionID,
@@ -347,6 +365,20 @@ local function prepararBusqueda()
             nuevas[clave] = nuevas[clave] or {}
             table.insert(nuevas[clave], { id = info.auctionID, buyout = info.buyoutAmount })
         end
+    end
+
+    -- De varias copias puestas no se sabe cual caducara: se apunta la mas
+    -- barata. Lo que ya no esta puesto conserva lo ultimo que se supo.
+    local precios = preciosPuestos()
+    for clave, barata in pairs(baratas) do
+        precios[clave] = {
+            itemKey = {
+                itemID = barata.itemKey.itemID,
+                itemLevel = barata.itemKey.itemLevel,
+                itemSuffix = barata.itemKey.itemSuffix,
+            },
+            precio = barata.precio,
+        }
     end
 
     -- Si hay una subasta activa de ese objeto posterior a `tope` y a `precio`
@@ -570,8 +602,12 @@ local function procesarGrupo(grupo)
     -- Repaso de lo devuelto: tu subasta nueva sera la mas reciente, asi que
     -- solo te adelanta lo que este por debajo de tu precio anterior. Si ya no
     -- queda nadie ahi, se repostea a ese precio: igualar, nunca subir.
+    -- Lo caducado es distinto: nadie te adelanto, simplemente no se vendio, y
+    -- se pone al precio del mas barato de ahora aunque sea mas alto. Solo sin
+    -- nadie mas vendiendolo se queda con el que tenia.
     for _, e in ipairs(grupo.devueltas) do
-        local rival = mejorRival(grupo.itemKey, { auctionID = math.huge, buyout = e.precioAnterior })
+        local tope = e.caducada and math.huge or e.precioAnterior
+        local rival = mejorRival(grupo.itemKey, { auctionID = math.huge, buyout = tope })
         e.precio = rival or e.precioAnterior
         e.precioEn = time()
         repasadas[e.auctionID] = true
@@ -625,12 +661,25 @@ local function buzonAbierto()
     return buzonPorEventos or (MailFrame ~= nil and MailFrame:IsShown())
 end
 
--- El asunto de las cartas de subasta cancelada, como patron. Sale del texto
--- del propio juego para funcionar en cualquier idioma ("Subasta cancelada: %s").
-local function patronCancelada()
-    local formato = AUCTION_REMOVED_MAIL_SUBJECT or "Auction cancelled: %s"
+-- Un asunto de carta del juego como patron. Sale del texto del propio juego
+-- para funcionar en cualquier idioma ("Subasta cancelada: %s").
+local function patronDe(formato)
     local escapado = (formato:gsub("[%^%$%(%)%.%[%]%*%+%-%?]", "%%%0"))
     return "^" .. (escapado:gsub("%%s", "(.+)")) .. "$"
+end
+
+local function esCancelada(asunto)
+    return asunto:match(patronDe(AUCTION_REMOVED_MAIL_SUBJECT or "Auction cancelled: %s")) ~= nil
+end
+
+local function esCaducada(asunto)
+    return asunto:match(patronDe(AUCTION_EXPIRED_MAIL_SUBJECT or "Auction expired: %s")) ~= nil
+end
+
+-- Las cartas que traen de vuelta algo que estaba puesto: lo cancelado y lo
+-- caducado. El resto del correo no se toca.
+local function esDevuelta(asunto)
+    return asunto ~= nil and (esCancelada(asunto) or esCaducada(asunto))
 end
 
 -- Recorre la bolsa llamando a `fn(bolsa, hueco, info)` en cada copia de ese
@@ -712,11 +761,10 @@ local function hayTomasRecientes()
 end
 
 local function cartaPorRecoger()
-    local patron = patronCancelada()
     for i = 1, (GetInboxNumItems()) do
         if not tomaReciente(tomadas[i]) then
             local _, _, _, asunto, _, _, _, tieneObjeto = GetInboxHeaderInfo(i)
-            if tieneObjeto and asunto and asunto:match(patron) then
+            if tieneObjeto and esDevuelta(asunto) then
                 local _, itemID = GetInboxItem(i, 1)
                 -- El enlace del adjunto puede no estar cargado todavia: sin el
                 -- no se sabe el ilvl, y esa carta se deja para otra pulsacion.
@@ -780,11 +828,10 @@ local function olvidarSinCarta()
         return
     end
 
-    local patron = patronCancelada()
     local cartas = {}
     for i = 1, mostradas do
         local _, _, _, asunto, _, _, _, tieneObjeto = GetInboxHeaderInfo(i)
-        if tieneObjeto and asunto and asunto:match(patron) then
+        if tieneObjeto and esDevuelta(asunto) then
             local _, itemID = GetInboxItem(i, 1)
             local enlace = GetInboxItemLink(i, 1)
             local ilvl = enlace and GetDetailedItemLevelInfo(enlace)
@@ -831,6 +878,82 @@ local function olvidarSinCarta()
             olvidarSinCarta()
             R.refrescarPanel()
         end)
+    end
+end
+
+-- Mete en la cola, como devuelto, lo que ha vuelto por caducar. El juego no
+-- avisa de que una subasta caduca: se sabe por la carta. No se reconoce una
+-- carta concreta, sino que se cuentan copias: cada entrada devuelta de un
+-- objeto es una carta suya en el buzon o una copia en la bolsa, y lo que sobre
+-- de ahi solo lo explica una carta de caducada que aun no tiene entrada. Asi
+-- la misma carta nunca crea dos entradas, y una copia que ya tenias en la
+-- bolsa no se confunde con lo caducado.
+local function apuntarCaducadas()
+    if not buzonAbierto() or hayTomasRecientes() then
+        return
+    end
+    local mostradas = GetInboxNumItems()
+    local cartas, caducadas, enlaces = {}, {}, {}
+    for i = 1, mostradas do
+        local _, _, _, asunto, _, _, _, tieneObjeto = GetInboxHeaderInfo(i)
+        if tieneObjeto and esDevuelta(asunto) then
+            local _, itemID = GetInboxItem(i, 1)
+            local enlace = GetInboxItemLink(i, 1)
+            local ilvl = enlace and GetDetailedItemLevelInfo(enlace)
+            if itemID and ilvl and vigilados().objetos[itemID] then
+                local clave = claveObjeto(itemID, ilvl)
+                cartas[clave] = (cartas[clave] or 0) + 1
+                if esCaducada(asunto) then
+                    caducadas[clave] = (caducadas[clave] or 0) + 1
+                    enlaces[clave] = { itemID = itemID, ilvl = ilvl }
+                end
+            end
+        end
+    end
+
+    local entradas = cola()
+    for clave, cuantas in pairs(caducadas) do
+        local objeto = enlaces[clave]
+        local conocido = preciosPuestos()[clave]
+        local devueltas = 0
+        local idLibre = -1   -- las caducadas no tienen subasta: id inventado
+        for _, e in ipairs(entradas) do
+            if claveObjeto(e.itemID, e.ilvl) == clave
+                and (e.estado == "devuelta" or e.estado == "posteando") then
+                devueltas = devueltas + 1
+            end
+            if e.auctionID <= idLibre then
+                idLibre = e.auctionID - 1
+            end
+        end
+        local sobran = cartas[clave] + copiasEnBolsa(objeto.itemID, objeto.ilvl) - devueltas
+        local nuevas = math.min(sobran, cuantas)
+        if nuevas > 0 and not conocido then
+            -- Sin el precio que tenia no se puede cumplir la regla cuando nadie
+            -- mas lo vende. Pasa con lo puesto antes de que el addon lo
+            -- apuntara: esa carta se deja para recogerla a mano.
+            traza("carta de caducada de %s sin precio conocido: no la toco", clave)
+        elseif nuevas > 0 then
+            for _ = 1, nuevas do
+                traza("caducada %s: vuelve a la cola, antes a %s", clave, oro(conocido.precio))
+                entradas[#entradas + 1] = {
+                    auctionID = idLibre,
+                    itemKey = conocido.itemKey,
+                    itemID = objeto.itemID,
+                    ilvl = objeto.ilvl,
+                    precioAnterior = conocido.precio,
+                    estado = "devuelta",
+                    caducada = true,
+                    desde = time(),
+                    canceladaEn = time(),
+                    -- Lo que se ponga despues de la ultima busqueda puede ser
+                    -- esta, repuesta a mano. Sin busqueda en esta sesion no hay
+                    -- con que comparar, y ese caso lo resuelve el buzon.
+                    idTopeCancelada = (maxIdVisto > 0 and maxIdVisto) or math.huge,
+                }
+                idLibre = idLibre - 1
+            end
+        end
     end
 end
 
@@ -1825,6 +1948,13 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
                 precio = vieja and vieja.precio,
                 en = GetTime(),
             }
+            -- Si esta caduca, su carta vuelve sin precio: se apunta ya.
+            if vieja and vieja.itemKey and vieja.precio then
+                preciosPuestos()[claveObjeto(vieja.itemID, vieja.ilvl)] = {
+                    itemKey = vieja.itemKey,
+                    precio = vieja.precio,
+                }
+            end
         end
         comprobarFin()
     elseif evento == "MAIL_SHOW" or evento == "MAIL_CLOSED" or evento == "MAIL_INBOX_UPDATE" then
@@ -1841,6 +1971,9 @@ frame:SetScript("OnEvent", function(_, evento, arg1, arg2)
             if not casaAbierta() then
                 soltarTecla()
             end
+        end
+        if evento ~= "MAIL_CLOSED" then
+            apuntarCaducadas()
         end
         -- Justo despues de recoger, la carta ya no esta y el objeto puede no
         -- haber llegado a la bolsa: ese momento no sirve para olvidar nada.

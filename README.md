@@ -740,6 +740,21 @@ casa para comprar no te suelta nada.
 **El precio** es el del rival mas barato que va por delante de ti. Si mientras
 ibas al buzon ha desaparecido, se repostea a tu precio de antes: nunca sube.
 
+**Lo que caduca sin venderse** entra en el mismo ciclo. El juego no avisa de
+que una subasta caduca, asi que el addon lo sabe por la carta: al abrir el
+buzon, cada carta de subasta caducada de un objeto vigilado entra en la cola, se
+recoge sola con lo cancelado y se repone en la casa como lo demas. Su precio es
+otro: el del mas barato que haya ahora, **suba o baje**, porque a esa nadie la
+adelanto, simplemente no se vendio. Solo si nadie mas vende ese objeto se
+repone al precio que tenia.
+
+Para saber ese precio, el addon apunta por personaje lo que tienes puesto de
+cada objeto e ilvl (el mas barato, si hay varias copias) cada vez que lee tus
+subastas en la casa y cada vez que posteas con la tecla. Si llega la carta de
+un objeto del que no tiene precio apuntado (por ejemplo, algo que caduco antes
+de tu primera visita a la casa con esta version), no la toca: esa se recoge a
+mano.
+
 **Una pulsacion es una accion, siempre.** El juego solo deja cancelar y postear
 en respuesta a una tecla o un clic tuyo, igual que la tecla de "Cancel Undercut"
 de Auctionator. No uses programas ni teclados que repitan la tecla por ti.

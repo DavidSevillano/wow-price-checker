@@ -202,6 +202,7 @@ SOUNDKIT = { READY_CHECK = 8960 }
 function PlaySound(id) SONIDOS[#SONIDOS + 1] = id end
 
 AUCTION_REMOVED_MAIL_SUBJECT = "Auction cancelled: %s"
+AUCTION_EXPIRED_MAIL_SUBJECT = "Auction expired: %s"
 CORREO = {}   -- { asunto, nombre, itemID, enlace }
 function GetInboxNumItems() return #CORREO, #CORREO end
 function GetInboxHeaderInfo(i)
@@ -2037,7 +2038,7 @@ def test_la_version_del_toc_es_la_del_addon():
 
     en_toc = re.search(r"^## Version: (.+)$", toc, re.MULTILINE).group(1).strip()
     en_lua = re.search(r'^local ADDON_VERSION = "(.+)"$', lua, re.MULTILINE).group(1)
-    assert en_toc == en_lua == "1.20"
+    assert en_toc == en_lua == "1.21"
 
 
 # -- Lo que el juego confirma y lo que se repone por fuera --------------------
@@ -3344,3 +3345,148 @@ def test_la_ventana_se_redibuja_con_el_boton():
 
     lua.globals().WowAlertsReposteo.refrescarPanel()
     assert lua.globals().REDIBUJOS == antes + 1
+
+
+# ---------------------------------------------------------------------------
+#  Lo caducado
+# ---------------------------------------------------------------------------
+
+CADUCADA = "Auction expired: Greaves of the Noxious Depths"
+
+
+def caducar(lua, precio=100_000):
+    """Tu subasta de Grebas a `precio`, vista en la casa, que despues caduca:
+    ya no esta entre tus subastas y su carta espera en el buzon."""
+    poner(lua, "SUBASTAS", [mia(10, precio)])
+    en_la_casa(lua, [])
+    detectar(lua)
+    cerrar_casa(lua)
+    poner(lua, "SUBASTAS", [])
+    poner(lua, "LLAMADAS", [])
+    poner(lua, "CORREO", [carta(asunto=CADUCADA)])
+
+
+def test_la_carta_de_lo_caducado_lo_mete_en_la_cola_y_se_recoge_sola():
+    lua = runtime()
+    caducar(lua)
+    abrir_buzon(lua)
+
+    (e,) = cola(lua)
+    assert (e["estado"], e["caducada"], e["precioAnterior"]) == ("devuelta", True, 100_000)
+    lua.globals().VENCER_TEMPORIZADORES()
+    assert llamadas(lua) == [("TakeInboxItem", 1, 1)]
+
+
+@pytest.mark.parametrize(
+    "rivales, precio",
+    [
+        ([], 100_000),                          # nadie mas: el que tenia
+        ([en_venta(999, 90_000)], 90_000),      # mas barato ahora: baja
+        ([en_venta(999, 120_000)], 120_000),    # mas caro ahora: sube
+    ],
+)
+def test_lo_caducado_se_repone_al_precio_de_ahora_o_al_que_tenia(rivales, precio):
+    """A diferencia de lo cancelado, que nunca sube: nadie adelanto a esta, no
+    se vendio, y lo que marca el mercado es el mas barato de ahora."""
+    lua = runtime()
+    caducar(lua)
+    abrir_buzon(lua)
+    # Recogida: la carta sale del buzon y la copia llega a la bolsa.
+    poner(lua, "CORREO", [])
+    en_la_bolsa(lua, 3)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+    lua.globals().BUZON_ABIERTO = False
+    lua.globals().DISPARAR("MAIL_CLOSED")
+
+    en_la_casa(lua, rivales)
+    abrir_casa(lua)
+    assert pulsar(lua) == "buscar"
+    responder_todo(lua)
+    assert pulsar(lua) == "postear"
+    assert llamadas(lua)[-1] == ("PostItem", 0, 3, 1, 1, precio)
+
+
+def test_la_misma_carta_de_caducada_no_crea_dos_entradas():
+    lua = runtime()
+    caducar(lua)
+    abrir_buzon(lua)
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+    lua.globals().DISPARAR("MAIL_INBOX_UPDATE")
+
+    assert len(cola(lua)) == 1
+
+
+def test_una_copia_que_ya_tenias_en_la_bolsa_no_cuenta_como_caducada():
+    lua = runtime()
+    caducar(lua)
+    en_la_bolsa(lua, 3)
+    abrir_buzon(lua)
+
+    assert len(cola(lua)) == 1
+
+
+def test_dos_cartas_de_caducada_del_mismo_objeto_son_dos_entradas():
+    lua = runtime()
+    caducar(lua)
+    poner(lua, "CORREO", [carta(asunto=CADUCADA), carta(asunto=CADUCADA)])
+    abrir_buzon(lua)
+
+    ids = [e["auctionID"] for e in cola(lua)]
+    assert len(ids) == 2
+    assert len(set(ids)) == 2
+
+
+def test_la_carta_de_caducada_junto_a_una_cancelada_suma_una_entrada_mas():
+    lua = runtime()
+    devolver(lua, 10)                       # una cancelada, con su entrada
+    poner(lua, "CORREO", [carta(), carta(asunto=CADUCADA)])
+    abrir_buzon(lua)
+
+    assert sorted(bool(e.get("caducada")) for e in cola(lua)) == [False, True]
+
+
+def test_la_carta_de_caducada_de_algo_sin_precio_conocido_no_se_toca():
+    """Sin el precio que tenia no se puede cumplir la regla cuando nadie mas lo
+    vende: esa carta se deja para recogerla a mano."""
+    lua = runtime()
+    poner(lua, "CORREO", [carta(asunto=CADUCADA)])
+    abrir_buzon(lua)
+    lua.globals().VENCER_TEMPORIZADORES()
+
+    assert cola(lua) == []
+    assert llamadas(lua) == []
+
+
+def test_la_carta_de_caducada_de_algo_no_vigilado_no_se_toca():
+    lua = runtime()
+    caducar(lua)
+    poner(lua, "CORREO", [carta(item_id=999, asunto="Auction expired: Otra cosa")])
+    abrir_buzon(lua)
+    lua.globals().VENCER_TEMPORIZADORES()
+
+    assert cola(lua) == []
+    assert llamadas(lua) == []
+
+
+def precio_apuntado(lua, clave=f"{GREBAS}:311"):
+    return a_python(lua.eval(
+        f'((WowAlertsExportDB.preciosPuestos or {{}})["Sanguino-Pepe"] or {{}})["{clave}"]'
+    ))
+
+
+def test_de_varias_copias_puestas_se_apunta_la_mas_barata():
+    lua = runtime(subastas=[mia(10, 120_000), mia(12, 100_000)])
+    en_la_casa(lua, [])
+    detectar(lua)
+
+    assert precio_apuntado(lua)["precio"] == 100_000
+
+
+def test_lo_que_pones_con_la_tecla_apunta_su_precio_para_cuando_caduque():
+    lua = runtime()
+    devolver(lua, 10, precio=100_000, rival=90_000)
+    en_la_bolsa(lua, 3)
+    abrir_casa(lua)
+    assert pulsar(lua) == "postear"
+
+    assert precio_apuntado(lua)["precio"] == 90_000
