@@ -52,3 +52,46 @@ def tabla_de(texto: str, objeto: str) -> str:
     principio = bloque.rfind("\n", 0, clave) + 1
     final = bloque.find("\n", cierra)
     return bloque[principio:] if final == -1 else bloque[principio:final + 1]
+
+
+def anadir_equipo(texto: str, nombre: str, item_id: int, copiar_de: str) -> str:
+    """config.yaml con una pieza nueva, con los topes de `copiar_de`.
+
+    Va justo detras del objeto del que copia para que las tablas iguales queden
+    juntas: asi se ve de un vistazo que dos piezas comparten precios.
+    """
+    tabla = tabla_de(texto, copiar_de)
+    bloque = f"  - name: {_cita(nombre)}\n    item_id: {item_id}\n{tabla}"
+    return _insertar(texto, _fin_del_contenido(texto, copiar_de), bloque)
+
+
+def _cita(texto: str) -> str:
+    """Un escalar YAML entrecomillado: los nombres llevan apostrofos y dos puntos."""
+    return '"' + texto.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _fin_del_contenido(texto: str, objeto: str) -> int:
+    """Donde acaba la ultima linea que es de verdad de ese objeto.
+
+    bloque_de llega hasta el objeto siguiente, y por el camino se lleva las
+    lineas en blanco y los comentarios que hay entre medias. Esos comentarios
+    suelen abrir la seccion de detras --'Monturas caras'--, asi que lo nuevo
+    tiene que ir delante de ellos y no debajo.
+    """
+    inicio, fin = bloque_de(texto, objeto)
+    lineas = texto[inicio:fin].splitlines(keepends=True)
+    while lineas and (not lineas[-1].strip() or lineas[-1].lstrip().startswith("#")):
+        lineas.pop()
+    return inicio + sum(len(linea) for linea in lineas)
+
+
+def _insertar(texto: str, donde: int, bloque: str) -> str:
+    """Mete el bloque en `donde`, con una linea en blanco delante.
+
+    Lo que habia detras --la linea en blanco, un comentario, el objeto
+    siguiente-- sigue detras tal cual estaba.
+    """
+    antes = texto[:donde]
+    if not antes.endswith("\n"):
+        antes += "\n"
+    return antes + "\n" + bloque + texto[donde:]
