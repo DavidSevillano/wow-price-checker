@@ -2,7 +2,7 @@
 
 import pytest
 
-from wowalerts.objetos import ObjetoError, anadir_equipo, tabla_de
+from wowalerts.objetos import ObjetoError, anadir_equipo, anadir_patron, tabla_de
 from wowalerts.topes import TopeError
 
 CONFIG = """\
@@ -123,3 +123,71 @@ def test_el_comentario_que_abre_la_seccion_siguiente_se_queda_debajo():
         "\n"
         "  # --- Piezas de la banda\n"
     ) in nuevo
+
+
+def test_el_patron_va_detras_del_ultimo_reposteable():
+    """Detras del ultimo 'repostear: true', no al final: las monturas van aparte."""
+    nuevo = anadir_patron(CONFIG, "Pattern: Lo Que Sea", 999, 40000)
+
+    assert nuevo == CONFIG.replace(
+        '  - name: "Wooly White Rhino"',
+        '  - name: "Pattern: Lo Que Sea"\n'
+        "    item_id: 999\n"
+        "    max_price: 40000\n"
+        "    avisar_undercut: false\n"
+        "    repostear: true\n"
+        "\n"
+        '  - name: "Wooly White Rhino"',
+    )
+
+
+def test_sin_ningun_reposteable_va_detras_del_ultimo_objeto():
+    texto = CONFIG.replace("    repostear: true\n", "")
+    nuevo = anadir_patron(texto, "Pattern: Lo Que Sea", 999, 40000)
+
+    esperado = (
+        '  - name: "Pattern: Lo Que Sea"\n'
+        "    item_id: 999\n"
+        "    max_price: 40000\n"
+        "    avisar_undercut: false\n"
+        "    repostear: true\n"
+    )
+    # Detras del ultimo objeto, que es la montura, y delante de lo que sigue.
+    assert esperado + "\norden_personajes:" in nuevo
+
+
+def test_el_patron_no_se_mete_debajo_del_comentario_de_las_monturas():
+    texto = CONFIG.replace(
+        '  - name: "Wooly White Rhino"',
+        "  # --- Monturas caras\n"
+        '  - name: "Wooly White Rhino"',
+    )
+    nuevo = anadir_patron(texto, "Pattern: Lo Que Sea", 999, 40000)
+
+    assert (
+        "    repostear: true\n"
+        "\n"
+        "  # --- Monturas caras\n"
+        '  - name: "Wooly White Rhino"'
+    ) in nuevo
+    assert nuevo.index("Pattern: Lo Que Sea") < nuevo.index("# --- Monturas caras")
+
+
+def test_el_patron_se_anade_al_final_cuando_no_hay_nada_detras():
+    """El fichero puede acabar en el ultimo objeto, sin linea en blanco.
+
+    Sin reposteables, para que el sitio sea detras de la montura, que es lo
+    ultimo del fichero.
+    """
+    texto = CONFIG.split("orden_personajes:")[0].rstrip() + "\n"
+    texto = texto.replace("    repostear: true\n", "")
+    nuevo = anadir_patron(texto, "Pattern: Lo Que Sea", 999, 40000)
+
+    assert nuevo.endswith(
+        '  - name: "Pattern: Lo Que Sea"\n'
+        "    item_id: 999\n"
+        "    max_price: 40000\n"
+        "    avisar_undercut: false\n"
+        "    repostear: true\n"
+    )
+    assert nuevo.startswith(texto.rstrip("\n") + "\n\n")

@@ -95,3 +95,45 @@ def _insertar(texto: str, donde: int, bloque: str) -> str:
     if not antes.endswith("\n"):
         antes += "\n"
     return antes + "\n" + bloque + texto[donde:]
+
+
+# El renglon que abre cualquier objeto de 'items:'. La lista de personajes no
+# casa: sus entradas son nombres sueltos, sin 'name:'.
+_APERTURA = re.compile(r"^[ \t]*-[ \t]+name:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+
+_REPOSTEABLE = re.compile(r"^[ \t]*repostear:[ \t]*true[ \t]*$", re.MULTILINE)
+
+
+def anadir_patron(texto: str, nombre: str, item_id: int, tope: int) -> str:
+    """config.yaml con un patron nuevo, con precio unico.
+
+    Lleva las dos banderas que llevan los patrones que ya vigilas: sin avisos de
+    undercut --de una receta no quieres saber que alguien se ha puesto debajo--
+    pero si reposteable con la tecla del addon.
+    """
+    bloque = (
+        f"  - name: {_cita(nombre)}\n"
+        f"    item_id: {item_id}\n"
+        f"    max_price: {tope}\n"
+        "    avisar_undercut: false\n"
+        "    repostear: true\n"
+    )
+    return _insertar(texto, _tras_el_ultimo_reposteable(texto), bloque)
+
+
+def _tras_el_ultimo_reposteable(texto: str) -> int:
+    """Donde acaba el ultimo objeto reposteable, o el ultimo de la lista.
+
+    Los patrones viven juntos en config.yaml, antes de las monturas y las
+    mascotas, que son trampas para el error de otro y no cosas que repostees.
+    """
+    nombres = [m.group(1).strip().strip("\"'") for m in _APERTURA.finditer(texto)]
+    if not nombres:
+        raise ObjetoError("No encuentro ningun objeto en 'items:' de config.yaml.")
+
+    reposteables = [
+        nombre for nombre in nombres
+        if _REPOSTEABLE.search(texto[slice(*bloque_de(texto, nombre))])
+    ]
+    ultimo = reposteables[-1] if reposteables else nombres[-1]
+    return _fin_del_contenido(texto, ultimo)
