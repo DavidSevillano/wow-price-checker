@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["TopeError", "cambiar_tope"]
+__all__ = ["TopeError", "bloque_de", "cambiar_tope"]
 
 
 class TopeError(Exception):
@@ -37,7 +37,7 @@ def _patron_nombre(objeto: str) -> re.Pattern[str]:
     )
 
 
-def _bloque(texto: str, objeto: str) -> tuple[int, int]:
+def bloque_de(texto: str, objeto: str) -> tuple[int, int]:
     """Donde empieza y acaba el bloque de ese objeto, en indices del texto.
 
     Acotar el bloque es lo que impide que un cambio se propague: dos objetos
@@ -123,7 +123,7 @@ def cambiar_tope(
     if tope <= 0:
         raise TopeError("El tope tiene que ser mayor que cero.")
 
-    inicio, fin = _bloque(texto, objeto)
+    inicio, fin = bloque_de(texto, objeto)
     bloque = texto[inicio:fin]
 
     if ilvl is None:
