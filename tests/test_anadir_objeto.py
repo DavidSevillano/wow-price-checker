@@ -12,6 +12,7 @@ from anadir_objeto import (
     resolver,
     verificar,
 )
+from wowalerts.blizzard import BlizzardAuthError
 from wowalerts.config import ItemRule, load_config
 from wowalerts.objetos import ObjetoError
 
@@ -117,8 +118,24 @@ def test_un_nombre_no_lleva_id_dentro():
     assert id_de("Pattern: Arcanoweave Cord") is None
 
 
+def test_un_digito_no_ascii_no_cuela():
+    """'²'.isdigit() da True, pero int('²') no funciona: no es un id valido."""
+    assert id_de("²") is None
+
+
+def test_el_id_sale_de_un_enlace_con_query_string():
+    assert id_de("https://www.wowhead.com/?item=258126") == 258126
+
+
+def test_el_cuerpo_admite_saltos_de_linea_crlf():
+    assert parsear(EQUIPO_NUEVO.replace("\n", "\r\n")) == parsear(EQUIPO_NUEVO)
+
+
 class ClienteFalso:
     """Blizzard sin red: lo que sabe esta en los dos diccionarios."""
+
+    # Un token cualquiera: basta con que acceder a el no explote.
+    token = "token-de-prueba"
 
     def __init__(self, por_id=None, por_nombre=None):
         self.por_id = por_id or {}
@@ -131,6 +148,14 @@ class ClienteFalso:
         return self.por_nombre.get(nombre)
 
 
+class ClienteFalsoSinCredenciales:
+    """Simula que Blizzard rechaza las credenciales al pedir el token."""
+
+    @property
+    def token(self):
+        raise BlizzardAuthError("Blizzard rechaza las credenciales.")
+
+
 def test_un_enlace_se_resuelve_por_id():
     cliente = ClienteFalso(por_id={123456: "Venom Rite Mantle"})
 
@@ -141,6 +166,19 @@ def test_un_nombre_se_resuelve_por_busqueda():
     cliente = ClienteFalso(por_nombre={"Pattern: Lo Que Sea": 999})
 
     assert resolver(cliente, parsear(PATRON_NUEVO)) == ("Pattern: Lo Que Sea", 999)
+
+
+def test_el_nombre_resuelto_es_el_canonico_de_blizzard():
+    """Buscado por nombre, se guarda el nombre exacto que devuelve Blizzard."""
+    cliente = ClienteFalso(
+        por_nombre={"pattern: lo que sea": 999},
+        por_id={999: "Pattern: Lo Que Sea"},
+    )
+    peticion = Peticion(
+        objeto="pattern: lo que sea", tipo=PATRON, copiar_de=None, tope=40000
+    )
+
+    assert resolver(cliente, peticion) == ("Pattern: Lo Que Sea", 999)
 
 
 def test_un_id_que_blizzard_no_conoce():
@@ -165,6 +203,13 @@ def test_un_objeto_ya_vigilado_por_id():
 
     with pytest.raises(ObjetoError, match="ya esta vigilado"):
         comprobar_nuevo(config, "Venom Rite Mantle", 123456)
+
+
+def test_un_objeto_ya_vigilado_con_otras_mayusculas():
+    config = _config_con(ItemRule(name="venom rite mantle", max_price=100))
+
+    with pytest.raises(ObjetoError, match="ya esta vigilado"):
+        comprobar_nuevo(config, "Venom Rite Mantle", 999)
 
 
 def _config_con(*reglas):
@@ -215,6 +260,21 @@ def test_verificar_caza_una_edicion_que_toca_otro_objeto():
         verificar(CONFIG, corrupto, "Venom Rite Mantle", 123456, peticion)
 
 
+def test_verificar_caza_una_edicion_que_anade_otro_objeto_mas():
+    """La red de seguridad: si se ha colado un objeto extra, no se commitea."""
+    from wowalerts.objetos import anadir_equipo
+
+    peticion = parsear(EQUIPO_NUEVO)
+    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, peticion.copiar_de)
+    corrupto = nuevo.replace(
+        "bonus_ilvl_map:",
+        '  - name: "Extra Objeto"\n    max_price: 10\n\nbonus_ilvl_map:',
+    )
+
+    with pytest.raises(ObjetoError, match="anadido"):
+        verificar(CONFIG, corrupto, "Venom Rite Mantle", 123456, peticion)
+
+
 def test_verificar_caza_un_yaml_roto():
     peticion = parsear(EQUIPO_NUEVO)
     roto = CONFIG + '  - name: "Venom Rite Mantle"\n    max_price_by_ilvl:\n      { 295:\n'
@@ -252,6 +312,51 @@ def test_un_fallo_no_escribe_nada_y_sale_con_error(tmp_path, capsys, monkeypatch
     ruta.write_text(CONFIG, encoding="utf-8")
     monkeypatch.setattr("sys.stdin", __import__("io").StringIO(EQUIPO_NUEVO))
     monkeypatch.setattr(anadir_objeto, "BlizzardClient", lambda **kw: ClienteFalso())
+
+    assert anadir_objeto.main(["--config", str(ruta)]) == 1
+
+    assert "No he anadido nada" in capsys.readouterr().out
+    assert ruta.read_text(encoding="utf-8") == CONFIG
+
+
+def test_credenciales_invalidas_no_se_confunden_con_un_id_desconocido(
+    tmp_path, capsys, monkeypatch
+):
+    """Si Blizzard rechaza las credenciales, que se note y no que "no conoce el id"."""
+    import anadir_objeto
+
+    ruta = tmp_path / "config.yaml"
+    ruta.write_text(CONFIG, encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(EQUIPO_NUEVO))
+    monkeypatch.setattr(
+        anadir_objeto, "BlizzardClient",
+        lambda **kw: ClienteFalsoSinCredenciales(),
+    )
+
+    assert anadir_objeto.main(["--config", str(ruta)]) == 1
+
+    assert "No he anadido nada" in capsys.readouterr().out
+    assert ruta.read_text(encoding="utf-8") == CONFIG
+
+
+def _explota(*args, **kwargs):
+    raise RuntimeError("boom")
+
+
+def test_un_fallo_inesperado_tampoco_se_queda_sin_comentario(
+    tmp_path, capsys, monkeypatch
+):
+    """El workflow publica el stdout como comentario: uno vacio no sirve."""
+    import anadir_objeto
+
+    ruta = tmp_path / "config.yaml"
+    ruta.write_text(CONFIG, encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(EQUIPO_NUEVO))
+    monkeypatch.setattr(
+        anadir_objeto, "BlizzardClient",
+        lambda **kw: ClienteFalso(por_id={123456: "Venom Rite Mantle"}),
+    )
+    monkeypatch.setattr(anadir_objeto, "resolver", _explota)
 
     assert anadir_objeto.main(["--config", str(ruta)]) == 1
 

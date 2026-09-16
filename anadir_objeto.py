@@ -116,7 +116,8 @@ def id_de(texto: str) -> int | None:
     if enlace is not None:
         return int(enlace.group(1))
     limpio = texto.strip()
-    return int(limpio) if limpio.isdigit() else None
+    # ASCII y no solo isdigit(): '²'.isdigit() da True pero int('²') explota.
+    return int(limpio) if re.fullmatch(r"\d+", limpio, re.ASCII) else None
 
 
 def parsear(cuerpo: str) -> Peticion:
@@ -164,9 +165,14 @@ def resolver(client: BlizzardClient, peticion: Peticion) -> tuple[str, int]:
     if item_id is not None:
         nombre = client.item_name(item_id)
         if nombre is None:
+            # item_name() devuelve None tanto si el id no existe como si
+            # Blizzard no ha respondido (ver su docstring en blizzard.py), asi
+            # que no se puede culpar solo al enlace.
             raise ObjetoError(
-                f"Blizzard no conoce ningun objeto con id {item_id}. Comprueba "
-                "el enlace: el numero es el que va detras de 'item=' en Wowhead."
+                f"Blizzard no conoce el id {item_id}, o no ha respondido. "
+                "Comprueba el enlace: el numero es el que va detras de "
+                "'item=' en Wowhead. Si es correcto, abre otra issue para "
+                "reintentarlo."
             )
         return nombre, item_id
 
@@ -178,6 +184,10 @@ def resolver(client: BlizzardClient, peticion: Peticion) -> tuple[str, int]:
             "que ser el nombre en ingles, igual que en el juego; si el objeto es "
             "recien salido, pega mejor su enlace de Wowhead."
         )
+    # El nombre canonico de Blizzard, no el que haya tecleado quien escribe la
+    # issue: si no se puede consultar (sin red, o item_name falla), se queda
+    # con el nombre buscado.
+    nombre = client.item_name(item_id) or nombre
     return nombre, item_id
 
 
@@ -244,6 +254,15 @@ def verificar(
         raise ObjetoError(
             f"{nombre!r} no ha quedado con el precio y las banderas pedidos. "
             "No anado nada."
+        )
+
+    extra = (set(despues) - set(antes)) - {nombre}
+    eliminados = set(antes) - set(despues)
+    if extra or eliminados:
+        raise ObjetoError(
+            "La edicion ha anadido o quitado objetos ademas del nuevo ("
+            + ", ".join(sorted(extra | eliminados))
+            + "), asi que no la aplico."
         )
 
     movidos = [n for n in antes if antes[n] != despues.get(n)]
@@ -318,6 +337,11 @@ def main(argv: list[str] | None = None) -> int:
             locale=config.locale,
             timeout=config.settings.request_timeout,
         )
+        # Fuerza la autenticacion ya: si las credenciales fallan, que salte
+        # aqui como BlizzardAuthError y no se confunda mas tarde con un id
+        # que Blizzard "no conoce" (item_name() traga cualquier BlizzardError
+        # y devuelve None igual para las dos cosas).
+        _ = client.token
         nombre, item_id = resolver(client, peticion)
         comprobar_nuevo(config, nombre, item_id)
         if peticion.tipo == EQUIPO:
@@ -333,6 +357,12 @@ def main(argv: list[str] | None = None) -> int:
         BlizzardError,
         OSError,
     ) as fallo:
+        print(_error(fallo))
+        return EXIT_ERROR
+    except Exception as fallo:
+        # Ultimo recurso: el workflow publica esta salida como comentario de
+        # la issue, asi que un fallo sin capturar la dejaria sin comentario y
+        # sin ninguna pista de que ha pasado.
         print(_error(fallo))
         return EXIT_ERROR
 
