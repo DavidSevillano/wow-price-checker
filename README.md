@@ -1457,10 +1457,9 @@ viven en los secretos de Actions: llevarlas dentro de la app seria repartirlas.
 
 #### Los dos tipos
 
-- **Equipo**: lleva tabla por ilvl, asi que hay que elegir **de que objeto
-  copiar los topes** --sin ninguno preseleccionado-- y se ajustan luego con el
-  boton de topes. La pieza nueva se escribe justo detras de aquella de la que
-  copia.
+- **Equipo**: lleva tabla por ilvl, y la escribe quien anade la pieza --ya no
+  se copian los topes de otra--. La pieza nueva se escribe detras de la
+  ultima pieza de equipo.
 - **Patron o receta**: lleva un precio unico, y sale con las dos banderas que
   llevan tus recetas --sin avisos de undercut, pero reposteable con la tecla del
   addon--, detras del ultimo objeto reposteable.
@@ -1468,6 +1467,17 @@ viven en los secretos de Actions: llevarlas dentro de la app seria repartirlas.
 Las **mascotas y las monturas** se siguen anadiendo a mano: las mascotas van por
 `pet_species_id` y las monturas son trampas para el error de otro, que se ponen
 muy de vez en cuando.
+
+#### Como se escribe la tabla de ilvl
+
+En la app son filas de ilvl y precio, con "+ ilvl" para sumar una fila y la X
+para quitarla; los campos solo admiten digitos, y "Enviar" no se activa hasta
+que la tabla es valida. En el formulario va un escalon por linea, como
+`368: 20000` (vale tambien `=`, separadores de miles y una `g` detras; una
+vineta delante no estorba y las lineas en blanco no cuentan), pero un decimal
+como `20.5` se rechaza. El ilvl va de 1 a 2000 y no puede repetirse --por
+encima seguramente el ilvl y el precio estan al reves--. Los ilvl son los que
+quieras, los de la temporada recien salida.
 
 #### Que hace falta la primera vez
 
@@ -1483,7 +1493,8 @@ que `wowalerts/topes.py`: un round-trip perderia todos los comentarios. Y la red
 de seguridad esta en `anadir_objeto.py`, que antes de dejar commitear comprueba:
 
 1. El resultado carga con `load_config()`.
-2. El objeto nuevo ha quedado con el id y los precios pedidos.
+2. El objeto nuevo ha quedado con el id y, exactamente, la tabla o el precio
+   pedidos.
 3. **No ha aparecido ni desaparecido ningun otro objeto**: solo se suma el
    nuevo.
 4. **Ningun objeto anterior ha cambiado.**
@@ -1498,16 +1509,17 @@ una ejecucion pendiente por grupo de concurrencia --el mismo que el workflow de
 topes--, y la tuya se haya quedado fuera.
 
 Ademas, el workflow **regenera los dos ficheros que dependen de `config.yaml`**
---el desplegable de topes y `Vigilados.lua`--, que es justo lo que se olvida al
-anadir un objeto a mano. Para `Vigilados.lua` reutiliza la cache de ids que deja
-la pasada de cada hora --solo la lee, no la guarda--, asi no depende de buscar
-en Blizzard cada objeto vigilado.
+--el desplegable de topes, que gana los escalones de la pieza nueva, y
+`Vigilados.lua`--, que es justo lo que se olvida al anadir un objeto a mano.
+Para `Vigilados.lua` reutiliza la cache de ids que deja la pasada de cada hora
+--solo la lee, no la guarda--, asi no depende de buscar en Blizzard cada
+objeto vigilado.
 
 #### Lo que no hace
 
 - **Un objeto por issue.**
-- **No pone topes finos**: el equipo nace con los topes de otra pieza, y se
-  ajustan luego desde la app.
+- **No anade un escalon a una pieza que ya vigilas.** Eso sigue siendo a mano
+  en `config.yaml`: esto solo arranca objetos nuevos, con su tabla completa.
 - **No arregla una temporada nueva.** Si un parche cambia los ilvl o los bonus
   ids, los avisos de equipo se callan sin dar error, y eso se arregla en
   `config.yaml`: ver la seccion 2.
