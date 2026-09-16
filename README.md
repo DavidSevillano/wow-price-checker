@@ -1520,9 +1520,11 @@ objeto vigilado.
 - **Un objeto por issue.**
 - **No anade un escalon a una pieza que ya vigilas.** Eso sigue siendo a mano
   en `config.yaml`: esto solo arranca objetos nuevos, con su tabla completa.
-- **No arregla una temporada nueva.** Si un parche cambia los ilvl o los bonus
-  ids, los avisos de equipo se callan sin dar error, y eso se arregla en
-  `config.yaml`: ver la seccion 2.
+- **No arregla los bonus ids de una temporada nueva.** Los ilvl nuevos los
+  pones tu en la tabla, pero si el parche trae bonus ids que no estan en
+  `bonus_ilvl_map`, las subastas pueden salir con "ilvl sin confirmar" o no
+  casar con la tabla, sin dar error. Eso se arregla en `config.yaml`: ver la
+  seccion 2.
 
 ---
 
