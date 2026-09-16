@@ -38,18 +38,23 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -165,6 +170,7 @@ private fun App() {
     var precios by remember { mutableStateOf(Repositorio.precios(context)) }
     var cargando by remember { mutableStateOf(false) }
     var ajustes by remember { mutableStateOf(false) }
+    var anadiendo by remember { mutableStateOf(false) }
     var abierto by remember { mutableStateOf<Int?>(null) }
 
     // Topes enviados y todavia no confirmados. Se leen de disco porque la app se
@@ -250,6 +256,14 @@ private fun App() {
                             Icon(Icons.Filled.Refresh, contentDescription = "Actualizar")
                         }
                     }
+                    // Sin token no se ofrece: el envio fallaria y el boton solo
+                    // serviria para descubrirlo a base de tocarlo. Y solo en el
+                    // listado: dentro de un objeto no viene a cuento.
+                    if (elegido == null && Repositorio.token(context).isNotBlank()) {
+                        IconButton(onClick = { anadiendo = true }) {
+                            Icon(Icons.Filled.Add, contentDescription = "Añadir objeto")
+                        }
+                    }
                     IconButton(onClick = { ajustes = true }) {
                         Icon(Icons.Filled.Settings, contentDescription = "Ajustes")
                     }
@@ -318,6 +332,29 @@ private fun App() {
                             pendientes = Topes.pendientes(context)
                             avisos.showSnackbar(
                                 "Tope enviado. Entra en vigor en la pasada siguiente."
+                            )
+                        }
+                        .onFailure { fallo ->
+                            avisos.showSnackbar(fallo.message ?: "No he podido enviarlo.")
+                        }
+                }
+            },
+        )
+    }
+
+    if (anadiendo) {
+        DialogoObjeto(
+            // Los nombres van en ingles porque es lo que lleva config.yaml, que
+            // es de donde se copian los topes.
+            piezas = catalogo.objetos.filter { it.escala }.map { it.en }.sorted(),
+            alCerrar = { anadiendo = false },
+            alEnviar = { objeto, tipo, copiarDe, tope ->
+                anadiendo = false
+                alcance.launch {
+                    Objetos.enviar(context, objeto, tipo, copiarDe, tope)
+                        .onSuccess {
+                            avisos.showSnackbar(
+                                "Objeto enviado. Empieza a vigilarse en la pasada siguiente."
                             )
                         }
                         .onFailure { fallo ->
@@ -998,6 +1035,119 @@ private fun DialogoTope(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DialogoObjeto(
+    piezas: List<String>,
+    alCerrar: () -> Unit,
+    alEnviar: (String, String, String?, Long?) -> Unit,
+) {
+    var texto by remember { mutableStateOf("") }
+    var tipo by remember { mutableStateOf(Objetos.EQUIPO) }
+    var copiarDe by remember { mutableStateOf(piezas.firstOrNull().orEmpty()) }
+    var desplegado by remember { mutableStateOf(false) }
+    var topeTexto by remember { mutableStateOf("") }
+
+    val tope = topeTexto.filter { it.isDigit() }.toLongOrNull()
+    val valido = texto.isNotBlank() && if (tipo == Objetos.EQUIPO) {
+        copiarDe.isNotBlank()
+    } else {
+        tope != null && tope > 0
+    }
+
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text("Añadir objeto") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = texto,
+                    onValueChange = { texto = it },
+                    label = { Text("enlace de Wowhead o nombre en inglés") },
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = tipo == Objetos.EQUIPO,
+                        onClick = { tipo = Objetos.EQUIPO },
+                        label = { Text("Equipo") },
+                    )
+                    FilterChip(
+                        selected = tipo == Objetos.PATRON,
+                        onClick = { tipo = Objetos.PATRON },
+                        label = { Text("Patrón") },
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                if (tipo == Objetos.EQUIPO) {
+                    ExposedDropdownMenuBox(
+                        expanded = desplegado,
+                        onExpandedChange = { desplegado = !desplegado },
+                    ) {
+                        OutlinedTextField(
+                            value = copiarDe,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("copiar topes de") },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(desplegado)
+                            },
+                            modifier = Modifier.menuAnchor(
+                                MenuAnchorType.PrimaryNotEditable,
+                            ),
+                        )
+                        ExposedDropdownMenu(
+                            expanded = desplegado,
+                            onDismissRequest = { desplegado = false },
+                        ) {
+                            piezas.forEach { nombre ->
+                                DropdownMenuItem(
+                                    text = { Text(nombre) },
+                                    onClick = {
+                                        copiarDe = nombre
+                                        desplegado = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = topeTexto,
+                        onValueChange = { topeTexto = it },
+                        label = { Text("tope, en oro") },
+                        singleLine = true,
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "Se manda como una issue a GitHub. El objeto empieza a " +
+                        "vigilarse en la pasada siguiente, como mucho dentro de una hora.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    alEnviar(
+                        texto,
+                        tipo,
+                        if (tipo == Objetos.EQUIPO) copiarDe else null,
+                        if (tipo == Objetos.PATRON) tope else null,
+                    )
+                },
+                enabled = valido,
+            ) { Text("Enviar") }
+        },
+        dismissButton = {
+            TextButton(onClick = alCerrar) { Text("Cancelar") }
+        },
+    )
+}
+
 @Composable
 private fun DialogoAjustes(
     tokenInicial: String,
@@ -1016,7 +1166,8 @@ private fun DialogoAjustes(
                 Text(
                     text = "Un token de acceso personal sobre el repositorio, que se " +
                         "queda en este móvil. Necesita Contents: Read-only para ver " +
-                        "los datos, y Issues: Read and write para cambiar topes.",
+                        "los datos, y Issues: Read and write para cambiar topes y " +
+                        "añadir objetos.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
