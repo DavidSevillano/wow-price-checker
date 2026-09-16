@@ -194,3 +194,154 @@ def comprobar_nuevo(config: Config, nombre: str, item_id: int) -> None:
                 f"El objeto {item_id} ya esta vigilado, con el nombre "
                 f"{regla.name!r}. Para cambiarle el tope usa el boton de la app."
             )
+
+
+def _cargar(texto: str) -> Config:
+    """load_config solo lee de disco, asi que el texto pasa por un temporal."""
+    ruta = Path(tempfile.mkdtemp()) / "config.yaml"
+    ruta.write_text(texto, encoding="utf-8")
+    return load_config(ruta)
+
+
+def verificar(
+    viejo: str, nuevo: str, nombre: str, item_id: int, peticion: Peticion
+) -> ItemRule:
+    """La red de seguridad que hace seguro editar YAML por texto.
+
+    Si la edicion ha roto el fichero, no ha dejado el objeto pedido, o ha
+    tocado cualquier otro, se aborta antes de commitear nada.
+
+    Devuelve la regla nueva, que es lo que el comentario de la issue ensena.
+    """
+    try:
+        antes = {regla.name: regla for regla in _cargar(viejo).items}
+        despues = {regla.name: regla for regla in _cargar(nuevo).items}
+    except ConfigError as fallo:
+        raise ObjetoError(
+            f"El config.yaml resultante no es valido, asi que no lo toco: {fallo}"
+        ) from fallo
+
+    regla = despues.get(nombre)
+    if regla is None:
+        raise ObjetoError(f"{nombre!r} no ha quedado en config.yaml. No anado nada.")
+    if regla.item_id != item_id:
+        raise ObjetoError(
+            f"{nombre!r} no ha quedado con el id {item_id}. No anado nada."
+        )
+
+    if peticion.tipo == EQUIPO:
+        origen = antes[peticion.copiar_de]
+        if dict(regla.max_price_by_ilvl) != dict(origen.max_price_by_ilvl):
+            raise ObjetoError(
+                f"Los topes de {nombre!r} no han quedado como los de "
+                f"{peticion.copiar_de!r}. No anado nada."
+            )
+    elif (
+        regla.max_price != peticion.tope
+        or regla.avisar_undercut
+        or not regla.se_repostea
+    ):
+        raise ObjetoError(
+            f"{nombre!r} no ha quedado con el precio y las banderas pedidos. "
+            "No anado nada."
+        )
+
+    movidos = [n for n in antes if antes[n] != despues.get(n)]
+    if movidos:
+        raise ObjetoError(
+            "La edicion ha tocado otros objetos ademas del nuevo ("
+            + ", ".join(sorted(movidos))
+            + "), asi que no la aplico."
+        )
+
+    return regla
+
+
+def _oro(cantidad: int) -> str:
+    """40000 -> '40.000' (separador de miles a la espanola)."""
+    return f"{cantidad:,}".replace(",", ".")
+
+
+def _ok(nombre: str, item_id: int, regla: ItemRule) -> str:
+    if regla.max_price is not None:
+        topes = f"{_oro(regla.max_price)} de oro"
+    else:
+        topes = "\n".join(
+            f"ilvl {ilvl}: {_oro(tope)}"
+            for ilvl, tope in sorted(regla.max_price_by_ilvl.items())
+        )
+    return (
+        "✅ **Objeto anadido.**\n\n"
+        "```\n"
+        f"{nombre}  (id {item_id})\n"
+        f"{topes}\n"
+        "```\n\n"
+        "Empieza a vigilarse en la pasada siguiente, como mucho dentro de una "
+        "hora, y a partir de ahi sale en la app."
+    )
+
+
+def _error(fallo: Exception) -> str:
+    return (
+        "❌ **No he anadido nada.**\n\n"
+        f"{fallo}\n\n"
+        "Corrige y abre otra issue; esta se queda abierta para que puedas verla."
+    )
+
+
+def construir_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Anade a config.yaml el objeto que pide una issue.",
+    )
+    parser.add_argument("--config", default="config.yaml")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="No escribe el fichero: solo dice que haria.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = construir_parser().parse_args(argv)
+    ruta = Path(args.config)
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+
+    try:
+        peticion = parsear(sys.stdin.read())
+        texto = ruta.read_text(encoding="utf-8")
+        config = load_config(ruta)
+        client = BlizzardClient(
+            client_id=os.getenv("BLIZZARD_CLIENT_ID", ""),
+            client_secret=os.getenv("BLIZZARD_CLIENT_SECRET", ""),
+            region=config.region,
+            locale=config.locale,
+            timeout=config.settings.request_timeout,
+        )
+        nombre, item_id = resolver(client, peticion)
+        comprobar_nuevo(config, nombre, item_id)
+        if peticion.tipo == EQUIPO:
+            nuevo = anadir_equipo(texto, nombre, item_id, peticion.copiar_de)
+        else:
+            nuevo = anadir_patron(texto, nombre, item_id, peticion.tope)
+        regla = verificar(texto, nuevo, nombre, item_id, peticion)
+    except (
+        ObjetoError,
+        TopeError,
+        ConfigError,
+        BlizzardAuthError,
+        BlizzardError,
+        OSError,
+    ) as fallo:
+        print(_error(fallo))
+        return EXIT_ERROR
+
+    if not args.dry_run:
+        ruta.write_text(nuevo, encoding="utf-8")
+
+    print(_ok(nombre, item_id, regla))
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

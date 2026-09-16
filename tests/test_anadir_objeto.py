@@ -2,8 +2,17 @@
 
 import pytest
 
-from anadir_objeto import EQUIPO, PATRON, Peticion, comprobar_nuevo, id_de, parsear, resolver
-from wowalerts.config import ItemRule
+from anadir_objeto import (
+    EQUIPO,
+    PATRON,
+    Peticion,
+    comprobar_nuevo,
+    id_de,
+    parsear,
+    resolver,
+    verificar,
+)
+from wowalerts.config import ItemRule, load_config
 from wowalerts.objetos import ObjetoError
 
 # Lo que genera el formulario de GitHub, y lo que copia la app.
@@ -162,3 +171,109 @@ def _config_con(*reglas):
     from wowalerts.config import Config, Settings
 
     return Config(region="eu", items=reglas, bonus_ilvl_map={}, settings=Settings())
+
+
+CONFIG = """\
+region: eu
+
+items:
+  - name: "Temple Delver's Mystic Helm"
+    max_price_by_ilvl:
+      { 295: 9000, 298: 12000, 311: 90000 }
+
+  - name: "Pattern: Arcanoweave Cord"
+    item_id: 258126
+    max_price: 60000
+    avisar_undercut: false
+    repostear: true
+
+bonus_ilvl_map:
+  12843: 311
+"""
+
+
+def test_verificar_acepta_una_pieza_copiada():
+    from wowalerts.objetos import anadir_equipo
+
+    peticion = parsear(EQUIPO_NUEVO)
+    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, peticion.copiar_de)
+
+    regla = verificar(CONFIG, nuevo, "Venom Rite Mantle", 123456, peticion)
+
+    assert dict(regla.max_price_by_ilvl) == {295: 9000, 298: 12000, 311: 90000}
+
+
+def test_verificar_caza_una_edicion_que_toca_otro_objeto():
+    """La red de seguridad: si se ha movido algo mas, no se commitea."""
+    from wowalerts.objetos import anadir_equipo
+
+    peticion = parsear(EQUIPO_NUEVO)
+    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, peticion.copiar_de)
+    corrupto = nuevo.replace("max_price: 60000", "max_price: 1")
+
+    with pytest.raises(ObjetoError, match="otros objetos"):
+        verificar(CONFIG, corrupto, "Venom Rite Mantle", 123456, peticion)
+
+
+def test_verificar_caza_un_yaml_roto():
+    peticion = parsear(EQUIPO_NUEVO)
+    roto = CONFIG + '  - name: "Venom Rite Mantle"\n    max_price_by_ilvl:\n      { 295:\n'
+
+    with pytest.raises(ObjetoError, match="no es valido"):
+        verificar(CONFIG, roto, "Venom Rite Mantle", 123456, peticion)
+
+
+def test_el_comentario_de_exito(tmp_path, capsys, monkeypatch):
+    import anadir_objeto
+
+    ruta = tmp_path / "config.yaml"
+    ruta.write_text(CONFIG, encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(EQUIPO_NUEVO))
+    monkeypatch.setattr(
+        anadir_objeto, "BlizzardClient",
+        lambda **kw: ClienteFalso(por_id={123456: "Venom Rite Mantle"}),
+    )
+
+    assert anadir_objeto.main(["--config", str(ruta)]) == 0
+
+    salida = capsys.readouterr().out
+    assert "Objeto anadido" in salida
+    assert "Venom Rite Mantle" in salida
+    assert "id 123456" in salida
+    # Separador de miles a la espanola.
+    assert "ilvl 311: 90.000" in salida
+    assert '"Venom Rite Mantle"' in ruta.read_text(encoding="utf-8")
+
+
+def test_un_fallo_no_escribe_nada_y_sale_con_error(tmp_path, capsys, monkeypatch):
+    import anadir_objeto
+
+    ruta = tmp_path / "config.yaml"
+    ruta.write_text(CONFIG, encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(EQUIPO_NUEVO))
+    monkeypatch.setattr(anadir_objeto, "BlizzardClient", lambda **kw: ClienteFalso())
+
+    assert anadir_objeto.main(["--config", str(ruta)]) == 1
+
+    assert "No he anadido nada" in capsys.readouterr().out
+    assert ruta.read_text(encoding="utf-8") == CONFIG
+
+
+def test_un_patron_sale_con_sus_banderas(tmp_path, capsys, monkeypatch):
+    import anadir_objeto
+
+    ruta = tmp_path / "config.yaml"
+    ruta.write_text(CONFIG, encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(PATRON_NUEVO))
+    monkeypatch.setattr(
+        anadir_objeto, "BlizzardClient",
+        lambda **kw: ClienteFalso(por_nombre={"Pattern: Lo Que Sea": 999}),
+    )
+
+    assert anadir_objeto.main(["--config", str(ruta)]) == 0
+
+    escrito = load_config(ruta)
+    regla = next(r for r in escrito.items if r.name == "Pattern: Lo Que Sea")
+    assert regla.max_price == 40000
+    assert regla.avisar_undercut is False
+    assert regla.se_repostea is True
