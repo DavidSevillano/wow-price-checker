@@ -1,6 +1,7 @@
 """Anadir un objeto nuevo al texto de config.yaml."""
 
 import pytest
+import yaml
 
 from wowalerts.objetos import ObjetoError, anadir_equipo, anadir_patron, tabla_de
 from wowalerts.topes import TopeError
@@ -62,6 +63,17 @@ def test_un_objeto_que_no_existe_se_explica():
         tabla_de(CONFIG, "Molten Helm")
 
 
+def test_un_comentario_que_menciona_max_price_by_ilvl_no_engana_a_tabla_de():
+    """La subcadena puede aparecer en un comentario sin ser la clave de verdad."""
+    texto = CONFIG.replace(
+        '  - name: "Pattern: Arcanoweave Cord"\n',
+        '  - name: "Pattern: Arcanoweave Cord"\n'
+        "    # ver max_price_by_ilvl { } en otra pieza\n",
+    )
+    with pytest.raises(ObjetoError, match="precio unico"):
+        tabla_de(texto, "Pattern: Arcanoweave Cord")
+
+
 def test_el_equipo_nuevo_va_detras_del_objeto_del_que_copia():
     nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, "Temple Delver's Mystic Helm")
 
@@ -91,11 +103,22 @@ def test_el_resto_del_fichero_no_se_toca():
     assert sin_lo_nuevo == CONFIG
 
 
-def test_el_nombre_se_escribe_entrecomillado():
-    """Un nombre con dos puntos sin comillas seria otra clave del YAML."""
-    nuevo = anadir_equipo(CONFIG, 'Bolt of "Silk"', 1, "Temple Delver's Mystic Helm")
+def test_un_nombre_con_comillas_dobles_se_rechaza():
+    """topes.py no sabe buscar un nombre con comillas escapadas, asi que nunca
+    se podria cambiar su tope despues. Mejor no dejarlo entrar."""
+    with pytest.raises(ObjetoError, match="comillas dobles"):
+        anadir_equipo(CONFIG, 'Bolt of "Silk"', 1, "Temple Delver's Mystic Helm")
 
-    assert '  - name: "Bolt of \\"Silk\\""\n' in nuevo
+
+def test_un_nombre_con_apostrofo_y_dos_puntos_se_lee_bien_con_yaml():
+    """Un nombre normal, con los caracteres que dan problemas sin comillas,
+    tiene que salir entrecomillado y el YAML resultante tiene que cargarlo tal
+    cual se pidio."""
+    nuevo = anadir_equipo(CONFIG, "Pattern: Kael'thas's Cord", 1, "Temple Delver's Mystic Helm")
+
+    datos = yaml.safe_load(nuevo)
+    nombres = [item["name"] for item in datos["items"]]
+    assert "Pattern: Kael'thas's Cord" in nombres
 
 
 def test_copiar_de_un_objeto_que_no_existe_se_explica():
@@ -191,3 +214,43 @@ def test_el_patron_se_anade_al_final_cuando_no_hay_nada_detras():
         "    repostear: true\n"
     )
     assert nuevo.startswith(texto.rstrip("\n") + "\n\n")
+
+
+def test_el_patron_se_coloca_bien_si_el_reposteable_anterior_tiene_comentario_en_el_nombre():
+    """La linea 'name:' del reposteable lleva un comentario detras. No hay que
+    reconstruir el nombre a partir de ahi para volver a buscarlo."""
+    texto = CONFIG.replace(
+        '  - name: "Pattern: Arcanoweave Cord"',
+        '  - name: "Pattern: Arcanoweave Cord"  # nota',
+    )
+    nuevo = anadir_patron(texto, "Pattern: Lo Que Sea", 999, 40000)
+
+    assert nuevo == texto.replace(
+        '  - name: "Wooly White Rhino"',
+        '  - name: "Pattern: Lo Que Sea"\n'
+        "    item_id: 999\n"
+        "    max_price: 40000\n"
+        "    avisar_undercut: false\n"
+        "    repostear: true\n"
+        "\n"
+        '  - name: "Wooly White Rhino"',
+    )
+
+
+def test_repostear_true_con_comentario_detras_cuenta_igual():
+    texto = CONFIG.replace(
+        "    repostear: true\n",
+        "    repostear: true  # nota\n",
+    )
+    nuevo = anadir_patron(texto, "Pattern: Lo Que Sea", 999, 40000)
+
+    assert nuevo == texto.replace(
+        '  - name: "Wooly White Rhino"',
+        '  - name: "Pattern: Lo Que Sea"\n'
+        "    item_id: 999\n"
+        "    max_price: 40000\n"
+        "    avisar_undercut: false\n"
+        "    repostear: true\n"
+        "\n"
+        '  - name: "Wooly White Rhino"',
+    )
