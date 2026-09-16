@@ -1,8 +1,15 @@
 """Anadir un objeto vigilado desde una issue."""
 
+from pathlib import Path
+
 import pytest
+import yaml
 
 from anadir_objeto import (
+    CAMPO_COPIAR,
+    CAMPO_OBJETO,
+    CAMPO_TIPO,
+    CAMPO_TOPE,
     EQUIPO,
     PATRON,
     Peticion,
@@ -15,6 +22,8 @@ from anadir_objeto import (
 from wowalerts.blizzard import BlizzardAuthError
 from wowalerts.config import ItemRule, load_config
 from wowalerts.objetos import ObjetoError
+
+RAIZ = Path(__file__).resolve().parent.parent
 
 # Lo que genera el formulario de GitHub, y lo que copia la app.
 EQUIPO_NUEVO = """\
@@ -382,3 +391,40 @@ def test_un_patron_sale_con_sus_banderas(tmp_path, capsys, monkeypatch):
     assert regla.max_price == 40000
     assert regla.avisar_undercut is False
     assert regla.se_repostea is True
+
+
+def test_la_plantilla_lleva_las_mismas_etiquetas():
+    """Las etiquetas son el contrato: el parser busca por ellas."""
+    plantilla = yaml.safe_load(
+        (RAIZ / ".github/ISSUE_TEMPLATE/objeto.yml").read_text(encoding="utf-8")
+    )
+    etiquetas = {
+        campo["attributes"]["label"]
+        for campo in plantilla["body"]
+        if campo["type"] != "markdown"
+    }
+
+    assert etiquetas == {CAMPO_OBJETO, CAMPO_TIPO, CAMPO_COPIAR, CAMPO_TOPE}
+
+
+def test_el_parser_entiende_las_opciones_del_desplegable():
+    """Las opciones las escribe un humano en el YAML; el parser tiene que leerlas."""
+    plantilla = yaml.safe_load(
+        (RAIZ / ".github/ISSUE_TEMPLATE/objeto.yml").read_text(encoding="utf-8")
+    )
+    tipos = next(
+        campo for campo in plantilla["body"]
+        if campo.get("attributes", {}).get("label") == CAMPO_TIPO
+    )["attributes"]["options"]
+
+    # Se usa el cuerpo de equipo, que trae rellenos los dos campos que pueden
+    # hacer falta, y se le cambia solo el tipo.
+    completo = EQUIPO_NUEVO.replace(
+        "### Tope, en oro\n\n_No response_", "### Tope, en oro\n\n40000"
+    )
+    leidos = {
+        parsear(completo.replace("Equipo (tabla por ilvl)", opcion)).tipo
+        for opcion in tipos
+    }
+
+    assert leidos == {EQUIPO, PATRON}
