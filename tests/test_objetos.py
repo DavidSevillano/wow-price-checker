@@ -93,6 +93,23 @@ def test_el_equipo_no_se_mete_debajo_del_comentario_de_la_seccion_siguiente():
     assert ("        311: 90000 }\n\n" + BLOQUE_NUEVO + "\n  # --- Patrones\n") in nuevo
 
 
+def test_un_comentario_max_price_by_ilvl_en_un_patron_no_lo_cuenta_como_equipo():
+    """Un patron puede llevar un comentario que mencione 'max_price_by_ilvl' en
+    su bloque, sin ser la clave de verdad: no debe colarse como la ultima
+    pieza de equipo y arrastrar el bloque nuevo por debajo suyo."""
+    texto = CONFIG.replace(
+        '  - name: "Pattern: Arcanoweave Cord"\n',
+        '  - name: "Pattern: Arcanoweave Cord"\n'
+        "    # sin max_price_by_ilvl: precio unico\n",
+    )
+    nuevo = anadir_equipo(texto, "Venom Rite Mantle", 123456, TOPES)
+
+    assert nuevo == texto.replace(
+        '  - name: "Pattern: Arcanoweave Cord"',
+        BLOQUE_NUEVO + "\n" + '  - name: "Pattern: Arcanoweave Cord"',
+    )
+
+
 def test_sin_ninguna_pieza_de_equipo_va_detras_del_ultimo_objeto():
     sin_equipo = (
         "region: eu\n"

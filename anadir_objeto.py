@@ -79,8 +79,12 @@ def _entero(texto: str, campo: str) -> int:
     """Un entero escrito por una persona en un movil.
 
     Se admiten separadores de miles y un 'g' detras, porque escribir '40.000 g'
-    es lo natural y rechazarlo obligaria a repetir la issue entera.
+    es lo natural y rechazarlo obligaria a repetir la issue entera. Pero un
+    punto o una coma que no separa tres cifras exactas es un decimal, no un
+    millar: '20.5' no son doscientos cinco.
     """
+    if re.search(r"[.,](?!\d{3}(?!\d))", texto.strip()):
+        raise ObjetoError(f"{campo!r}: {texto!r} no es un numero entero.")
     limpio = re.sub(r"[.,\s]", "", texto)
     limpio = re.sub(r"[gG]$", "", limpio)
     if not re.fullmatch(r"\d+", limpio):
@@ -88,9 +92,15 @@ def _entero(texto: str, campo: str) -> int:
     return int(limpio)
 
 
-# Un escalon de la tabla: 'ilvl: tope' o 'ilvl = tope'. ASCII para que un
-# digito de otro alfabeto no pase por numero y reviente en int().
-_ESCALON = re.compile(r"^\s*(\d+)\s*[:=]\s*(.+?)\s*$", re.ASCII)
+# Un escalon de la tabla: 'ilvl: tope' o 'ilvl = tope', con una vineta
+# opcional delante ('-', '*' o '•'), porque el campo se suele pegar de
+# una lista escrita a mano. ASCII para que un digito de otro alfabeto no pase
+# por numero y reviente en int().
+_ESCALON = re.compile(r"^\s*(?:[-*•]\s+)?(\d+)\s*[:=]\s*(.+?)\s*$", re.ASCII)
+
+# Ningun ilvl real llega tan alto: por encima, casi seguro que el ilvl y el
+# tope estan al reves.
+_ILVL_MAXIMO = 2000
 
 
 def _tabla(texto: str) -> dict[int, int]:
@@ -116,6 +126,11 @@ def _tabla(texto: str) -> dict[int, int]:
             raise ObjetoError(
                 f"{CAMPO_TOPES_ILVL!r}: en {linea.strip()!r} el ilvl y el tope "
                 "tienen que ser mayores que cero."
+            )
+        if ilvl > _ILVL_MAXIMO:
+            raise ObjetoError(
+                f"{CAMPO_TOPES_ILVL!r}: {ilvl} no es un ilvl posible (maximo "
+                f"{_ILVL_MAXIMO}). Revisa si el ilvl y el tope estan al reves."
             )
         if ilvl in topes:
             raise ObjetoError(

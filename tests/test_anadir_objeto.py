@@ -477,3 +477,52 @@ def test_verificar_caza_una_tabla_distinta_de_la_pedida():
 
     with pytest.raises(ObjetoError, match="topes"):
         verificar(CONFIG, corrupto, "Venom Rite Mantle", 123456, peticion)
+
+
+def test_un_punto_decimal_no_se_confunde_con_un_millar():
+    """'20.5' no son veinte mil quinientos: el punto no separa tres cifras."""
+    with pytest.raises(ObjetoError, match="20.5"):
+        parsear(_con_tabla("368: 20.5"))
+
+
+def test_una_coma_decimal_tampoco_se_confunde_con_un_millar():
+    cuerpo = PATRON_NUEVO.replace("\n40000\n", "\n40,5\n")
+    with pytest.raises(ObjetoError, match="40,5"):
+        parsear(cuerpo)
+
+
+def test_un_tope_con_varios_puntos_de_millar_se_admite():
+    assert parsear(PATRON_NUEVO.replace("\n40000\n", "\n1.500.000\n")).tope == 1500000
+
+
+def test_la_tabla_admite_una_vineta_de_guion():
+    assert parsear(_con_tabla("- 368: 20000")).topes_ilvl == {368: 20000}
+
+
+def test_la_tabla_admite_una_vineta_de_asterisco():
+    assert parsear(_con_tabla("* 368: 20000")).topes_ilvl == {368: 20000}
+
+
+def test_la_tabla_admite_una_vineta_de_punto():
+    assert parsear(_con_tabla("• 368: 20000")).topes_ilvl == {368: 20000}
+
+
+def test_un_ilvl_no_creible_se_rechaza():
+    """El ilvl y el tope al reves ('20000: 368') no debe colarse como valido."""
+    with pytest.raises(ObjetoError, match="20000"):
+        parsear(_con_tabla("20000: 368"))
+
+
+def test_un_escalon_sin_tope_se_rechaza():
+    with pytest.raises(ObjetoError):
+        parsear(_con_tabla("368:"))
+
+
+def test_un_escalon_con_tope_en_blanco_se_rechaza():
+    with pytest.raises(ObjetoError):
+        parsear(_con_tabla("368: "))
+
+
+def test_un_ilvl_a_cero_se_rechaza():
+    with pytest.raises(ObjetoError, match="mayores que cero"):
+        parsear(_con_tabla("0: 20000"))
