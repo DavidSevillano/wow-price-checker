@@ -21,6 +21,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from dotenv import load_dotenv
 
@@ -37,7 +38,7 @@ EXIT_ERROR = 1
 # una aqui, cambiala en los tres sitios.
 CAMPO_OBJETO = "Objeto"
 CAMPO_TIPO = "Tipo"
-CAMPO_COPIAR = "Copiar topes de"
+CAMPO_TOPES_ILVL = "Topes por ilvl"
 CAMPO_TOPE = "Tope, en oro"
 
 # Lo que escribe GitHub cuando dejas en blanco un campo opcional.
@@ -56,7 +57,8 @@ class Peticion:
     # Lo escrito en el campo: un enlace de Wowhead, un id, o el nombre en ingles.
     objeto: str
     tipo: str
-    copiar_de: str | None
+    # Los escalones que escribe quien anade una pieza de equipo; None en un patron.
+    topes_ilvl: Mapping[int, int] | None
     tope: int | None
 
 
@@ -84,6 +86,48 @@ def _entero(texto: str, campo: str) -> int:
     if not re.fullmatch(r"\d+", limpio):
         raise ObjetoError(f"{campo!r}: {texto!r} no es un numero entero.")
     return int(limpio)
+
+
+# Un escalon de la tabla: 'ilvl: tope' o 'ilvl = tope'. ASCII para que un
+# digito de otro alfabeto no pase por numero y reviente en int().
+_ESCALON = re.compile(r"^\s*(\d+)\s*[:=]\s*(.+?)\s*$", re.ASCII)
+
+
+def _tabla(texto: str) -> dict[int, int]:
+    """Los escalones del campo 'Topes por ilvl', uno por linea.
+
+    Uno por linea y no separados por comas, porque la coma tambien es separador
+    de miles ('20,000') y el campo se escribe a mano. Las lineas en blanco no
+    cuentan.
+    """
+    topes: dict[int, int] = {}
+    for linea in texto.splitlines():
+        if not linea.strip():
+            continue
+        escalon = _ESCALON.match(linea)
+        if escalon is None:
+            raise ObjetoError(
+                f"{CAMPO_TOPES_ILVL!r}: no entiendo la linea {linea.strip()!r}. "
+                "Va un escalon por linea, como '368: 20000'."
+            )
+        ilvl = int(escalon.group(1))
+        tope = _entero(escalon.group(2), CAMPO_TOPES_ILVL)
+        if ilvl <= 0 or tope <= 0:
+            raise ObjetoError(
+                f"{CAMPO_TOPES_ILVL!r}: en {linea.strip()!r} el ilvl y el tope "
+                "tienen que ser mayores que cero."
+            )
+        if ilvl in topes:
+            raise ObjetoError(
+                f"{CAMPO_TOPES_ILVL!r}: el ilvl {ilvl} esta repetido."
+            )
+        topes[ilvl] = tope
+    if not topes:
+        raise ObjetoError(
+            f"{CAMPO_TOPES_ILVL!r} no trae ningun escalon. Pon uno por linea, "
+            "como '368: 20000'."
+        )
+    return topes
 
 
 def _relleno(campos: dict[str, str], etiqueta: str) -> str | None:
@@ -136,16 +180,17 @@ def parsear(cuerpo: str) -> Peticion:
         raise ObjetoError(f"El campo {CAMPO_OBJETO!r} viene vacio.")
 
     tipo = _tipo(campos[CAMPO_TIPO])
-    copiar_de = _relleno(campos, CAMPO_COPIAR)
+    topes_ilvl = _relleno(campos, CAMPO_TOPES_ILVL)
     tope = _relleno(campos, CAMPO_TOPE)
 
     if tipo == EQUIPO:
-        if copiar_de is None:
+        if topes_ilvl is None:
             raise ObjetoError(
-                "Una pieza de equipo lleva tabla por ilvl, asi que necesito de "
-                f"que objeto copiarla: rellena {CAMPO_COPIAR!r}."
+                "Una pieza de equipo lleva tabla por ilvl: rellena "
+                f"{CAMPO_TOPES_ILVL!r} con un escalon por linea, como "
+                "'368: 20000'."
             )
-        return Peticion(objeto, EQUIPO, copiar_de, None)
+        return Peticion(objeto, EQUIPO, _tabla(topes_ilvl), None)
 
     if tope is None:
         raise ObjetoError(
@@ -240,11 +285,13 @@ def verificar(
         )
 
     if peticion.tipo == EQUIPO:
-        origen = antes[peticion.copiar_de]
-        if dict(regla.max_price_by_ilvl) != dict(origen.max_price_by_ilvl):
+        if (
+            regla.max_price is not None
+            or dict(regla.max_price_by_ilvl) != dict(peticion.topes_ilvl)
+        ):
             raise ObjetoError(
-                f"Los topes de {nombre!r} no han quedado como los de "
-                f"{peticion.copiar_de!r}. No anado nada."
+                f"Los topes de {nombre!r} no han quedado como los pedidos. "
+                "No anado nada."
             )
     elif (
         regla.max_price != peticion.tope
@@ -345,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
         nombre, item_id = resolver(client, peticion)
         comprobar_nuevo(config, nombre, item_id)
         if peticion.tipo == EQUIPO:
-            nuevo = anadir_equipo(texto, nombre, item_id, peticion.copiar_de)
+            nuevo = anadir_equipo(texto, nombre, item_id, peticion.topes_ilvl)
         else:
             nuevo = anadir_patron(texto, nombre, item_id, peticion.tope)
         regla = verificar(texto, nuevo, nombre, item_id, peticion)

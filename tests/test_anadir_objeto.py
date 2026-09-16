@@ -6,10 +6,10 @@ import pytest
 import yaml
 
 from anadir_objeto import (
-    CAMPO_COPIAR,
     CAMPO_OBJETO,
     CAMPO_TIPO,
     CAMPO_TOPE,
+    CAMPO_TOPES_ILVL,
     EQUIPO,
     PATRON,
     Peticion,
@@ -35,9 +35,11 @@ https://www.wowhead.com/es/item=123456/venom-rite-mantle
 
 Equipo (tabla por ilvl)
 
-### Copiar topes de
+### Topes por ilvl
 
-Temple Delver's Mystic Helm
+368: 20000
+376: 50000
+382: 150000
 
 ### Tope, en oro
 
@@ -53,7 +55,7 @@ Pattern: Lo Que Sea
 
 Patrón o receta (precio unico)
 
-### Copiar topes de
+### Topes por ilvl
 
 _No response_
 
@@ -67,7 +69,7 @@ def test_una_pieza_de_equipo():
     assert parsear(EQUIPO_NUEVO) == Peticion(
         objeto="https://www.wowhead.com/es/item=123456/venom-rite-mantle",
         tipo=EQUIPO,
-        copiar_de="Temple Delver's Mystic Helm",
+        topes_ilvl={368: 20000, 376: 50000, 382: 150000},
         tope=None,
     )
 
@@ -76,7 +78,7 @@ def test_un_patron():
     assert parsear(PATRON_NUEVO) == Peticion(
         objeto="Pattern: Lo Que Sea",
         tipo=PATRON,
-        copiar_de=None,
+        topes_ilvl=None,
         tope=40000,
     )
 
@@ -91,9 +93,9 @@ def test_el_tope_admite_separadores_de_miles():
     assert parsear(PATRON_NUEVO.replace("\n40000\n", "\n40.000 g\n")).tope == 40000
 
 
-def test_una_pieza_de_equipo_sin_de_donde_copiar():
-    cuerpo = EQUIPO_NUEVO.replace("Temple Delver's Mystic Helm", "_No response_")
-    with pytest.raises(ObjetoError, match="Copiar topes de"):
+def test_una_pieza_de_equipo_sin_topes():
+    cuerpo = EQUIPO_NUEVO.replace("368: 20000\n376: 50000\n382: 150000", "_No response_")
+    with pytest.raises(ObjetoError, match="Topes por ilvl"):
         parsear(cuerpo)
 
 
@@ -184,7 +186,7 @@ def test_el_nombre_resuelto_es_el_canonico_de_blizzard():
         por_id={999: "Pattern: Lo Que Sea"},
     )
     peticion = Peticion(
-        objeto="pattern: lo que sea", tipo=PATRON, copiar_de=None, tope=40000
+        objeto="pattern: lo que sea", tipo=PATRON, topes_ilvl=None, tope=40000
     )
 
     assert resolver(cliente, peticion) == ("Pattern: Lo Que Sea", 999)
@@ -246,15 +248,15 @@ bonus_ilvl_map:
 """
 
 
-def test_verificar_acepta_una_pieza_copiada():
+def test_verificar_acepta_una_pieza_con_su_tabla():
     from wowalerts.objetos import anadir_equipo
 
     peticion = parsear(EQUIPO_NUEVO)
-    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, peticion.copiar_de)
+    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, peticion.topes_ilvl)
 
     regla = verificar(CONFIG, nuevo, "Venom Rite Mantle", 123456, peticion)
 
-    assert dict(regla.max_price_by_ilvl) == {295: 9000, 298: 12000, 311: 90000}
+    assert dict(regla.max_price_by_ilvl) == {368: 20000, 376: 50000, 382: 150000}
 
 
 def test_verificar_caza_una_edicion_que_toca_otro_objeto():
@@ -262,7 +264,7 @@ def test_verificar_caza_una_edicion_que_toca_otro_objeto():
     from wowalerts.objetos import anadir_equipo
 
     peticion = parsear(EQUIPO_NUEVO)
-    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, peticion.copiar_de)
+    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, peticion.topes_ilvl)
     corrupto = nuevo.replace("max_price: 60000", "max_price: 1")
 
     with pytest.raises(ObjetoError, match="otros objetos"):
@@ -274,7 +276,7 @@ def test_verificar_caza_una_edicion_que_anade_otro_objeto_mas():
     from wowalerts.objetos import anadir_equipo
 
     peticion = parsear(EQUIPO_NUEVO)
-    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, peticion.copiar_de)
+    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, peticion.topes_ilvl)
     corrupto = nuevo.replace(
         "bonus_ilvl_map:",
         '  - name: "Extra Objeto"\n    max_price: 10\n\nbonus_ilvl_map:',
@@ -310,7 +312,7 @@ def test_el_comentario_de_exito(tmp_path, capsys, monkeypatch):
     assert "Venom Rite Mantle" in salida
     assert "id 123456" in salida
     # Separador de miles a la espanola.
-    assert "ilvl 311: 90.000" in salida
+    assert "ilvl 382: 150.000" in salida
     assert '"Venom Rite Mantle"' in ruta.read_text(encoding="utf-8")
 
 
@@ -404,7 +406,7 @@ def test_la_plantilla_lleva_las_mismas_etiquetas():
         if campo["type"] != "markdown"
     }
 
-    assert etiquetas == {CAMPO_OBJETO, CAMPO_TIPO, CAMPO_COPIAR, CAMPO_TOPE}
+    assert etiquetas == {CAMPO_OBJETO, CAMPO_TIPO, CAMPO_TOPES_ILVL, CAMPO_TOPE}
     # El prefijo del titulo es lo que mira objeto.yml para reconocer la issue.
     assert plantilla["title"].startswith("Objeto:")
 
@@ -430,3 +432,48 @@ def test_el_parser_entiende_las_opciones_del_desplegable():
     }
 
     assert leidos == {EQUIPO, PATRON}
+
+
+def _con_tabla(tabla):
+    """EQUIPO_NUEVO con otro contenido en 'Topes por ilvl'."""
+    return EQUIPO_NUEVO.replace(
+        "368: 20000\n376: 50000\n382: 150000", tabla
+    )
+
+
+def test_la_tabla_admite_como_se_escribe_en_un_movil():
+    tabla = "\n368 = 20.000 g\n\n  376:50,000\n382: 150000\n"
+    assert parsear(_con_tabla(tabla)).topes_ilvl == {
+        368: 20000, 376: 50000, 382: 150000,
+    }
+
+
+def test_la_tabla_con_saltos_de_linea_crlf():
+    cuerpo = EQUIPO_NUEVO.replace("\n", "\r\n")
+    assert parsear(cuerpo).topes_ilvl == {368: 20000, 376: 50000, 382: 150000}
+
+
+def test_una_linea_de_la_tabla_que_no_se_entiende():
+    with pytest.raises(ObjetoError, match="368 veinte mil"):
+        parsear(_con_tabla("368 veinte mil"))
+
+
+def test_un_ilvl_repetido():
+    with pytest.raises(ObjetoError, match="368"):
+        parsear(_con_tabla("368: 20000\n368: 30000"))
+
+
+def test_un_tope_a_cero():
+    with pytest.raises(ObjetoError, match="mayores que cero"):
+        parsear(_con_tabla("368: 0"))
+
+
+def test_verificar_caza_una_tabla_distinta_de_la_pedida():
+    from wowalerts.objetos import anadir_equipo
+
+    peticion = parsear(EQUIPO_NUEVO)
+    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, peticion.topes_ilvl)
+    corrupto = nuevo.replace("382: 150000", "382: 1")
+
+    with pytest.raises(ObjetoError, match="topes"):
+        verificar(CONFIG, corrupto, "Venom Rite Mantle", 123456, peticion)

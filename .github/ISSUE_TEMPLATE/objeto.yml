@@ -7,10 +7,6 @@
 #  Las etiquetas de los campos son el contrato con anadir_objeto.py, que es
 #  quien lee el cuerpo de la issue. Si cambias una, cambiala tambien alli y en
 #  Objetos.kt.
-#
-#  El desplegable de "Copiar topes de" no existe: sus opciones serian los
-#  objetos de config.yaml y habria que regenerar la plantilla cada vez, como
-#  pasa con tope.yml. Aqui se escribe el nombre.
 # ============================================================================
 
 name: Anadir un objeto
@@ -45,14 +41,17 @@ body:
     validations:
       required: true
 
-  - type: input
-    id: copiar
+  - type: textarea
+    id: topes
     attributes:
-      label: Copiar topes de
+      label: Topes por ilvl
       description: >-
-        Solo para equipo: el nombre en ingles de una pieza que ya vigiles, de la
-        que copiar la tabla de precios por ilvl.
-      placeholder: "Venom Rite Mantle"
+        Solo para equipo: un ilvl y su tope en oro por linea. Los ilvl que sean,
+        los de la temporada que acaba de salir.
+      placeholder: |
+        368: 20000
+        376: 50000
+        382: 150000
     validations:
       required: false
 
