@@ -95,6 +95,11 @@ jobs:
         # si se queda atras. No necesita credenciales de Blizzard.
         id: topes_form
         if: steps.anadir.outputs.codigo == '0'
+        # Sin 'shell: bash' el paso corre como 'bash -e {0}', SIN pipefail: el
+        # codigo de salida de la tuberia seria el de 'tee' (siempre 0), y un
+        # fallo del script se pasaria por bueno. 'shell: bash' lo ejecuta con
+        # '-eo pipefail'.
+        shell: bash
         run: python topes_form.py 2>&1 | tee -a regenerar.log
 
       - name: Regenerar lo que vigila el addon
@@ -103,6 +108,7 @@ jobs:
         # Blizzard, de ahi las credenciales.
         id: generar_vigilados
         if: steps.anadir.outputs.codigo == '0'
+        shell: bash
         env:
           BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
           BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
@@ -149,6 +155,8 @@ jobs:
           # TITULO mas arriba: son valores que no ha escrito este script.
           CODIGO: ${{ steps.anadir.outputs.codigo }}
           COMMIT: ${{ steps.commit.outcome }}
+          TOPES_FORM: ${{ steps.topes_form.outcome }}
+          VIGILADOS: ${{ steps.generar_vigilados.outcome }}
         run: |
           # Si comentario.md ha quedado vacio o no existe --Python fallando
           # antes de imprimir nada-- un comentario en blanco seria peor que uno
@@ -167,13 +175,18 @@ jobs:
               cat comentario.md
             } > comentario.tmp
             mv comentario.tmp comentario.md
-            if [ -s regenerar.log ]; then
-              {
-                echo ""
-                echo '```'
-                tail -n 20 regenerar.log
-                echo '```'
-              } >> comentario.md
+            # Solo si de verdad ha fallado una regeneracion: tras un fallo de
+            # push/rebase, el log solo tiene regeneraciones que salieron bien
+            # y adjuntarlo apuntaria al sitio equivocado.
+            if [ "$TOPES_FORM" = "failure" ] || [ "$VIGILADOS" = "failure" ]; then
+              if [ -s regenerar.log ]; then
+                {
+                  echo ""
+                  echo '```'
+                  tail -n 20 regenerar.log
+                  echo '```'
+                } >> comentario.md
+              fi
             fi
           fi
           gh issue comment "$NUMERO" --body-file comentario.md
