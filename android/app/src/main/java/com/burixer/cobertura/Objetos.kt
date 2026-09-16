@@ -25,6 +25,9 @@ object Objetos {
     /** Lo que escribe GitHub cuando dejas en blanco un campo opcional. */
     private const val SIN_RESPUESTA = "_No response_"
 
+    /** Ningun ilvl real llega tan alto. Espeja _ILVL_MAXIMO en anadir_objeto.py. */
+    private const val ILVL_MAXIMO = 2000
+
     /**
      * Quita los saltos de linea del texto escrito a mano.
      *
@@ -43,12 +46,19 @@ object Objetos {
      * cambiala tambien en .github/ISSUE_TEMPLATE/objeto.yml y en
      * anadir_objeto.py.
      */
-    fun cuerpo(objeto: String, tipo: String, copiarDe: String?, tope: Long?): String =
+    fun cuerpo(objeto: String, tipo: String, topesIlvl: List<Pair<Int, Long>>?, tope: Long?): String =
         buildString {
             append("### Objeto\n\n").append(normalizado(objeto)).append("\n\n")
             append("### Tipo\n\n").append(tipo).append("\n\n")
-            append("### Copiar topes de\n\n")
-                .append(copiarDe ?: SIN_RESPUESTA).append("\n\n")
+            append("### Topes por ilvl\n\n")
+            if (topesIlvl.isNullOrEmpty()) {
+                append(SIN_RESPUESTA)
+            } else {
+                // Uno por linea: la coma tambien es separador de miles, y el
+                // parser del otro lado lee un escalon por linea.
+                append(topesIlvl.sortedBy { it.first }.joinToString("\n") { "${it.first}: ${it.second}" })
+            }
+            append("\n\n")
             append("### Tope, en oro\n\n")
                 .append(tope?.toString() ?: SIN_RESPUESTA).append("\n")
         }
@@ -63,7 +73,7 @@ object Objetos {
         context: Context,
         objeto: String,
         tipo: String,
-        copiarDe: String?,
+        topesIlvl: List<Pair<Int, Long>>?,
         tope: Long?,
     ): Result<Unit> = withContext(Dispatchers.IO) {
         val token = Repositorio.token(context)
@@ -85,15 +95,25 @@ object Objetos {
                 IllegalArgumentException("Un patron necesita un precio mayor que cero.")
             )
         }
-        if (tipo == EQUIPO && copiarDe.isNullOrBlank()) {
-            return@withContext Result.failure(
-                IllegalArgumentException("Elige de que objeto copiar los topes.")
-            )
+        if (tipo == EQUIPO) {
+            val topes = topesIlvl.orEmpty()
+            val ilvls = topes.map { it.first }
+            if (topes.isEmpty() ||
+                topes.any { it.first <= 0 || it.first > ILVL_MAXIMO || it.second <= 0 } ||
+                ilvls.toSet().size != ilvls.size
+            ) {
+                return@withContext Result.failure(
+                    IllegalArgumentException(
+                        "Pon al menos un ilvl con su tope, sin repetir ilvl y con " +
+                            "numeros mayores que cero."
+                    )
+                )
+            }
         }
 
         val peticion = JSONObject()
             .put("title", "Objeto: ${normalizado(objeto)}")
-            .put("body", cuerpo(objeto, tipo, copiarDe, tope))
+            .put("body", cuerpo(objeto, tipo, topesIlvl, tope))
             .put("labels", JSONArray().put("objeto"))
 
         runCatching { Topes.abrirIssue(Repositorio.repo(context), token, peticion.toString()) }

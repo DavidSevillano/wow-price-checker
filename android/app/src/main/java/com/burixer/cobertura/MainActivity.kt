@@ -35,26 +35,24 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -70,6 +68,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -81,6 +80,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -344,14 +344,11 @@ private fun App() {
 
     if (anadiendo) {
         DialogoObjeto(
-            // Los nombres van en ingles porque es lo que lleva config.yaml, que
-            // es de donde se copian los topes.
-            piezas = catalogo.objetos.filter { it.escala }.map { it.en }.sorted(),
             alCerrar = { anadiendo = false },
-            alEnviar = { objeto, tipo, copiarDe, tope ->
+            alEnviar = { objeto, tipo, topesIlvl, tope ->
                 anadiendo = false
                 alcance.launch {
-                    Objetos.enviar(context, objeto, tipo, copiarDe, tope)
+                    Objetos.enviar(context, objeto, tipo, topesIlvl, tope)
                         .onSuccess {
                             avisos.showSnackbar(
                                 "Objeto enviado. Si GitHub lo acepta, se vigila desde la " +
@@ -1036,22 +1033,40 @@ private fun DialogoTope(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Una fila de la tabla del dialogo, tal y como se esta escribiendo. */
+private class FilaTope {
+    var ilvl by mutableStateOf("")
+    var oro by mutableStateOf("")
+}
+
 @Composable
 private fun DialogoObjeto(
-    piezas: List<String>,
     alCerrar: () -> Unit,
-    alEnviar: (String, String, String?, Long?) -> Unit,
+    alEnviar: (String, String, List<Pair<Int, Long>>?, Long?) -> Unit,
 ) {
     var texto by remember { mutableStateOf("") }
     var tipo by remember { mutableStateOf(Objetos.EQUIPO) }
-    var copiarDe by remember { mutableStateOf("") }
-    var desplegado by remember { mutableStateOf(false) }
     var topeTexto by remember { mutableStateOf("") }
+    val filas = remember { mutableStateListOf(FilaTope()) }
+
+    // Las filas vacias del todo no cuentan; una a medias impide enviar.
+    val escritas = filas.filter { it.ilvl.isNotBlank() || it.oro.isNotBlank() }
+    val escalones = escritas.map {
+        it.ilvl.filter(Char::isDigit).toIntOrNull() to it.oro.filter(Char::isDigit).toLongOrNull()
+    }
+    val completos = escalones.isNotEmpty() && escalones.all { (ilvl, oro) ->
+        ilvl != null && ilvl > 0 && oro != null && oro > 0
+    }
+    val repetido = escalones.mapNotNull { it.first }.let { it.toSet().size != it.size }
+    val topesIlvl = if (completos && !repetido) {
+        escalones.map { it.first!! to it.second!! }
+    } else {
+        null
+    }
 
     val tope = topeTexto.filter { it.isDigit() }.toLongOrNull()
     val valido = texto.isNotBlank() && if (tipo == Objetos.EQUIPO) {
-        copiarDe.isNotBlank()
+        topesIlvl != null
     } else {
         tope != null && tope > 0
     }
@@ -1060,7 +1075,7 @@ private fun DialogoObjeto(
         onDismissRequest = alCerrar,
         title = { Text("Añadir objeto") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
                     value = texto,
                     onValueChange = { texto = it },
@@ -1082,46 +1097,40 @@ private fun DialogoObjeto(
                 }
                 Spacer(Modifier.height(10.dp))
                 if (tipo == Objetos.EQUIPO) {
-                    if (piezas.isEmpty()) {
-                        Text(
-                            text = "El catálogo descargado no tiene objetos de equipo de " +
-                                "los que copiar topes. Actualiza los datos primero.",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    } else {
-                        ExposedDropdownMenuBox(
-                            expanded = desplegado,
-                            onExpandedChange = { desplegado = !desplegado },
-                        ) {
+                    filas.forEachIndexed { i, fila ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             OutlinedTextField(
-                                value = copiarDe,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("copiar topes de") },
-                                trailingIcon = {
-                                    ExposedDropdownMenuDefaults.TrailingIcon(desplegado)
-                                },
+                                value = fila.ilvl,
+                                onValueChange = { fila.ilvl = it },
+                                label = { Text("ilvl") },
                                 singleLine = true,
-                                modifier = Modifier.menuAnchor(
-                                    MenuAnchorType.PrimaryNotEditable,
-                                ),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(0.4f),
                             )
-                            ExposedDropdownMenu(
-                                expanded = desplegado,
-                                onDismissRequest = { desplegado = false },
-                            ) {
-                                piezas.forEach { nombre ->
-                                    DropdownMenuItem(
-                                        text = { Text(nombre) },
-                                        onClick = {
-                                            copiarDe = nombre
-                                            desplegado = false
-                                        },
-                                    )
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedTextField(
+                                value = fila.oro,
+                                onValueChange = { fila.oro = it },
+                                label = { Text("tope, en oro") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(0.6f),
+                            )
+                            if (filas.size > 1) {
+                                IconButton(onClick = { filas.removeAt(i) }) {
+                                    Icon(Icons.Filled.Close, contentDescription = "Quitar ilvl")
                                 }
                             }
                         }
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    TextButton(onClick = { filas.add(FilaTope()) }) { Text("+ ilvl") }
+                    if (repetido) {
+                        Text(
+                            text = "Hay un ilvl repetido.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error,
+                        )
                     }
                 } else {
                     OutlinedTextField(
@@ -1146,7 +1155,7 @@ private fun DialogoObjeto(
                     alEnviar(
                         texto,
                         tipo,
-                        if (tipo == Objetos.EQUIPO) copiarDe else null,
+                        if (tipo == Objetos.EQUIPO) topesIlvl else null,
                         if (tipo == Objetos.PATRON) tope else null,
                     )
                 },
