@@ -15,9 +15,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Cambia el tope de un objeto que **ya** vigilas. Para anadir un
-        objeto nuevo, o un escalon de ilvl que todavia no esta en su
-        tabla, edita `config.yaml`.
+        Cambia el tope de un objeto que **ya** vigilas. Para empezar a
+        vigilar uno nuevo, usa la plantilla 'Anadir un objeto'. Para un
+        escalon de ilvl que no esta en su tabla, edita `config.yaml`.
 
   - type: dropdown
     id: objeto

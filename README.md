@@ -1288,10 +1288,11 @@ El token necesita dos permisos:
 | Permiso | Para que |
 |---|---|
 | `Contents: Read-only` | Leer tus subastas, el catalogo y los precios |
-| `Issues: Read and write` | Cambiar topes desde la app (ver 7.5) |
+| `Issues: Read and write` | Cambiar topes (ver 7.5) y anadir objetos (ver 7.6) desde la app |
 
-Con solo el primero la app funciona entera salvo el cambio de topes, que ni
-siquiera se ofrece: el tope sale como texto y no como boton.
+Con solo el primero la app funciona entera salvo cambiar topes y anadir
+objetos, que ni siquiera se ofrecen: el tope sale como texto y no como boton, y
+el `+` no aparece.
 
 ### 7.3 Se abre limpia, y siempre con datos de ahora
 
@@ -1414,6 +1415,102 @@ que regenerarlo:
 
 No hace falta acordarse: `tests/test_topes_form.py` falla mientras la plantilla
 no cuadre con `config.yaml`.
+
+---
+
+### 7.6 Anadir un objeto sin abrir `config.yaml`
+
+El vigilante no avisa de nada que no este en `items:`. Y eso se nota justo
+cuando peor viene: con un parche nuevo salen piezas y recetas que interesan
+desde el primer dia, y hasta ahora anadirlas era trabajo de PC.
+
+**Boton `+` de la app, pegas el enlace de Wowhead del objeto, y ya.** El boton
+solo sale con el token puesto (ver 7.2) y solo en el listado: dentro de un
+objeto no viene a cuento.
+
+Detras pasa lo mismo que con los topes: la app **no escribe `config.yaml`**,
+abre una issue y el workflow `.github/workflows/objeto.yml` es quien edita el
+fichero y lo commitea. El token del movil no necesita nada nuevo.
+
+El objeto **empieza a vigilarse en la pasada siguiente**, como mucho una hora, y
+a partir de ahi sale en la app con sus precios. Aqui no hay "pendiente" como en
+los topes: un objeto que todavia no esta no sale en la lista, y ensenarlo a
+medias enganaria mas que la ausencia.
+
+#### Que se escribe en el campo del objeto
+
+| Lo que escribes | Como se resuelve |
+|---|---|
+| `https://www.wowhead.com/es/item=258126/...` | por el `item=` del enlace |
+| `258126` | tal cual |
+| `Pattern: Arcanoweave Cord` | por busqueda, con el nombre exacto en ingles |
+
+Para algo recien salido, el enlace es el camino bueno: no depende de escribir
+bien un nombre en ingles ni se confunde entre dos objetos que se llamen igual.
+El nombre que acaba en `config.yaml` lo dice Blizzard, asi que queda escrito
+como en el juego. Un nombre con comillas dobles o una barra invertida se
+rechaza: `wowalerts/objetos.py` no podria volver a encontrarlo despues para
+cambiarle el tope, asi que ese se anade a mano.
+
+El id lo resuelve el workflow y no el movil porque las credenciales de Blizzard
+viven en los secretos de Actions: llevarlas dentro de la app seria repartirlas.
+
+#### Los dos tipos
+
+- **Equipo**: lleva tabla por ilvl, asi que hay que elegir **de que objeto
+  copiar los topes** --sin ninguno preseleccionado-- y se ajustan luego con el
+  boton de topes. La pieza nueva se escribe justo detras de aquella de la que
+  copia.
+- **Patron o receta**: lleva un precio unico, y sale con las dos banderas que
+  llevan tus recetas --sin avisos de undercut, pero reposteable con la tecla del
+  addon--, detras del ultimo objeto reposteable.
+
+Las **mascotas y las monturas** se siguen anadiendo a mano: las mascotas van por
+`pet_species_id` y las monturas son trampas para el error de otro, que se ponen
+muy de vez en cuando.
+
+#### Que hace falta la primera vez
+
+**Crea la etiqueta `objeto`** en el repositorio (Issues -> Labels -> New label),
+por lo mismo que la de `tope`: GitHub no aplica una etiqueta que no exista. El
+workflow mira tambien el prefijo `Objeto:` del titulo, asi que funciona igual sin
+ella, pero con la etiqueta las tienes juntas.
+
+#### Por que no se rompe `config.yaml`
+
+`wowalerts/objetos.py` edita el texto, sin pasar por PyYAML, por la misma razon
+que `wowalerts/topes.py`: un round-trip perderia todos los comentarios. Y la red
+de seguridad esta en `anadir_objeto.py`, que antes de dejar commitear comprueba:
+
+1. El resultado carga con `load_config()`.
+2. El objeto nuevo ha quedado con el id y los precios pedidos.
+3. **No ha aparecido ni desaparecido ningun otro objeto**: solo se suma el
+   nuevo.
+4. **Ningun objeto anterior ha cambiado.**
+
+Si algo falla, no escribe, no commitea, y te lo comenta en la issue --el
+comentario dice por que--, que se queda abierta para que corrijas y abras otra.
+Si el objeto era valido pero ha fallado algo despues --regenerar los ficheros o
+subir el commit--, el comentario empieza con "No se ha guardado nada": cierra la
+issue y reabrela para reintentar. Y si una issue se queda **sin comentario
+ninguno**, tambien: puede ser que `pip install` fallara, o que GitHub solo deje
+una ejecucion pendiente por grupo de concurrencia --el mismo que el workflow de
+topes--, y la tuya se haya quedado fuera.
+
+Ademas, el workflow **regenera los dos ficheros que dependen de `config.yaml`**
+--el desplegable de topes y `Vigilados.lua`--, que es justo lo que se olvida al
+anadir un objeto a mano. Para `Vigilados.lua` reutiliza la cache de ids que deja
+la pasada de cada hora --solo la lee, no la guarda--, asi no depende de buscar
+en Blizzard cada objeto vigilado.
+
+#### Lo que no hace
+
+- **Un objeto por issue.**
+- **No pone topes finos**: el equipo nace con los topes de otra pieza, y se
+  ajustan luego desde la app.
+- **No arregla una temporada nueva.** Si un parche cambia los ilvl o los bonus
+  ids, los avisos de equipo se callan sin dar error, y eso se arregla en
+  `config.yaml`: ver la seccion 2.
 
 ---
 
