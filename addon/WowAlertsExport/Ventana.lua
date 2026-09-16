@@ -10,10 +10,16 @@ local ANCHO = 360
 local ALTO_FILA = 34
 local ALTO_TITULO = 18
 local ALTO_MAXIMO = 560
--- Lo que ocupa la barra de progreso con su hueco. La lista empieza mas abajo
--- cuando se ve, y la ventana crece lo mismo.
+-- Lo que ocupan la barra de progreso y el boton de las que caducan, cada uno
+-- con su hueco. Van apilados bajo la cabecera, y la lista empieza mas abajo y
+-- la ventana crece lo que sumen los que se vean.
 local ALTO_BARRA = 14
 local HUECO_BARRA = 20
+local ALTO_BOTON = 20
+local HUECO_BOTON = 24
+-- El del siguiente paso es mas alto: en la Steam Deck se pulsa con el dedo.
+local ALTO_SIGUIENTE = 32
+local HUECO_SIGUIENTE = 36
 
 local COLORES = {
     adelantada = { 1, 0.29, 0.24, "ADELANTADAS" },
@@ -32,7 +38,7 @@ local FASES = {
     postear = { 0.25, 0.8, 0.35, "Reposteando" },
 }
 
-local marco, contenido, filas, cabecera, barra, scroll
+local marco, contenido, filas, cabecera, barra, botonCaducadas, botonSiguiente, scroll
 local ocultaAdrede = false
 
 -- Los nombres nuevos de estas dos viven en C_Item; se deja el viejo de
@@ -117,9 +123,51 @@ local function crearMarco()
     cabecera = marco:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     cabecera:SetPoint("TOPLEFT", marco, "TOPLEFT", 14, -30)
 
+    -- Lo mismo que la tecla de interaccion, para quien no tiene teclado (la
+    -- Steam Deck). El clic es una pulsacion de verdad, asi que vale para
+    -- cancelar y postear igual que la tecla.
+    botonSiguiente = CreateFrame("Button", nil, marco, "UIPanelButtonTemplate")
+    botonSiguiente:SetHeight(ALTO_SIGUIENTE)
+    botonSiguiente:SetScript("OnClick", function()
+        if WowAlertsReposteo and WowAlertsReposteo.Siguiente then
+            WowAlertsReposteo.Siguiente()
+        end
+    end)
+    botonSiguiente:Hide()
+
+    -- El boton de las que caducan y la barra se anclan al pintarse: segun
+    -- cuales se vean, van uno debajo del otro o solos pegados a la cabecera.
+    botonCaducadas = CreateFrame("Button", nil, marco, "UIPanelButtonTemplate")
+    botonCaducadas:SetHeight(ALTO_BOTON)
+    -- Cancelar es una funcion protegida, igual que en la X de cada fila: este
+    -- clic vale como cancelacion, pero solo como UNA. Por eso el boton no
+    -- recorre la lista: cancela la mas urgente y el numero baja al refrescar.
+    botonCaducadas:SetScript("OnClick", function()
+        if not WowAlertsReposteo or not WowAlertsReposteo.Caducadas then
+            return
+        end
+        local primera = WowAlertsReposteo.Caducadas()[1]
+        if not primera then
+            return
+        end
+        local motivo = WowAlertsReposteo.Cancelar(primera.auctionID)
+        if motivo then
+            print("|cff33ccffReposteo:|r no la he cancelado: " .. motivo)
+        end
+    end)
+    botonCaducadas:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:SetText("Cancelar la mas urgente")
+        GameTooltip:AddLine("Una por clic: el juego no deja encadenarlas.", 1, 1, 1)
+        GameTooltip:AddLine("Solo las vigiladas, para poder reponerlas.", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    botonCaducadas:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    botonCaducadas:Hide()
+
     barra = CreateFrame("StatusBar", nil, marco)
-    barra:SetPoint("TOPLEFT", marco, "TOPLEFT", 14, -46)
-    barra:SetPoint("TOPRIGHT", marco, "TOPRIGHT", -16, -46)
     barra:SetHeight(ALTO_BARRA)
     barra:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
     barra:SetMinMaxValues(0, 1)
@@ -265,14 +313,60 @@ local function pintarFila(indice, datos)
     f:Show()
 end
 
+-- Donde empieza lo que va apilado bajo la cabecera, mas lo que ya ocupe lo
+-- que se haya pintado antes.
+local function apilar(elemento, desplazamiento)
+    elemento:ClearAllPoints()
+    elemento:SetPoint("TOPLEFT", marco, "TOPLEFT", 14, -46 - desplazamiento)
+    elemento:SetPoint("TOPRIGHT", marco, "TOPRIGHT", -16, -46 - desplazamiento)
+end
+
+-- El boton que cancela lo que esta a punto de caducar, con cuantas quedan.
+-- Escondido si no hay ninguna: un boton en gris solo gastaria sitio.
+-- Devuelve lo que ocupa, como la barra.
+local function pintarBotonCaducadas(desplazamiento)
+    if not WowAlertsReposteo.Caducadas then
+        botonCaducadas:Hide()
+        return 0
+    end
+    local cuantas = #WowAlertsReposteo.Caducadas()
+    if cuantas == 0 then
+        botonCaducadas:Hide()
+        return 0
+    end
+    botonCaducadas:SetText(("Cancelar <8h (%d)"):format(cuantas))
+    apilar(botonCaducadas, desplazamiento)
+    botonCaducadas:Show()
+    return HUECO_BOTON
+end
+
+-- El boton del siguiente paso, con lo que hara al pulsarlo. Devuelve lo que
+-- ocupa, como la barra.
+local function pintarBotonSiguiente(desplazamiento)
+    if not WowAlertsReposteo.Siguiente or not WowAlertsReposteo.Estado then
+        botonSiguiente:Hide()
+        return 0
+    end
+    botonSiguiente:SetText(WowAlertsReposteo.Estado())
+    if not WowAlertsReposteo.SePuedePulsar or WowAlertsReposteo.SePuedePulsar() then
+        botonSiguiente:Enable()
+    else
+        botonSiguiente:Disable()
+    end
+    apilar(botonSiguiente, desplazamiento)
+    botonSiguiente:Show()
+    return HUECO_SIGUIENTE
+end
+
 -- Deja la barra contando lo que haya en marcha, o escondida si no hay nada.
 -- Devuelve lo que ocupa, para que la lista y la ventana se ajusten.
-local function pintarBarra(progreso)
+local function pintarBarra(progreso, desplazamiento)
     local fase = progreso and FASES[progreso.fase]
     if not fase or (progreso.total or 0) <= 0 then
         barra:Hide()
         return 0
     end
+    apilar(barra, desplazamiento)
     local hechos = math.min(progreso.hechos or 0, progreso.total)
     barra:SetStatusBarColor(fase[1], fase[2], fase[3])
     barra:SetValue(hechos / progreso.total)
@@ -337,9 +431,10 @@ function V.Refrescar()
     cabecera:SetText(("%s  -  %s puestas  -  |cffff4a3d%s adelantadas|r"):format(
         UnitName("player"), total, adelantadas))
 
-    local hueco = 0
+    local hueco = pintarBotonSiguiente(0)
+    hueco = hueco + pintarBotonCaducadas(hueco)
     if WowAlertsReposteo.Progreso then
-        hueco = pintarBarra(WowAlertsReposteo.Progreso())
+        hueco = hueco + pintarBarra(WowAlertsReposteo.Progreso(), hueco)
     end
     scroll:ClearAllPoints()
     scroll:SetPoint("TOPLEFT", marco, "TOPLEFT", 10, -48 - hueco)

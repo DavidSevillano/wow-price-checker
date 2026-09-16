@@ -1162,7 +1162,7 @@ local pulsadaEnVisita = false
 -- Subastas de la cola canceladas en esta visita a la casa, para el aviso.
 local canceladasEnVisita = 0
 
--- Sale en el chat y con un sonido, pero no en el centro de la pantalla: el
+-- Sale en el chat, sin sonido y no en el centro de la pantalla: el
 -- boton del addon ya dice como esta la cosa, y el aviso grande estorbaba.
 local function avisarFin()
     if not pulsadaEnVisita then
@@ -1178,9 +1178,6 @@ local function avisarFin()
         mensaje = ("Todas canceladas (%s). %s"):format(canceladasEnVisita, texto)
     end
     print("|cff33ccffReposteo:|r " .. mensaje)
-    if PlaySound and SOUNDKIT and SOUNDKIT.READY_CHECK then
-        PlaySound(SOUNDKIT.READY_CHECK)
-    end
 end
 
 -- Avisa en cuanto no queda nada que hacer en la casa, sin esperar a otra
@@ -1669,6 +1666,59 @@ function R.Subastas()
     return filas
 end
 
+-- ---------------------------------------------------------------------------
+--  Las que caducan pronto
+-- ---------------------------------------------------------------------------
+
+-- Lo que le tiene que quedar a una subasta para que merezca la pena cancelarla
+-- y volver a ponerla entera, en vez de dejar que expire y aparezca en el buzon.
+local SEGUNDOS_CADUCA = 8 * 3600
+
+-- Sin los segundos exactos solo valen las bandas que no dejan duda: corto
+-- (menos de 30 min) y medio (30 min - 2 h). Largo va de 2 a 12 h y podria
+-- tener de sobra, y cancelar cuesta el deposito: en la duda, no se cuenta.
+local BANDAS_CADUCA = { [0] = true, [1] = true }
+
+local function caduca(fila)
+    if fila.segundos and fila.segundos > 0 then
+        return fila.segundos < SEGUNDOS_CADUCA
+    end
+    return BANDAS_CADUCA[fila.banda] == true
+end
+
+-- Las tuyas que caducan pronto, de la mas urgente a la menos. La ventana
+-- cuenta esta lista para su boton y cancela la primera con R.Cancelar, igual
+-- que si pulsaras su X.
+--
+-- Solo lo vigilado y con precio de compra: es lo unico que el addon sabe
+-- volver a poner, y cancelar lo demas seria dejarlo tirado en el buzon. Lo que
+-- el juego no deja cancelar (una subasta con puja) tampoco cuenta, o el boton
+-- se atascaria siempre en la misma.
+function R.Caducadas()
+    local filas = {}
+    for _, fila in ipairs(R.Subastas()) do
+        if caduca(fila) and fila.grupo ~= "novigilada" and (fila.precio or 0) > 0
+            and not fila.cancelada
+            and (not C_AuctionHouse.CanCancelAuction
+                or C_AuctionHouse.CanCancelAuction(fila.auctionID)) then
+            filas[#filas + 1] = fila
+        end
+    end
+    table.sort(filas, function(a, b)
+        if (a.segundos or 0) ~= (b.segundos or 0) then
+            return (a.segundos or 0) < (b.segundos or 0)
+        end
+        return a.auctionID < b.auctionID
+    end)
+    return filas
+end
+
+-- Mientras busca no hay nada que hacer, salvo cancelar lo ya confirmado. Lo
+-- usan este boton y el de la ventana, que pulsa lo mismo.
+function R.SePuedePulsar()
+    return not (buscando() and not primeraPorCancelar())
+end
+
 local boton = nil
 
 local function colocarBoton(padre)
@@ -1714,7 +1764,7 @@ function R.refrescarPanel()
         return
     end
     boton:SetText(R.Estado())
-    if buscando() and not primeraPorCancelar() then
+    if not R.SePuedePulsar() then
         boton:Disable()
     else
         boton:Enable()

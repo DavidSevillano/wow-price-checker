@@ -732,7 +732,7 @@ precio reponerlo. Ojo, que cancelar cuesta el deposito.
 
 Puedes machacar la tecla sin mirar: las pulsaciones que llegan mientras el juego
 responde no hacen nada. En cuanto en esa ventana ya no queda nada que hacer, sin
-esperar a otra pulsacion, sale un aviso en el chat y con un sonido: `Todas
+esperar a otra pulsacion, sale un aviso en el chat: `Todas
 canceladas (N). Recoge lo devuelto en el buzon`, `Vuelve a la casa a postear` o
 `Nada que repostear`. Ese aviso espera a que pulses al menos una vez: abrir la
 casa para comprar no te suelta nada.

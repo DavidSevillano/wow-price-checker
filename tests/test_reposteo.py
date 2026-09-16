@@ -2038,7 +2038,7 @@ def test_la_version_del_toc_es_la_del_addon():
 
     en_toc = re.search(r"^## Version: (.+)$", toc, re.MULTILINE).group(1).strip()
     en_lua = re.search(r'^local ADDON_VERSION = "(.+)"$', lua, re.MULTILINE).group(1)
-    assert en_toc == en_lua == "1.22"
+    assert en_toc == en_lua == "1.23"
 
 
 # -- Lo que el juego confirma y lo que se repone por fuera --------------------
@@ -2926,7 +2926,7 @@ def test_avisa_en_cuanto_el_juego_confirma_la_ultima_cancelacion():
     assert "Recoge lo devuelto en el buzon" in avisos(lua)[0]
 
 
-def test_el_aviso_suena_pero_no_sale_en_el_centro_de_la_pantalla():
+def test_el_aviso_no_suena_ni_sale_en_el_centro_de_la_pantalla():
     """El boton del addon ya dice como esta la cosa: el aviso grande estorbaba."""
     lua = runtime()
     adelantadas(lua, 10)
@@ -2934,7 +2934,7 @@ def test_el_aviso_suena_pero_no_sale_en_el_centro_de_la_pantalla():
     lua.globals().DISPARAR("AUCTION_CANCELED", 10)
 
     assert pantalla(lua) == []
-    assert len(a_python(lua.globals().SONIDOS)) == 1
+    assert a_python(lua.globals().SONIDOS) == []
 
 
 def test_no_avisa_de_cancelado_todo_mientras_sigue_buscando():
@@ -3395,6 +3395,78 @@ def test_la_ventana_se_redibuja_con_el_boton():
 
     lua.globals().WowAlertsReposteo.refrescarPanel()
     assert lua.globals().REDIBUJOS == antes + 1
+
+
+# -- El boton de las que caducan pronto --------------------------------------
+
+
+def caducadas(lua):
+    return [f["auctionID"] for f in a_python(lua.globals().WowAlertsReposteo.Caducadas())]
+
+
+def test_las_que_caducan_salen_de_la_mas_urgente_a_la_menos():
+    lua = runtime(subastas=[
+        mia(10, 100_000, segundos=7 * 3600),
+        mia(12, 120_000, segundos=40 * 3600),
+        mia(14, 130_000, segundos=3600),
+    ])
+    abrir_casa(lua)
+
+    assert caducadas(lua) == [14, 10]
+
+
+def test_las_ocho_horas_justas_aun_no_caducan():
+    lua = runtime(subastas=[mia(10, 100_000, segundos=8 * 3600)])
+    abrir_casa(lua)
+
+    assert caducadas(lua) == []
+
+
+def test_no_cuenta_lo_que_el_addon_no_sabe_reponer():
+    """Sin vigilar no hay precio con el que volver a ponerla, y a solo puja no
+    hay precio de compra del que partir: el boton no las toca."""
+    lua = runtime(subastas=[
+        mia(10, 100_000, item_id=999, segundos=3600),
+        mia(12, 0, segundos=3600),
+        mia(14, 130_000, segundos=3600),
+    ])
+    abrir_casa(lua)
+
+    assert caducadas(lua) == [14]
+
+
+def test_la_ya_cancelada_deja_de_contar():
+    """El numero del boton baja con el clic, sin esperar a la lista nueva."""
+    lua = runtime(subastas=[mia(10, 100_000, segundos=3600), mia(12, 120_000, segundos=7200)])
+    abrir_casa(lua)
+    assert caducadas(lua) == [10, 12]
+
+    cancelar(lua, 10)
+    assert caducadas(lua) == [12]
+
+
+def test_no_cuenta_lo_que_el_juego_no_deja_cancelar():
+    """Una con puja no se puede cancelar: contarla dejaria el boton atascado
+    siempre en la misma."""
+    lua = runtime(subastas=[mia(10, 100_000, segundos=3600), mia(12, 120_000, segundos=3600)])
+    abrir_casa(lua)
+    lua.execute("C_AuctionHouse.CanCancelAuction = function(id) return id ~= 10 end")
+
+    assert caducadas(lua) == [12]
+
+
+def test_sin_los_segundos_solo_cuentan_las_bandas_que_no_dejan_duda():
+    """Corto (<30 min) y medio (30 min - 2 h) estan por debajo de las 8 h
+    seguro. Largo va de 2 a 12 h, y cancelar cuesta el deposito."""
+    lua = runtime(subastas=[
+        mia(10, 100_000, banda=0),
+        mia(12, 120_000, banda=1),
+        mia(14, 130_000, banda=2),
+        mia(16, 140_000, banda=3),
+    ])
+    abrir_casa(lua)
+
+    assert sorted(caducadas(lua)) == [10, 12]
 
 
 # ---------------------------------------------------------------------------
