@@ -3,8 +3,7 @@
 import pytest
 import yaml
 
-from wowalerts.objetos import ObjetoError, anadir_equipo, anadir_patron, tabla_de
-from wowalerts.topes import TopeError
+from wowalerts.objetos import ObjetoError, anadir_equipo, anadir_patron
 
 CONFIG = """\
 region: eu
@@ -37,115 +36,98 @@ bonus_ilvl_map:
   12843: 311
 """
 
+TOPES = {368: 20000, 376: 50000, 382: 150000}
 
-def test_la_tabla_sale_tal_cual_esta_escrita():
-    assert tabla_de(CONFIG, "Temple Delver's Mystic Helm") == (
-        "    max_price_by_ilvl:\n"
-        "      { 295: 9000, 298: 12000, 311: 90000 }\n"
-    )
-
-
-def test_una_tabla_de_varias_lineas_sale_entera():
-    assert tabla_de(CONFIG, "Greaves of the Noxious Depths") == (
-        "    max_price_by_ilvl:\n"
-        "      { 295: 6999, 298: 12000,\n"
-        "        311: 90000 }\n"
-    )
+BLOQUE_NUEVO = (
+    '  - name: "Venom Rite Mantle"\n'
+    "    item_id: 123456\n"
+    "    max_price_by_ilvl:\n"
+    "      { 368: 20000, 376: 50000, 382: 150000 }\n"
+)
 
 
-def test_un_objeto_de_precio_unico_no_tiene_tabla_que_copiar():
-    with pytest.raises(ObjetoError, match="precio unico"):
-        tabla_de(CONFIG, "Pattern: Arcanoweave Cord")
-
-
-def test_un_objeto_que_no_existe_se_explica():
-    with pytest.raises(TopeError, match="No encuentro"):
-        tabla_de(CONFIG, "Molten Helm")
-
-
-def test_un_comentario_que_menciona_max_price_by_ilvl_no_engana_a_tabla_de():
-    """La subcadena puede aparecer en un comentario sin ser la clave de verdad."""
-    texto = CONFIG.replace(
-        '  - name: "Pattern: Arcanoweave Cord"\n',
-        '  - name: "Pattern: Arcanoweave Cord"\n'
-        "    # ver max_price_by_ilvl { } en otra pieza\n",
-    )
-    with pytest.raises(ObjetoError, match="precio unico"):
-        tabla_de(texto, "Pattern: Arcanoweave Cord")
-
-
-def test_el_equipo_nuevo_va_detras_del_objeto_del_que_copia():
-    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, "Temple Delver's Mystic Helm")
+def test_el_equipo_nuevo_va_detras_de_la_ultima_pieza_de_equipo():
+    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, TOPES)
 
     assert nuevo == CONFIG.replace(
-        '  - name: "Greaves of the Noxious Depths"',
-        '  - name: "Venom Rite Mantle"\n'
-        "    item_id: 123456\n"
-        "    max_price_by_ilvl:\n"
-        "      { 295: 9000, 298: 12000, 311: 90000 }\n"
-        "\n"
-        '  - name: "Greaves of the Noxious Depths"',
+        '  - name: "Pattern: Arcanoweave Cord"',
+        BLOQUE_NUEVO + "\n" + '  - name: "Pattern: Arcanoweave Cord"',
     )
 
 
 def test_el_resto_del_fichero_no_se_toca():
-    """Lo unico que cambia es el bloque nuevo: comentarios y todo lo demas, igual."""
-    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, "Temple Delver's Mystic Helm")
+    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 123456, TOPES)
 
-    sin_lo_nuevo = nuevo.replace(
-        '  - name: "Venom Rite Mantle"\n'
-        "    item_id: 123456\n"
+    assert nuevo.replace(BLOQUE_NUEVO + "\n", "", 1) == CONFIG
+
+
+def test_los_escalones_salen_ordenados_y_en_lineas_de_cinco():
+    """Como las tablas que ya hay en config.yaml, y se leen igual con YAML."""
+    topes = {382: 7, 368: 1, 370: 2, 372: 3, 374: 4, 376: 5, 379: 6}
+    nuevo = anadir_equipo(CONFIG, "Venom Rite Mantle", 1, topes)
+
+    assert (
         "    max_price_by_ilvl:\n"
-        "      { 295: 9000, 298: 12000, 311: 90000 }\n"
-        "\n",
-        "",
+        "      { 368: 1, 370: 2, 372: 3, 374: 4, 376: 5,\n"
+        "        379: 6, 382: 7 }\n"
+    ) in nuevo
+    regla = next(
+        item for item in yaml.safe_load(nuevo)["items"]
+        if item["name"] == "Venom Rite Mantle"
     )
-    assert sin_lo_nuevo == CONFIG
+    assert regla["max_price_by_ilvl"] == topes
+
+
+def test_una_pieza_sin_escalones_se_rechaza():
+    with pytest.raises(ObjetoError, match="ilvl"):
+        anadir_equipo(CONFIG, "Venom Rite Mantle", 1, {})
+
+
+def test_el_equipo_no_se_mete_debajo_del_comentario_de_la_seccion_siguiente():
+    texto = CONFIG.replace(
+        '  - name: "Pattern: Arcanoweave Cord"',
+        "  # --- Patrones\n" + '  - name: "Pattern: Arcanoweave Cord"',
+    )
+    nuevo = anadir_equipo(texto, "Venom Rite Mantle", 123456, TOPES)
+
+    assert ("        311: 90000 }\n\n" + BLOQUE_NUEVO + "\n  # --- Patrones\n") in nuevo
+
+
+def test_sin_ninguna_pieza_de_equipo_va_detras_del_ultimo_objeto():
+    sin_equipo = (
+        "region: eu\n"
+        "\n"
+        "items:\n"
+        '  - name: "Wooly White Rhino"\n'
+        "    item_id: 54068\n"
+        "    max_price: 200000\n"
+        "\n"
+        "orden_personajes:\n"
+        "  - Adannor\n"
+    )
+    nuevo = anadir_equipo(sin_equipo, "Venom Rite Mantle", 123456, TOPES)
+
+    assert nuevo == sin_equipo.replace(
+        "\norden_personajes:", "\n" + BLOQUE_NUEVO + "\norden_personajes:"
+    )
 
 
 def test_un_nombre_con_comillas_dobles_se_rechaza():
     """topes.py no sabe buscar un nombre con comillas escapadas, asi que nunca
     se podria cambiar su tope despues. Mejor no dejarlo entrar."""
     with pytest.raises(ObjetoError, match="comillas dobles"):
-        anadir_equipo(CONFIG, 'Bolt of "Silk"', 1, "Temple Delver's Mystic Helm")
+        anadir_equipo(CONFIG, 'Bolt of "Silk"', 1, TOPES)
 
 
 def test_un_nombre_con_apostrofo_y_dos_puntos_se_lee_bien_con_yaml():
     """Un nombre normal, con los caracteres que dan problemas sin comillas,
     tiene que salir entrecomillado y el YAML resultante tiene que cargarlo tal
     cual se pidio."""
-    nuevo = anadir_equipo(CONFIG, "Pattern: Kael'thas's Cord", 1, "Temple Delver's Mystic Helm")
+    nuevo = anadir_equipo(CONFIG, "Pattern: Kael'thas's Cord", 1, TOPES)
 
     datos = yaml.safe_load(nuevo)
     nombres = [item["name"] for item in datos["items"]]
     assert "Pattern: Kael'thas's Cord" in nombres
-
-
-def test_copiar_de_un_objeto_que_no_existe_se_explica():
-    with pytest.raises(TopeError, match="No encuentro"):
-        anadir_equipo(CONFIG, "Venom Rite Mantle", 1, "Molten Helm")
-
-
-def test_el_comentario_que_abre_la_seccion_siguiente_se_queda_debajo():
-    """config.yaml tiene comentarios entre objetos que abren otra seccion
-    ('Monturas caras'). Son de lo de detras, asi que lo nuevo va delante."""
-    texto = CONFIG.replace(
-        '  - name: "Greaves of the Noxious Depths"',
-        "  # --- Piezas de la banda\n"
-        '  - name: "Greaves of the Noxious Depths"',
-    )
-    nuevo = anadir_equipo(texto, "Venom Rite Mantle", 123456, "Temple Delver's Mystic Helm")
-
-    assert (
-        "      { 295: 9000, 298: 12000, 311: 90000 }\n"
-        "\n"
-        '  - name: "Venom Rite Mantle"\n'
-        "    item_id: 123456\n"
-        "    max_price_by_ilvl:\n"
-        "      { 295: 9000, 298: 12000, 311: 90000 }\n"
-        "\n"
-        "  # --- Piezas de la banda\n"
-    ) in nuevo
 
 
 def test_el_patron_va_detras_del_ultimo_reposteable():

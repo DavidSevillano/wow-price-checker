@@ -4,9 +4,9 @@ No pasa por PyYAML, por lo mismo que topes.py: cargar y volcar devolveria un
 YAML equivalente pero reformateado y sin un solo comentario, y los comentarios
 de config.yaml son la mitad de su valor.
 
-Asi que se edita el texto: se copia la tabla del objeto del que quieres partir,
-se escribe el bloque nuevo detras, y el resto del fichero queda byte a byte
-identico.
+Asi que se edita el texto: se escribe el bloque nuevo --con la tabla pedida, o
+el precio del patron-- detras de los de su clase, y el resto del fichero queda
+byte a byte identico.
 
 La red de seguridad esta fuera, en anadir_objeto.py: recarga el resultado con
 load_config() y comprueba que no ha cambiado ningun objeto anterior antes de
@@ -16,57 +16,48 @@ dejar que se commitee.
 from __future__ import annotations
 
 import re
+from typing import Mapping
 
-from .topes import bloque_de
-
-__all__ = ["ObjetoError", "anadir_equipo", "anadir_patron", "tabla_de"]
+__all__ = ["ObjetoError", "anadir_equipo", "anadir_patron"]
 
 
 class ObjetoError(Exception):
     """No se puede anadir el objeto. El mensaje explica por que."""
 
 
-def tabla_de(texto: str, objeto: str) -> str:
-    """Las lineas de 'max_price_by_ilvl' de ese objeto, tal y como estan.
+def anadir_equipo(
+    texto: str, nombre: str, item_id: int, topes: Mapping[int, int]
+) -> str:
+    """config.yaml con una pieza nueva y su tabla de topes por ilvl.
 
-    Se copia el texto y no los numeros porque asi la tabla nueva sale con el
-    mismo formato que las demas, y el diff se lee.
-    """
-    inicio, fin = bloque_de(texto, objeto)
-    bloque = texto[inicio:fin]
-
-    # Anclado al principio de linea para que un comentario que solo mencione
-    # 'max_price_by_ilvl' --sin ser la clave de verdad-- no cuele.
-    clave_match = re.search(r"^[ \t]*max_price_by_ilvl:", bloque, re.MULTILINE)
-    if clave_match is None:
-        raise ObjetoError(
-            f"{objeto!r} lleva un precio unico y no tabla por ilvl, asi que no "
-            "hay topes que copiar. Elige una pieza de equipo."
-        )
-    clave = clave_match.start()
-
-    cierra = bloque.find("}", clave)
-    if cierra == -1:
-        raise ObjetoError(
-            f"No entiendo la tabla 'max_price_by_ilvl' de {objeto!r}. Tiene que "
-            "ir entre llaves, como { 295: 9000, 311: 90000 }."
-        )
-
-    principio = bloque.rfind("\n", 0, clave) + 1
-    final = bloque.find("\n", cierra)
-    return bloque[principio:] if final == -1 else bloque[principio:final + 1]
-
-
-def anadir_equipo(texto: str, nombre: str, item_id: int, copiar_de: str) -> str:
-    """config.yaml con una pieza nueva, con los topes de `copiar_de`.
-
-    Va justo detras del objeto del que copia para que las tablas iguales queden
-    juntas: asi se ve de un vistazo que dos piezas comparten precios.
+    Los ilvl los pone quien la anade: una pieza de temporada nueva sale a ilvl
+    que no tiene ninguna de las que ya vigilas, asi que copiar una tabla no
+    serviria. Va detras de la ultima pieza de equipo, para que el equipo siga
+    junto y delante de los patrones.
     """
     _rechazar_comillas(nombre)
-    tabla = tabla_de(texto, copiar_de)
-    bloque = f"  - name: {_cita(nombre)}\n    item_id: {item_id}\n{tabla}"
-    return _insertar(texto, _fin_del_contenido(texto, *bloque_de(texto, copiar_de)), bloque)
+    if not topes:
+        raise ObjetoError(
+            "Una pieza de equipo necesita al menos un ilvl con su tope."
+        )
+    bloque = (
+        f"  - name: {_cita(nombre)}\n"
+        f"    item_id: {item_id}\n"
+        "    max_price_by_ilvl:\n"
+        f"{_tabla_yaml(topes)}"
+    )
+    return _insertar(texto, _tras_el_ultimo(texto, _CON_TABLA), bloque)
+
+
+def _tabla_yaml(topes: Mapping[int, int]) -> str:
+    """{368: 20000, ...} -> '      { 368: 20000, ... }\\n'.
+
+    Ordenada por ilvl y partida en lineas de cinco escalones, que es como estan
+    escritas las tablas de config.yaml.
+    """
+    pares = [f"{ilvl}: {tope}" for ilvl, tope in sorted(topes.items())]
+    lineas = [", ".join(pares[i:i + 5]) for i in range(0, len(pares), 5)]
+    return "      { " + ",\n        ".join(lineas) + " }\n"
 
 
 def _cita(texto: str) -> str:
@@ -121,6 +112,10 @@ _APERTURA = re.compile(r"^[ \t]*-[ \t]+name:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
 
 _REPOSTEABLE = re.compile(r"^[ \t]*repostear:[ \t]*true[ \t]*(?:#.*)?$", re.MULTILINE)
 
+# La clave que tiene toda pieza de equipo, anclada al principio de linea para
+# que un comentario que la mencione no cuente.
+_CON_TABLA = re.compile(r"^[ \t]*max_price_by_ilvl:", re.MULTILINE)
+
 # La siguiente clave de primer nivel del YAML, como 'orden_personajes:'. No
 # casa con un comentario ni con una linea sangrada, que es lo que forma el
 # resto del bloque de un objeto.
@@ -142,14 +137,16 @@ def anadir_patron(texto: str, nombre: str, item_id: int, tope: int) -> str:
         "    avisar_undercut: false\n"
         "    repostear: true\n"
     )
-    return _insertar(texto, _tras_el_ultimo_reposteable(texto), bloque)
+    return _insertar(texto, _tras_el_ultimo(texto, _REPOSTEABLE), bloque)
 
 
-def _tras_el_ultimo_reposteable(texto: str) -> int:
-    """Donde acaba el ultimo objeto reposteable, o el ultimo de la lista.
+def _tras_el_ultimo(texto: str, patron: re.Pattern[str]) -> int:
+    """Donde acaba el ultimo objeto cuyo bloque casa con `patron`, o el ultimo
+    de la lista.
 
     Los patrones viven juntos en config.yaml, antes de las monturas y las
     mascotas, que son trampas para el error de otro y no cosas que repostees.
+    El equipo vive junto tambien, delante de los patrones.
 
     Trabaja con posiciones y no con nombres reconstruidos: una linea 'name:'
     con un comentario detras, o un nombre con comillas escapadas, no se puede
@@ -160,7 +157,7 @@ def _tras_el_ultimo_reposteable(texto: str) -> int:
         raise ObjetoError("No encuentro ningun objeto en 'items:' de config.yaml.")
 
     ultimo_bloque = None
-    ultimo_reposteable = None
+    ultimo_que_casa = None
     for i, apertura in enumerate(aperturas):
         siguiente_apertura = (
             aperturas[i + 1].start() if i + 1 < len(aperturas) else len(texto)
@@ -171,8 +168,8 @@ def _tras_el_ultimo_reposteable(texto: str) -> int:
             clave_siguiente.start() if clave_siguiente else len(texto),
         )
         ultimo_bloque = (apertura.start(), fin)
-        if _REPOSTEABLE.search(texto[apertura.start():fin]):
-            ultimo_reposteable = ultimo_bloque
+        if patron.search(texto[apertura.start():fin]):
+            ultimo_que_casa = ultimo_bloque
 
-    inicio, fin = ultimo_reposteable if ultimo_reposteable else ultimo_bloque
+    inicio, fin = ultimo_que_casa if ultimo_que_casa else ultimo_bloque
     return _fin_del_contenido(texto, inicio, fin)
