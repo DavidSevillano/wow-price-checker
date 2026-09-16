@@ -164,7 +164,7 @@ object Topes {
         }
     }
 
-    private fun abrirIssue(repo: String, token: String, cuerpo: String) {
+    internal fun abrirIssue(repo: String, token: String, cuerpo: String) {
         val conexion = (URL("https://api.github.com/repos/$repo/issues").openConnection()
             as HttpURLConnection).apply {
             requestMethod = "POST"
