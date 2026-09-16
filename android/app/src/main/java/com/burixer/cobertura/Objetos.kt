@@ -26,7 +26,7 @@ object Objetos {
     private const val SIN_RESPUESTA = "_No response_"
 
     /** Ningun ilvl real llega tan alto. Espeja _ILVL_MAXIMO en anadir_objeto.py. */
-    private const val ILVL_MAXIMO = 2000
+    const val ILVL_MAXIMO = 2000
 
     /**
      * Quita los saltos de linea del texto escrito a mano.

@@ -68,6 +68,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -1051,20 +1052,19 @@ private fun DialogoObjeto(
 
     // Las filas vacias del todo no cuentan; una a medias impide enviar.
     val escritas = filas.filter { it.ilvl.isNotBlank() || it.oro.isNotBlank() }
-    val escalones = escritas.map {
-        it.ilvl.filter(Char::isDigit).toIntOrNull() to it.oro.filter(Char::isDigit).toLongOrNull()
-    }
+    val escalones = escritas.map { it.ilvl.toIntOrNull() to it.oro.toLongOrNull() }
     val completos = escalones.isNotEmpty() && escalones.all { (ilvl, oro) ->
-        ilvl != null && ilvl > 0 && oro != null && oro > 0
+        ilvl != null && ilvl > 0 && ilvl <= Objetos.ILVL_MAXIMO && oro != null && oro > 0
     }
     val repetido = escalones.mapNotNull { it.first }.let { it.toSet().size != it.size }
+    val fueraDeRango = escalones.any { (ilvl, _) -> ilvl != null && ilvl > Objetos.ILVL_MAXIMO }
     val topesIlvl = if (completos && !repetido) {
         escalones.map { it.first!! to it.second!! }
     } else {
         null
     }
 
-    val tope = topeTexto.filter { it.isDigit() }.toLongOrNull()
+    val tope = topeTexto.toLongOrNull()
     val valido = texto.isNotBlank() && if (tipo == Objetos.EQUIPO) {
         topesIlvl != null
     } else {
@@ -1097,32 +1097,34 @@ private fun DialogoObjeto(
                 }
                 Spacer(Modifier.height(10.dp))
                 if (tipo == Objetos.EQUIPO) {
-                    filas.forEachIndexed { i, fila ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedTextField(
-                                value = fila.ilvl,
-                                onValueChange = { fila.ilvl = it },
-                                label = { Text("ilvl") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.weight(0.4f),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            OutlinedTextField(
-                                value = fila.oro,
-                                onValueChange = { fila.oro = it },
-                                label = { Text("tope, en oro") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                modifier = Modifier.weight(0.6f),
-                            )
-                            if (filas.size > 1) {
-                                IconButton(onClick = { filas.removeAt(i) }) {
-                                    Icon(Icons.Filled.Close, contentDescription = "Quitar ilvl")
+                    filas.forEach { fila ->
+                        key(fila) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    value = fila.ilvl,
+                                    onValueChange = { fila.ilvl = it.filter(Char::isDigit).take(4) },
+                                    label = { Text("ilvl") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.weight(0.4f),
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                OutlinedTextField(
+                                    value = fila.oro,
+                                    onValueChange = { fila.oro = it.filter(Char::isDigit) },
+                                    label = { Text("tope, en oro") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.weight(0.6f),
+                                )
+                                if (filas.size > 1) {
+                                    IconButton(onClick = { filas.remove(fila) }) {
+                                        Icon(Icons.Filled.Close, contentDescription = "Quitar ilvl")
+                                    }
                                 }
                             }
+                            Spacer(Modifier.height(6.dp))
                         }
-                        Spacer(Modifier.height(6.dp))
                     }
                     TextButton(onClick = { filas.add(FilaTope()) }) { Text("+ ilvl") }
                     if (repetido) {
@@ -1132,10 +1134,17 @@ private fun DialogoObjeto(
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
+                    if (fueraDeRango) {
+                        Text(
+                            text = "El ilvl máximo es ${Objetos.ILVL_MAXIMO}.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 } else {
                     OutlinedTextField(
                         value = topeTexto,
-                        onValueChange = { topeTexto = it },
+                        onValueChange = { topeTexto = it.filter(Char::isDigit) },
                         label = { Text("tope, en oro") },
                         singleLine = true,
                     )
