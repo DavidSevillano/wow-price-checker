@@ -1,0 +1,152 @@
+name: Anadir un objeto
+
+# Empezar a vigilar un objeto desde el movil, sin abrir config.yaml.
+#
+# Lo dispara una issue con la etiqueta 'objeto', que abren los dos caminos: la
+# app Wow Alerts y la plantilla 'Anadir un objeto'. Los dos generan el mismo
+# cuerpo, asi que aqui no hay ramas por origen.
+#
+# 'reopened' ademas de 'opened' para poder reintentar sin repetir el cambio
+# desde el movil.
+on:
+  issues:
+    types: [opened, reopened]
+
+# El mismo grupo que los topes: los dos workflows editan config.yaml, y a la vez
+# el segundo commitearia sobre una copia vieja.
+concurrency:
+  group: tope-config
+  cancel-in-progress: false
+
+jobs:
+  anadir:
+    # Se mira la etiqueta O el titulo: GitHub NO aplica una etiqueta de
+    # plantilla que no exista ya en el repositorio, y sin esto el workflow no se
+    # dispararia nunca, en silencio.
+    if: >-
+      (contains(github.event.issue.labels.*.name, 'objeto') ||
+       startsWith(github.event.issue.title, 'Objeto:')) &&
+      github.event.issue.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v7
+        with:
+          # Sin esto, checkout se planta en la punta de main de CUANDO SE ABRIO
+          # la issue, y dos cambios seguidos desde el movil se pisan.
+          ref: main
+
+      - name: Instalar Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Anadir el objeto
+        id: anadir
+        env:
+          # El cuerpo viaja por el entorno y NO interpolado dentro del script:
+          # es texto que escribe un formulario, y metido en un 'run:' seria una
+          # inyeccion de shell de manual.
+          CUERPO: ${{ github.event.issue.body }}
+          # Aqui si hacen falta, al reves que en el workflow de topes: el id del
+          # objeto lo resuelve la API de Blizzard.
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+        run: |
+          set +e
+          printf '%s' "$CUERPO" | python anadir_objeto.py > comentario.md
+          echo "codigo=$?" >> "$GITHUB_OUTPUT"
+          set -e
+          cat comentario.md
+
+      - name: Regenerar lo que depende de config.yaml
+        # Justo lo que se olvida al anadir un objeto a mano: el desplegable de
+        # topes lleva las opciones escritas dentro, y el addon necesita saber que
+        # objetos repostea. Los dos tienen un test que falla si se quedan atras.
+        if: steps.anadir.outputs.codigo == '0'
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+        run: |
+          python topes_form.py
+          python generar_vigilados.py
+
+      - name: Commitear los cambios
+        id: commit
+        if: steps.anadir.outputs.codigo == '0'
+        env:
+          # Por el entorno, como el cuerpo: el titulo tambien lo escribe quien
+          # abre la issue, y dentro del script seria inyeccion de shell.
+          TITULO: ${{ github.event.issue.title }}
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add config.yaml .github/ISSUE_TEMPLATE/tope.yml addon/WowAlertsExport/Vigilados.lua
+          if git diff --cached --quiet; then
+            echo "" >> comentario.md
+            echo "No ha quedado ningun cambio que commitear." >> comentario.md
+            exit 1
+          fi
+          # El titulo ya viene con el prefijo "Objeto:" desde la plantilla y
+          # desde la app, asi que anadirlo aqui lo duplicaria.
+          git commit -q -m "$TITULO"
+          # El volcado de subastas empuja a main por su cuenta y puede colarse
+          # entre el checkout y esto.
+          for intento in 1 2 3; do
+            git push -q && break
+            echo "Push rechazado (intento $intento). Rebaso y lo repito."
+            git pull -q --rebase origin main
+          done
+          git push -q
+          echo "" >> comentario.md
+          echo "Commit \`$(git rev-parse --short HEAD)\` en \`main\`." >> comentario.md
+
+      - name: Responder en la issue
+        # Tambien cuando ha fallado: el comentario es justamente lo que te dice
+        # por que, y sin el te quedas con una issue muda.
+        if: always() && steps.anadir.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUMERO: ${{ github.event.issue.number }}
+        run: |
+          # Si comentario.md ha quedado vacio o no existe --Python fallando
+          # antes de imprimir nada-- un comentario en blanco seria peor que uno
+          # generico.
+          if [ ! -s comentario.md ]; then
+            echo "❌ **No he anadido nada.** El script ha fallado sin explicar por que; mira el log del workflow." > comentario.md
+          fi
+          gh issue comment "$NUMERO" --body-file comentario.md
+          # Si ha ido mal, la issue se queda ABIERTA: es lo que te deja corregir
+          # sin volver a empezar. Tambien si el cambio se aplico pero no se pudo
+          # subir: cerrarla ahi diria que esta hecho cuando el objeto se perdio.
+          if [ "${{ steps.anadir.outputs.codigo }}" = "0" ] && [ "${{ steps.commit.outcome }}" = "success" ]; then
+            gh issue close "$NUMERO"
+          fi
+
+  rechazar:
+    # Una issue con la etiqueta pero abierta por otro. No deberia pasar en un
+    # repositorio privado, pero callarse seria peor que decirlo.
+    if: >-
+      (contains(github.event.issue.labels.*.name, 'objeto') ||
+       startsWith(github.event.issue.title, 'Objeto:')) &&
+      github.event.issue.user.login != github.repository_owner
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUMERO: ${{ github.event.issue.number }}
+        run: |
+          gh issue close "$NUMERO" --repo "$GITHUB_REPOSITORY" \
+            --comment "Solo el dueno del repositorio puede anadir objetos. No he tocado config.yaml."
