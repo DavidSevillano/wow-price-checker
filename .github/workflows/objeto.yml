@@ -12,14 +12,20 @@ on:
   issues:
     types: [opened, reopened]
 
-# El mismo grupo que los topes: los dos workflows editan config.yaml, y a la vez
-# el segundo commitearia sobre una copia vieja.
-concurrency:
-  group: tope-config
-  cancel-in-progress: false
-
 jobs:
   anadir:
+    # El mismo grupo que los topes: los dos workflows editan config.yaml, y a
+    # la vez el segundo commitearia sobre una copia vieja.
+    #
+    # A nivel de job, no de workflow: el group se une al CREAR la ejecucion,
+    # antes de evaluar el 'if' de abajo. A nivel de workflow, cualquier issue
+    # --tambien las que disparan el otro workflow, tope.yml-- entraria en este
+    # grupo aunque su job vaya a saltarse, y podria cancelar una ejecucion real
+    # pendiente ("higher priority waiting request"). A nivel de job, los jobs
+    # que se saltan no se unen al grupo.
+    concurrency:
+      group: tope-config
+      cancel-in-progress: false
     # Se mira la etiqueta O el titulo: GitHub NO aplica una etiqueta de
     # plantilla que no exista ya en el repositorio, y sin esto el workflow no se
     # dispararia nunca, en silencio.
@@ -51,6 +57,20 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
+      - name: Recuperar memoria de ids de Blizzard
+        # Sin esto, generar_vigilados.py --mas abajo-- no encuentra la cache
+        # de ids (.state/, que esta en .gitignore) y busca por nombre en
+        # Blizzard cada objeto vigilado que no tenga 'item_id' en config.yaml,
+        # asi que un solo fallo de busqueda bloquea la regeneracion entera.
+        # Reutiliza la cache que deja la pasada de cada hora (monitor.yml);
+        # esta ejecucion no la guarda, solo la lee.
+        uses: actions/cache/restore@v6
+        with:
+          path: .state
+          key: wow-alerts-state-${{ github.run_id }}
+          restore-keys: |
+            wow-alerts-state-
+
       - name: Anadir el objeto
         id: anadir
         env:
@@ -69,17 +89,24 @@ jobs:
           set -e
           cat comentario.md
 
-      - name: Regenerar lo que depende de config.yaml
+      - name: Regenerar el desplegable de topes
         # Justo lo que se olvida al anadir un objeto a mano: el desplegable de
-        # topes lleva las opciones escritas dentro, y el addon necesita saber que
-        # objetos repostea. Los dos tienen un test que falla si se quedan atras.
+        # topes lleva las opciones escritas dentro, y tiene un test que falla
+        # si se queda atras. No necesita credenciales de Blizzard.
+        id: topes_form
+        if: steps.anadir.outputs.codigo == '0'
+        run: python topes_form.py 2>&1 | tee -a regenerar.log
+
+      - name: Regenerar lo que vigila el addon
+        # El addon necesita saber que objetos repostea, y tambien tiene un
+        # test que falla si se queda atras. Este si resuelve ids contra
+        # Blizzard, de ahi las credenciales.
+        id: generar_vigilados
         if: steps.anadir.outputs.codigo == '0'
         env:
           BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
           BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
-        run: |
-          python topes_form.py
-          python generar_vigilados.py
+        run: python generar_vigilados.py 2>&1 | tee -a regenerar.log
 
       - name: Commitear los cambios
         id: commit
@@ -100,8 +127,8 @@ jobs:
           # El titulo ya viene con el prefijo "Objeto:" desde la plantilla y
           # desde la app, asi que anadirlo aqui lo duplicaria.
           git commit -q -m "$TITULO"
-          # El volcado de subastas empuja a main por su cuenta y puede colarse
-          # entre el checkout y esto.
+          # Otro push a main --un cambio de tope, o uno tuyo desde el PC--
+          # puede colarse entre el checkout y esto.
           for intento in 1 2 3; do
             git push -q && break
             echo "Push rechazado (intento $intento). Rebaso y lo repito."
@@ -118,6 +145,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NUMERO: ${{ github.event.issue.number }}
+          # Por el entorno y no interpolados dentro del run, igual que CUERPO y
+          # TITULO mas arriba: son valores que no ha escrito este script.
+          CODIGO: ${{ steps.anadir.outputs.codigo }}
+          COMMIT: ${{ steps.commit.outcome }}
         run: |
           # Si comentario.md ha quedado vacio o no existe --Python fallando
           # antes de imprimir nada-- un comentario en blanco seria peor que uno
@@ -125,11 +156,31 @@ jobs:
           if [ ! -s comentario.md ]; then
             echo "❌ **No he anadido nada.** El script ha fallado sin explicar por que; mira el log del workflow." > comentario.md
           fi
+          # anadir_objeto.py acerto (CODIGO=0), pero algo de despues ha fallado
+          # --regenerar los ficheros o subir el commit-- y sin esto el
+          # "Objeto anadido" que ya trae comentario.md se publicaria igual,
+          # dando por guardado lo que no se guardo.
+          if [ "$CODIGO" = "0" ] && [ "$COMMIT" != "success" ]; then
+            {
+              echo "❌ **No se ha guardado nada.** El objeto era valido, pero ha fallado despues (regenerar los ficheros o subir el commit). La issue se queda abierta: cierrala y reabrela para reintentar."
+              echo ""
+              cat comentario.md
+            } > comentario.tmp
+            mv comentario.tmp comentario.md
+            if [ -s regenerar.log ]; then
+              {
+                echo ""
+                echo '```'
+                tail -n 20 regenerar.log
+                echo '```'
+              } >> comentario.md
+            fi
+          fi
           gh issue comment "$NUMERO" --body-file comentario.md
           # Si ha ido mal, la issue se queda ABIERTA: es lo que te deja corregir
           # sin volver a empezar. Tambien si el cambio se aplico pero no se pudo
           # subir: cerrarla ahi diria que esta hecho cuando el objeto se perdio.
-          if [ "${{ steps.anadir.outputs.codigo }}" = "0" ] && [ "${{ steps.commit.outcome }}" = "success" ]; then
+          if [ "$CODIGO" = "0" ] && [ "$COMMIT" = "success" ]; then
             gh issue close "$NUMERO"
           fi
 

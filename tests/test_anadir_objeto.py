@@ -405,6 +405,8 @@ def test_la_plantilla_lleva_las_mismas_etiquetas():
     }
 
     assert etiquetas == {CAMPO_OBJETO, CAMPO_TIPO, CAMPO_COPIAR, CAMPO_TOPE}
+    # El prefijo del titulo es lo que mira objeto.yml para reconocer la issue.
+    assert plantilla["title"].startswith("Objeto:")
 
 
 def test_el_parser_entiende_las_opciones_del_desplegable():
