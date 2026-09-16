@@ -151,3 +151,46 @@ def parsear(cuerpo: str) -> Peticion:
             f"Un patron lleva precio unico: rellena {CAMPO_TOPE!r}."
         )
     return Peticion(objeto, PATRON, None, _entero(tope, CAMPO_TOPE))
+
+
+def resolver(client: BlizzardClient, peticion: Peticion) -> tuple[str, int]:
+    """El nombre en ingles y el id del objeto que pide la issue.
+
+    El movil no tiene credenciales de Blizzard: por eso el campo viaja como
+    texto y la traduccion a id se hace aqui, en Actions, que es donde estan los
+    secretos.
+    """
+    item_id = id_de(peticion.objeto)
+    if item_id is not None:
+        nombre = client.item_name(item_id)
+        if nombre is None:
+            raise ObjetoError(
+                f"Blizzard no conoce ningun objeto con id {item_id}. Comprueba "
+                "el enlace: el numero es el que va detras de 'item=' en Wowhead."
+            )
+        return nombre, item_id
+
+    nombre = peticion.objeto.strip()
+    item_id = client.search_item_id(nombre)
+    if item_id is None:
+        raise ObjetoError(
+            f"Blizzard no encuentra ningun objeto que se llame {nombre!r}. Tiene "
+            "que ser el nombre en ingles, igual que en el juego; si el objeto es "
+            "recien salido, pega mejor su enlace de Wowhead."
+        )
+    return nombre, item_id
+
+
+def comprobar_nuevo(config: Config, nombre: str, item_id: int) -> None:
+    """Que el objeto no estuviera vigilado ya, ni por nombre ni por id."""
+    for regla in config.items:
+        if regla.name.strip().lower() == nombre.strip().lower():
+            raise ObjetoError(
+                f"{regla.name!r} ya esta vigilado. Para cambiarle el tope usa el "
+                "boton de la app, o la plantilla 'Ajustar un tope'."
+            )
+        if regla.item_id is not None and regla.item_id == item_id:
+            raise ObjetoError(
+                f"El objeto {item_id} ya esta vigilado, con el nombre "
+                f"{regla.name!r}. Para cambiarle el tope usa el boton de la app."
+            )

@@ -2,7 +2,8 @@
 
 import pytest
 
-from anadir_objeto import EQUIPO, PATRON, Peticion, id_de, parsear
+from anadir_objeto import EQUIPO, PATRON, Peticion, comprobar_nuevo, id_de, parsear, resolver
+from wowalerts.config import ItemRule
 from wowalerts.objetos import ObjetoError
 
 # Lo que genera el formulario de GitHub, y lo que copia la app.
@@ -105,3 +106,59 @@ def test_el_id_sale_de_un_numero_suelto():
 
 def test_un_nombre_no_lleva_id_dentro():
     assert id_de("Pattern: Arcanoweave Cord") is None
+
+
+class ClienteFalso:
+    """Blizzard sin red: lo que sabe esta en los dos diccionarios."""
+
+    def __init__(self, por_id=None, por_nombre=None):
+        self.por_id = por_id or {}
+        self.por_nombre = por_nombre or {}
+
+    def item_name(self, item_id):
+        return self.por_id.get(item_id)
+
+    def search_item_id(self, nombre):
+        return self.por_nombre.get(nombre)
+
+
+def test_un_enlace_se_resuelve_por_id():
+    cliente = ClienteFalso(por_id={123456: "Venom Rite Mantle"})
+
+    assert resolver(cliente, parsear(EQUIPO_NUEVO)) == ("Venom Rite Mantle", 123456)
+
+
+def test_un_nombre_se_resuelve_por_busqueda():
+    cliente = ClienteFalso(por_nombre={"Pattern: Lo Que Sea": 999})
+
+    assert resolver(cliente, parsear(PATRON_NUEVO)) == ("Pattern: Lo Que Sea", 999)
+
+
+def test_un_id_que_blizzard_no_conoce():
+    with pytest.raises(ObjetoError, match="123456"):
+        resolver(ClienteFalso(), parsear(EQUIPO_NUEVO))
+
+
+def test_un_nombre_que_blizzard_no_encuentra():
+    with pytest.raises(ObjetoError, match="ingles"):
+        resolver(ClienteFalso(), parsear(PATRON_NUEVO))
+
+
+def test_un_objeto_ya_vigilado_por_nombre():
+    config = _config_con(ItemRule(name="Venom Rite Mantle", max_price=100))
+
+    with pytest.raises(ObjetoError, match="ya esta vigilado"):
+        comprobar_nuevo(config, "Venom Rite Mantle", 123456)
+
+
+def test_un_objeto_ya_vigilado_por_id():
+    config = _config_con(ItemRule(name="Otro nombre", max_price=100, item_id=123456))
+
+    with pytest.raises(ObjetoError, match="ya esta vigilado"):
+        comprobar_nuevo(config, "Venom Rite Mantle", 123456)
+
+
+def _config_con(*reglas):
+    from wowalerts.config import Config, Settings
+
+    return Config(region="eu", items=reglas, bonus_ilvl_map={}, settings=Settings())
