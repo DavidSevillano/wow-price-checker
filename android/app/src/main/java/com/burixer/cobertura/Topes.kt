@@ -182,9 +182,9 @@ object Topes {
             when (val codigo = conexion.responseCode) {
                 in 200..299 -> Unit
                 401, 403 -> throw IllegalStateException(
-                    "GitHub rechaza el token ($codigo). Para cambiar topes necesita " +
-                        "permiso de Issues: Read and write, que es distinto del de " +
-                        "lectura que basta para ver los datos."
+                    "GitHub rechaza el token ($codigo). Para cambiar topes o añadir " +
+                        "objetos necesita permiso de Issues: Read and write, que es " +
+                        "distinto del de lectura que basta para ver los datos."
                 )
                 404 -> throw IllegalStateException(
                     "GitHub no encuentra el repositorio $repo, o el token no llega a el."

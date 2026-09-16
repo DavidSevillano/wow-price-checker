@@ -354,7 +354,8 @@ private fun App() {
                     Objetos.enviar(context, objeto, tipo, copiarDe, tope)
                         .onSuccess {
                             avisos.showSnackbar(
-                                "Objeto enviado. Empieza a vigilarse en la pasada siguiente."
+                                "Objeto enviado. Si GitHub lo acepta, se vigila desde la " +
+                                    "pasada siguiente."
                             )
                         }
                         .onFailure { fallo ->
@@ -1044,7 +1045,7 @@ private fun DialogoObjeto(
 ) {
     var texto by remember { mutableStateOf("") }
     var tipo by remember { mutableStateOf(Objetos.EQUIPO) }
-    var copiarDe by remember { mutableStateOf(piezas.firstOrNull().orEmpty()) }
+    var copiarDe by remember { mutableStateOf("") }
     var desplegado by remember { mutableStateOf(false) }
     var topeTexto by remember { mutableStateOf("") }
 
@@ -1081,34 +1082,44 @@ private fun DialogoObjeto(
                 }
                 Spacer(Modifier.height(10.dp))
                 if (tipo == Objetos.EQUIPO) {
-                    ExposedDropdownMenuBox(
-                        expanded = desplegado,
-                        onExpandedChange = { desplegado = !desplegado },
-                    ) {
-                        OutlinedTextField(
-                            value = copiarDe,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("copiar topes de") },
-                            trailingIcon = {
-                                ExposedDropdownMenuDefaults.TrailingIcon(desplegado)
-                            },
-                            modifier = Modifier.menuAnchor(
-                                MenuAnchorType.PrimaryNotEditable,
-                            ),
+                    if (piezas.isEmpty()) {
+                        Text(
+                            text = "El catálogo descargado no tiene objetos de equipo de " +
+                                "los que copiar topes. Actualiza los datos primero.",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        ExposedDropdownMenu(
+                    } else {
+                        ExposedDropdownMenuBox(
                             expanded = desplegado,
-                            onDismissRequest = { desplegado = false },
+                            onExpandedChange = { desplegado = !desplegado },
                         ) {
-                            piezas.forEach { nombre ->
-                                DropdownMenuItem(
-                                    text = { Text(nombre) },
-                                    onClick = {
-                                        copiarDe = nombre
-                                        desplegado = false
-                                    },
-                                )
+                            OutlinedTextField(
+                                value = copiarDe,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("copiar topes de") },
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(desplegado)
+                                },
+                                singleLine = true,
+                                modifier = Modifier.menuAnchor(
+                                    MenuAnchorType.PrimaryNotEditable,
+                                ),
+                            )
+                            ExposedDropdownMenu(
+                                expanded = desplegado,
+                                onDismissRequest = { desplegado = false },
+                            ) {
+                                piezas.forEach { nombre ->
+                                    DropdownMenuItem(
+                                        text = { Text(nombre) },
+                                        onClick = {
+                                            copiarDe = nombre
+                                            desplegado = false
+                                        },
+                                    )
+                                }
                             }
                         }
                     }

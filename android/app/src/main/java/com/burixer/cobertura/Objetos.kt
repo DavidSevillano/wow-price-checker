@@ -26,6 +26,16 @@ object Objetos {
     private const val SIN_RESPUESTA = "_No response_"
 
     /**
+     * Quita los saltos de linea del texto escrito a mano.
+     *
+     * Si el usuario pega un enlace con un salto de linea de mas (o varias
+     * lineas), un salto suelto ahi partiria el bloque `### Objeto` en dos y el
+     * parser del otro lado leeria solo la primera linea.
+     */
+    private fun normalizado(objeto: String): String =
+        objeto.replace(Regex("\\s+"), " ").trim()
+
+    /**
      * El cuerpo de la issue.
      *
      * Tiene que salir identico al que genera el formulario de GitHub, que titula
@@ -35,7 +45,7 @@ object Objetos {
      */
     fun cuerpo(objeto: String, tipo: String, copiarDe: String?, tope: Long?): String =
         buildString {
-            append("### Objeto\n\n").append(objeto.trim()).append("\n\n")
+            append("### Objeto\n\n").append(normalizado(objeto)).append("\n\n")
             append("### Tipo\n\n").append(tipo).append("\n\n")
             append("### Copiar topes de\n\n")
                 .append(copiarDe ?: SIN_RESPUESTA).append("\n\n")
@@ -82,7 +92,7 @@ object Objetos {
         }
 
         val peticion = JSONObject()
-            .put("title", "Objeto: ${objeto.trim()}")
+            .put("title", "Objeto: ${normalizado(objeto)}")
             .put("body", cuerpo(objeto, tipo, copiarDe, tope))
             .put("labels", JSONArray().put("objeto"))
 
