@@ -430,3 +430,26 @@ items:
     config = load_config(write(tmp_path, texto))
 
     assert config.items[0].se_repostea is False
+
+
+def test_personajes_yaml_manda_sobre_config_yaml(tmp_path):
+    write(tmp_path, VALID + "orden_personajes:\n  - Publico\n")
+    write(tmp_path, "orden_personajes:\n  - Uno\n  - Dos\n", name="personajes.yaml")
+
+    config = load_config(tmp_path / "config.yaml")
+
+    assert config.orden_personajes == ("Uno", "Dos")
+
+
+def test_sin_personajes_yaml_vale_lo_de_config_yaml(tmp_path):
+    config = load_config(write(tmp_path, VALID + "orden_personajes:\n  - Publico\n"))
+
+    assert config.orden_personajes == ("Publico",)
+
+
+def test_personajes_yaml_sin_la_clave_se_explica(tmp_path):
+    write(tmp_path, VALID)
+    write(tmp_path, "- Uno\n", name="personajes.yaml")
+
+    with pytest.raises(ConfigError, match="orden_personajes"):
+        load_config(tmp_path / "config.yaml")

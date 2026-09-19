@@ -220,41 +220,11 @@ items:
 # ----------------------------------------------------------------------------
 #  ORDEN DE LOS AVISOS
 # ----------------------------------------------------------------------------
-#  En que orden quieres leer los avisos, por nombre de personaje. Es el orden
-#  en que los tienes en el selector, que no se puede deducir de ningun fichero:
-#  si lo reordenas arrastrando, ese orden vive en el servidor de Blizzard.
-#
-#  Los personajes que no aparezcan aqui salen detras, por cuenta y reino. Para
-#  cambiar el orden basta con mover lineas.
+#  En que orden quieres leer los avisos, por nombre de personaje, va en
+#  personajes.yaml y no aqui: este fichero es publico y los nombres de tus
+#  personajes no. Copia personajes.example.yaml a personajes.yaml y rellenalo;
+#  esta en .gitignore. En Actions lo trae el workflow del repositorio privado.
 # ----------------------------------------------------------------------------
-orden_personajes:
-  # --- WoW 3 · Grupo 1
-  - Adannor
-  - Dbarfel
-  - Adanlin
-  - Bbarral
-  # --- WoW 3 · Grupo 2
-  - Sbarkor
-  - Mbargor
-  - Bbarmar
-  - Bbarnor
-  # --- WoW 3 · Grupo 3
-  - Gbarbar
-  - Hbardan
-  - Obarfel
-  # --- WoW 2 · Grupo 1
-  - Mbarval
-  - Obarbar
-  - Dbardan
-  - Kbargor
-  # --- WoW 2 · Grupo 2
-  - Nbarbar
-  - Mbarlin
-  - Ebardan
-  - Adangor
-  # --- WoW 2 · Grupo 3
-  - Ebarmar
-  - Dbarmar
 
 # ----------------------------------------------------------------------------
 #  MAPA DE BONUS ID -> ILVL

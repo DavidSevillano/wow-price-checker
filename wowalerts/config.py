@@ -178,8 +178,28 @@ def load_config(path: str | Path) -> Config:
         items=_parse_items(raw.get("items")),
         bonus_ilvl_map=_parse_bonus_map(raw.get("bonus_ilvl_map") or {}),
         settings=_parse_settings(raw.get("settings") or {}),
-        orden_personajes=_parse_orden(raw.get("orden_personajes")),
+        orden_personajes=_parse_orden(_orden_privado(path, raw.get("orden_personajes"))),
     )
+
+
+# Los nombres de tus personajes no van en config.yaml, que es publico: viven en
+# este fichero, al lado, que esta en .gitignore. En Actions lo trae el workflow
+# del repositorio privado. Si existe, manda sobre lo que diga config.yaml.
+PERSONAJES = "personajes.yaml"
+
+
+def _orden_privado(config_path: Path, por_defecto: Any) -> Any:
+    """La lista de personajes.yaml si esta junto a config.yaml; si no, la otra."""
+    privado = config_path.with_name(PERSONAJES)
+    if not privado.is_file():
+        return por_defecto
+    try:
+        raw = yaml.safe_load(privado.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"{privado} no es YAML valido:\n{exc}") from exc
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{privado} deberia contener la clave 'orden_personajes'.")
+    return raw.get("orden_personajes")
 
 
 def _parse_orden(value: Any) -> tuple[str, ...]:
