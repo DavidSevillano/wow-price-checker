@@ -171,6 +171,13 @@ def git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
 # que fuera de main dejan tambien de contarse como trabajo del dia.
 RAMA_DATOS = "subastas"
 
+# Y no en este repositorio, sino en uno privado aparte: este es publico, y los
+# volcados dicen como se llaman tus personajes, que vendes y por cuanto. Se
+# configura una vez por maquina con
+#   git remote add privado https://github.com/<usuario>/wow-price-checker-privado.git
+# Sin ese remoto no se sube nada: caer en 'origin' publicaria justo lo que no.
+REMOTO_DATOS = "privado"
+
 # Con quien se firman. Un correo que no esta ligado a ninguna cuenta de GitHub,
 # para que no cuenten como contribucion ni aunque algun dia acaben en main.
 AUTOR_DATOS = ("volcado", "volcado@wow-alerts.local")
@@ -198,9 +205,15 @@ def _preparar_rama(raiz: Path, copia: Path, push: bool) -> int:
         git("checkout", "-q", "-B", RAMA_DATOS, cwd=copia)
         return EXIT_OK
 
-    url = git("remote", "get-url", "origin", cwd=raiz).stdout.strip()
+    url = git("remote", "get-url", REMOTO_DATOS, cwd=raiz).stdout.strip()
     if not url:
-        log.error("El repositorio no tiene remoto 'origin': no se donde subir.")
+        log.error(
+            "El repositorio no tiene el remoto %r, el del repositorio privado: "
+            "no subo nada. Anadelo con\n"
+            "  git remote add %s https://github.com/<usuario>/wow-price-checker-privado.git",
+            REMOTO_DATOS,
+            REMOTO_DATOS,
+        )
         return EXIT_ERROR
     if git("remote", "set-url", "origin", url, cwd=copia).returncode != 0:
         git("remote", "add", "origin", url, cwd=copia)

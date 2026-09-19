@@ -392,7 +392,7 @@ def test_la_rama_no_crece_por_muchas_pasadas_que_haya(tmp_path):
     """Un volcado son 100 KB reescritos enteros; con historial, el repositorio
     engordaria un par de MB al dia para siempre."""
     raiz = repo_de_trabajo(tmp_path)
-    git_en(raiz, "remote", "add", "origin", str(remoto_vacio(tmp_path)))
+    git_en(raiz, "remote", "add", "privado", str(remoto_vacio(tmp_path)))
 
     for vuelta in range(3):
         relativo = escribir_volcado(raiz, "pc", f'{{"vuelta": {vuelta}}}')
@@ -407,11 +407,11 @@ def test_no_borra_el_volcado_de_la_otra_maquina(tmp_path):
     bare = remoto_vacio(tmp_path)
 
     deck = repo_de_trabajo(tmp_path, "deck")
-    git_en(deck, "remote", "add", "origin", str(bare))
+    git_en(deck, "remote", "add", "privado", str(bare))
     sync.subir([escribir_volcado(deck, "deck", "de la deck")], push=True, raiz=deck)
 
     pc = repo_de_trabajo(tmp_path, "pc")
-    git_en(pc, "remote", "add", "origin", str(bare))
+    git_en(pc, "remote", "add", "privado", str(bare))
     sync.subir([escribir_volcado(pc, "pc", "del pc")], push=True, raiz=pc)
 
     salida = git_en(bare, "ls-tree", "-r", "--name-only", sync.RAMA_DATOS).stdout
@@ -423,7 +423,18 @@ def test_sin_red_no_publica_nada(tmp_path):
     """Publicar rehace la rama entera. Si no se puede mirar antes que hay en
     ella, empujar borraria el volcado de la otra maquina."""
     raiz = repo_de_trabajo(tmp_path)
-    git_en(raiz, "remote", "add", "origin", str(tmp_path / "no-existe.git"))
+    git_en(raiz, "remote", "add", "privado", str(tmp_path / "no-existe.git"))
     relativo = escribir_volcado(raiz, "pc", "algo")
 
     assert sync.subir([relativo], push=True, raiz=raiz) == sync.EXIT_ERROR
+
+
+def test_sin_el_remoto_privado_no_sube_al_publico(tmp_path):
+    """'origin' es el repositorio publico: los volcados nunca van ahi."""
+    raiz = repo_de_trabajo(tmp_path)
+    bare = remoto_vacio(tmp_path)
+    git_en(raiz, "remote", "add", "origin", str(bare))
+    relativo = escribir_volcado(raiz, "pc", "algo")
+
+    assert sync.subir([relativo], push=True, raiz=raiz) == sync.EXIT_ERROR
+    assert git_en(bare, "branch", "--list", sync.RAMA_DATOS).stdout.strip() == ""
