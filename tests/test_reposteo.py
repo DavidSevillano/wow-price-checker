@@ -437,7 +437,9 @@ def test_llamadas_tolera_un_argumento_nulo_en_medio():
 
 def test_el_toc_carga_los_ficheros_en_orden():
     # El orden no es capricho: cada fichero usa lo que deja el anterior.
-    # Vigilados.lua no depende de nadie. WowAlertsExport.lua lee
+    # Vigilados.lua no depende de nadie. Personajes.lua rellena la lista de
+    # personajes de WowAlertsVigilados, y no se sube a git: si falta, WoW se
+    # lo salta y la lista se queda vacia. WowAlertsExport.lua lee
     # WowAlertsVigilados. Reposteo.lua lee WowAlertsVigilados y
     # WowAlertsExportDB. Ventana.lua lee WowAlertsReposteo.Subastas(), asi
     # que tiene que ir el ultimo. Si añades un fichero nuevo, piensa que
@@ -445,7 +447,13 @@ def test_el_toc_carga_los_ficheros_en_orden():
     # sin mas.
     toc = (CARPETA / "WowAlertsExport.toc").read_text(encoding="utf-8")
     ficheros = [l.strip() for l in toc.splitlines() if l.strip() and not l.startswith("##")]
-    assert ficheros == ["Vigilados.lua", "WowAlertsExport.lua", "Reposteo.lua", "Ventana.lua"]
+    assert ficheros == [
+        "Vigilados.lua",
+        "Personajes.lua",
+        "WowAlertsExport.lua",
+        "Reposteo.lua",
+        "Ventana.lua",
+    ]
 
 
 # -- Ventana.lua: solo dibuja, no hay dobles que lo prueben de verdad --------

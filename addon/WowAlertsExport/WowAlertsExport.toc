@@ -6,6 +6,7 @@
 ## SavedVariables: WowAlertsExportDB
 
 Vigilados.lua
+Personajes.lua
 WowAlertsExport.lua
 Reposteo.lua
 Ventana.lua

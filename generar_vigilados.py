@@ -1,15 +1,19 @@
-"""Genera addon/WowAlertsExport/Vigilados.lua a partir de config.yaml.
+"""Genera los ficheros del addon a partir de config.yaml y personajes.yaml.
 
-    py generar_vigilados.py
+    py generar_vigilados.py                    # los dos ficheros
+    py generar_vigilados.py --solo-personajes  # sin credenciales de Blizzard
 
-El addon no puede leer config.yaml: WoW solo carga los ficheros Lua que lista
-el .toc. Este script le pasa lo que el reposteo necesita --que objetos
-repostear, que personajes son tuyos y con que duracion postear-- y el fichero
-se sube a git, porque en la Steam Deck no hay credenciales de Blizzard con las
-que resolver los ids.
+El addon no puede leer YAML: WoW solo carga los ficheros Lua que lista el .toc.
+Este script le pasa lo que el reposteo necesita en dos ficheros:
 
-Vuelve a ejecutarlo cada vez que cambies los objetos, orden_personajes o
-listing_hours. Un test falla si se te olvida.
+- Vigilados.lua: que objetos repostear y con que duracion postear. Se sube a
+  git, porque en la Steam Deck no hay credenciales de Blizzard con las que
+  resolver los ids.
+- Personajes.lua: que personajes son tuyos. NO se sube: el repositorio es
+  publico. Solo necesita personajes.yaml, asi que la Deck se lo genera sola.
+
+Vuelve a ejecutarlo cada vez que cambies los objetos, personajes.yaml o
+listing_hours. Un test falla si Vigilados.lua se queda atras.
 """
 
 from __future__ import annotations
@@ -82,8 +86,13 @@ def _cadena_lua(texto: str) -> str:
     return '"' + escapado + '"'
 
 
-def a_lua(objetos: Mapping[int, str], personajes: Sequence[str], duracion: int) -> str:
-    """El contenido de Vigilados.lua."""
+def a_lua(objetos: Mapping[int, str], duracion: int) -> str:
+    """El contenido de Vigilados.lua.
+
+    Con la lista de personajes vacia: la rellena Personajes.lua, que el .toc
+    carga justo despues. Sin ese fichero el addon sigue funcionando, solo que
+    no distingue tus otras cuentas de un rival.
+    """
     lineas = [
         "-- Generado por generar_vigilados.py a partir de config.yaml.",
         "-- No lo edites a mano: vuelve a ejecutar el script.",
@@ -93,11 +102,31 @@ def a_lua(objetos: Mapping[int, str], personajes: Sequence[str], duracion: int) 
     ]
     for item_id, nombre in sorted(objetos.items()):
         lineas.append(f"        [{item_id}] = {_cadena_lua(nombre)},")
-    lineas += ["    },", "    personajes = {"]
-    for nombre in personajes:
-        lineas.append(f"        {_cadena_lua(nombre)},")
-    lineas += ["    },", f"    duracion = {duracion},", "}"]
+    lineas += ["    },", "    personajes = {},", f"    duracion = {duracion},", "}"]
     return "\n".join(lineas) + "\n"
+
+
+def personajes_a_lua(personajes: Sequence[str]) -> str:
+    """El contenido de Personajes.lua."""
+    lineas = [
+        "-- Generado por generar_vigilados.py a partir de personajes.yaml.",
+        "-- No se sube a git. No lo edites a mano: vuelve a ejecutar el script.",
+        "",
+        "WowAlertsVigilados.personajes = {",
+    ]
+    for nombre in personajes:
+        lineas.append(f"    {_cadena_lua(nombre)},")
+    lineas.append("}")
+    return "\n".join(lineas) + "\n"
+
+
+def _escribir(salida: Path, texto: str) -> None:
+    if salida.is_file() and salida.read_text(encoding="utf-8") == texto:
+        log.info("%s ya estaba al dia.", salida.name)
+        return
+    # newline="\n": el mismo fichero byte a byte en Windows y en la Deck.
+    salida.write_text(texto, encoding="utf-8", newline="\n")
+    log.info("✅ Escrito %s.", salida)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -105,6 +134,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default=str(RAIZ / "config.yaml"))
     parser.add_argument("--state-dir", default=str(RAIZ / ".state"))
     parser.add_argument("--salida", default=str(DESTINO))
+    parser.add_argument(
+        "--solo-personajes",
+        action="store_true",
+        help="Escribe solo Personajes.lua, que no necesita credenciales de Blizzard.",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -116,6 +150,19 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         log.error("❌ %s", exc)
         return EXIT_ERROR
+
+    # Primero, y antes de hablar con Blizzard: es lo unico que hace falta en la
+    # Deck, y no debe depender de que alli haya credenciales.
+    salida = Path(args.salida)
+    if config.orden_personajes:
+        _escribir(salida.with_name("Personajes.lua"), personajes_a_lua(config.orden_personajes))
+    else:
+        log.warning(
+            "Sin personajes.yaml: el reposteo no distinguira tus otras cuentas de "
+            "un rival. Copia personajes.example.yaml a personajes.yaml."
+        )
+    if args.solo_personajes:
+        return EXIT_OK
 
     client = BlizzardClient(
         client_id=os.getenv("BLIZZARD_CLIENT_ID", ""),
@@ -143,15 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_ERROR
 
-    texto = a_lua(objetos, config.orden_personajes, duracion)
-    salida = Path(args.salida)
-    if salida.is_file() and salida.read_text(encoding="utf-8") == texto:
-        log.info("Vigilados.lua ya estaba al dia.")
-        return EXIT_OK
-
-    # newline="\n": el mismo fichero byte a byte en Windows y en la Deck.
-    salida.write_text(texto, encoding="utf-8", newline="\n")
-    log.info("✅ Escrito %s.", salida)
+    _escribir(salida, a_lua(objetos, duracion))
     return EXIT_OK
 
 

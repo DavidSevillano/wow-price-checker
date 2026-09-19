@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 import generar_vigilados
-from generar_vigilados import a_lua, duracion_de, objetos_a_repostear
+from generar_vigilados import a_lua, duracion_de, objetos_a_repostear, personajes_a_lua
 from wowalerts.blizzard import BlizzardAuthError
 from wowalerts.config import ConfigError, ItemRule, load_config
 
@@ -79,14 +79,33 @@ def test_las_mascotas_no_entran_en_objetos_a_repostear():
 def test_el_lua_generado_se_carga_y_escapa_las_comillas():
     lupa = pytest.importorskip("lupa")
     nombre = 'Grebas "raras"\ncon barra\\y salto'
-    texto = a_lua({271440: nombre}, ["Pepe"], 1)
+    texto = a_lua({271440: nombre}, 1)
 
     lua = lupa.LuaRuntime(unpack_returned_tuples=True)
     lua.execute(texto)
     vigilados = lua.globals().WowAlertsVigilados
     assert vigilados.objetos[271440] == nombre
-    assert vigilados.personajes[1] == "Pepe"
+    assert len(vigilados.personajes) == 0
     assert vigilados.duracion == 1
+
+
+def test_personajes_lua_rellena_la_lista_despues_de_vigilados():
+    """El .toc carga Personajes.lua justo detras de Vigilados.lua."""
+    lupa = pytest.importorskip("lupa")
+
+    lua = lupa.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(a_lua({271440: "Grebas"}, 1))
+    lua.execute(personajes_a_lua(["Pepe", 'Con "comillas"']))
+    vigilados = lua.globals().WowAlertsVigilados
+    assert list(vigilados.personajes.values()) == ["Pepe", 'Con "comillas"']
+
+
+def test_el_repositorio_no_lleva_nombres_de_personaje():
+    """Vigilados.lua se sube a git y el repositorio es publico."""
+    lupa = pytest.importorskip("lupa")
+    lua = lupa.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(GENERADO.read_text(encoding="utf-8"))
+    assert len(lua.globals().WowAlertsVigilados.personajes) == 0
 
 
 def test_el_fichero_del_repositorio_esta_al_dia_con_config_yaml():
@@ -104,7 +123,6 @@ def test_el_fichero_del_repositorio_esta_al_dia_con_config_yaml():
 
     esperados = {r.name for r in config.items if r.se_repostea and not r.es_mascota}
     assert set(vigilados.objetos.values()) == esperados
-    assert list(vigilados.personajes.values()) == list(config.orden_personajes)
     assert vigilados.duracion == duracion_de(config.settings.listing_hours)
 
 
@@ -192,3 +210,41 @@ def test_un_objeto_no_resuelto_no_escribe_nada_y_avisa(tmp_path, monkeypatch):
 
     assert codigo == generar_vigilados.EXIT_ERROR
     assert not salida.exists()
+
+
+def test_personajes_lua_sale_aunque_blizzard_falle(tmp_path, monkeypatch):
+    """En la Deck no hay credenciales: Personajes.lua no puede depender de ellas."""
+
+    def _falla(client, config, cache):
+        raise BlizzardAuthError("credenciales invalidas")
+
+    (tmp_path / "personajes.yaml").write_text(
+        "orden_personajes:\n  - Pepe\n", encoding="utf-8"
+    )
+    codigo, salida = _ejecutar_main(tmp_path, monkeypatch, CONFIG_MINIMO, _falla)
+
+    assert codigo == generar_vigilados.EXIT_ERROR
+    assert not salida.exists()
+    assert '"Pepe"' in (tmp_path / "Personajes.lua").read_text(encoding="utf-8")
+
+
+def test_solo_personajes_no_habla_con_blizzard(tmp_path, monkeypatch):
+    def _no_deberia_llamarse(client, config, cache):
+        raise AssertionError("--solo-personajes no resuelve ids")
+
+    monkeypatch.setattr(generar_vigilados, "load_dotenv", lambda *a, **k: None)
+    monkeypatch.setattr(generar_vigilados, "resolve_item_ids", _no_deberia_llamarse)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(CONFIG_MINIMO, encoding="utf-8")
+    (tmp_path / "personajes.yaml").write_text(
+        "orden_personajes:\n  - Pepe\n", encoding="utf-8"
+    )
+
+    codigo = generar_vigilados.main(
+        ["--config", str(config_path), "--salida", str(tmp_path / "Vigilados.lua"),
+         "--solo-personajes"]
+    )
+
+    assert codigo == generar_vigilados.EXIT_OK
+    assert not (tmp_path / "Vigilados.lua").exists()
+    assert (tmp_path / "Personajes.lua").is_file()

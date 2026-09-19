@@ -39,6 +39,15 @@ if [ -z "$wow_root" ]; then
     exit 1
 fi
 
+# Personajes.lua no esta en git: se genera aqui, desde personajes.yaml. Solo
+# necesita ese fichero, no credenciales de Blizzard.
+if [ -f "$proyecto/personajes.yaml" ]; then
+    (cd "$proyecto" && "$python" generar_vigilados.py --solo-personajes)
+else
+    echo "Aviso: sin personajes.yaml, el reposteo no distinguira tus otras" >&2
+    echo "cuentas de un rival. Copialo del PC a $proyecto/personajes.yaml." >&2
+fi
+
 destino="$wow_root/Interface/AddOns"
 mkdir -p "$destino"
 cp -rf "$origen" "$destino/"
