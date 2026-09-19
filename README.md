@@ -132,7 +132,8 @@ Cuando funcione en local:
 
 1. En el repositorio: `Settings > Secrets and variables > Actions > New
    repository secret`, y crea `DISCORD_WEBHOOK_URL`, `BLIZZARD_CLIENT_ID` y
-   `BLIZZARD_CLIENT_SECRET`.
+   `BLIZZARD_CLIENT_SECRET`. Si vigilas tus propias subastas, crea tambien
+   `PRIVADO_TOKEN` (apartado 3.0).
 2. Sube los cambios. El workflow `.github/workflows/monitor.yml` ya se ejecuta
    solo: su `schedule` corre cada 3 horas como red de seguridad, y la pasada de
    cada hora la dispara el cron externo del apartado 3.1, que es puntual.
@@ -149,6 +150,31 @@ La memoria de avisos se guarda entre ejecuciones con la cache de Actions, asi
 que no ensucia el repositorio con commits.
 
 ---
+
+## 3.0 El repositorio privado
+
+Este repositorio es publico. Lo que dice quien eres en el juego no puede estar
+en el, y vive en otro, privado, que se llama igual con `-privado` detras (por
+ejemplo `usuario/wow-price-checker-privado`):
+
+| Donde | Que | Quien lo escribe |
+|---|---|---|
+| `main` | `personajes.yaml`: el orden de tus personajes (5.7) | Tu, a mano |
+| rama `subastas` | Tus subastas, personajes y ventas | `sync_subastas.py` (5.3) |
+| rama `datos` | Catalogo y precios de la app | El workflow, cada pasada |
+
+El workflow lo lee y escribe con un token *fine-grained* guardado como secret
+`PRIVADO_TOKEN`, con acceso solo al repositorio privado y el permiso
+`Contents: Read and write`. Sin el secret, la pasada sigue avisando de chollos,
+pero no vigila tus subastas.
+
+Como los logs de Actions de un repositorio publico los lee cualquiera, el
+workflow registra cada nombre de personaje como valor enmascarado nada mas
+traerse los ficheros: en los logs salen como `***`.
+
+Y como cualquiera puede abrir un PR, en `Settings > Actions > General` conviene
+pedir aprobacion para los workflows de *todos* los colaboradores externos: un PR
+podria restaurar la cache de `.state` y sacarla por el log.
 
 ## 3.1 Disparo puntual desde un cron externo
 
@@ -487,6 +513,16 @@ Crea una tarea de Windows que cada 15 minutos mira si el volcado ha cambiado y,
 si si, lo sube a GitHub. A partir de ahi el vigilante funciona **aunque apagues
 el PC**.
 
+Lo sube al repositorio privado (apartado 3.0), que en cada maquina se da de alta
+una vez como remoto `privado`:
+
+```bash
+git remote add privado https://github.com/<usuario>/wow-price-checker-privado.git
+```
+
+Sin ese remoto no sube nada: caer en `origin`, que es publico, publicaria justo
+lo que no debe.
+
 Lo sube a la rama **`subastas`**, no a `main`. Son cuatro carpetas de JSON que
 se reescriben enteras cada vez que sales al selector de personajes --unas veinte
 veces por tarde de juego-- y en `main` tapaban el historial de verdad: de los
@@ -577,13 +613,16 @@ subastas de 100 g salian compitiendo contra listados de 10.000 g.
 
 ### 5.7 En que orden llegan los avisos
 
-Los avisos van agrupados por personaje, y el orden lo pones tu en `config.yaml`:
+Los avisos van agrupados por personaje, y el orden lo pones tu en
+`personajes.yaml`, al lado de `config.yaml`. No esta en git: copia
+`personajes.example.yaml` y pon tus nombres. En Actions lo trae el workflow del
+repositorio privado (apartado 3.0), asi que alli tiene que estar tambien.
 
 ```yaml
 orden_personajes:
-  # --- WoW 3 · Grupo 1
-  - Adannor
-  - Dbarfel
+  # --- WoW 1
+  - Personaje1
+  - Personaje2
   ...
 ```
 
@@ -788,14 +827,18 @@ Lo que conviene saber:
   sin recoger en el buzon, el addon da la cancelada por repuesta.
 - Si tienes mas de 50 cartas en el buzon, el juego solo deja ver las primeras:
   el addon no olvida nada mientras tanto. Recoge o borra correo para bajar de 50.
-- **Si cambias los objetos, `orden_personajes` o `listing_hours`**, regenera la
-  lista del addon y vuelve a copiarlo (apartado 5.1):
+- **Si cambias los objetos, `personajes.yaml` o `listing_hours`**, regenera los
+  ficheros del addon y vuelve a copiarlo (apartado 5.1):
 
 ```bash
 .venv\Scripts\python.exe generar_vigilados.py
 ```
 
-Un test falla si se te olvida.
+Escribe `Vigilados.lua` (los objetos, que se sube a git; un test falla si se te
+olvida) y `Personajes.lua` (tus personajes, que no se sube). En la Steam Deck,
+`instalar_addon_deck.sh` genera el segundo solo, con
+`generar_vigilados.py --solo-personajes`, que no necesita credenciales de
+Blizzard: basta con que alli este tambien `personajes.yaml`.
 
 ## 6. Avisos de venta
 
@@ -1233,7 +1276,7 @@ que buscas y por ausencia no se ve.
 
 ### 7.1 De donde saca los datos
 
-Lee tres cosas de este mismo repositorio, con un token tuyo:
+Lee tres cosas del repositorio privado (apartado 3.0), con un token tuyo:
 
 - `mis_subastas/*.json` y `mis_personajes/*.json`, de la rama **`subastas`**.
   Es lo que sube `sync_subastas.py` desde cada maquina.
@@ -1255,8 +1298,7 @@ Los **precios** son el minimo de cada objeto e ilvl en los veinte y pico reinos
 donde vendes. Es el dato que no sobrevive a la pasada: el volcado de un reino son
 decenas de miles de subastas que se miran y se tiran.
 
-Van a una rama aparte para no ensuciar el historial de `main` con un commit por
-hora. Cada reino lleva su marca de cuando se vio, que es lo que permite
+Van a una rama aparte del repositorio privado: dicen en que reinos vendes. Cada reino lleva su marca de cuando se vio, que es lo que permite
 distinguir en el movil entre "ahi no lo vende nadie" y "ese reino no se ha
 podido mirar esta hora": sin esa marca las dos cosas se verian igual.
 
@@ -1278,17 +1320,18 @@ En moviles Xiaomi, `gradlew installDebug` falla con
 `INSTALL_FAILED_USER_RESTRICTED` salvo que actives "Instalacion via USB" en las
 opciones de desarrollador. `adb install` funciona igual sin tocar nada.
 
-La primera vez la app arranca con una copia de tus subastas empotrada en el APK
+La primera vez la app arranca con unas subastas de ejemplo empotradas en el APK
 y lo dice en rojo, con la fecha, para que no te confies. En el engranaje se pega
-un token de GitHub *fine-grained* sobre este repositorio, y a partir de ahi se
-actualiza sola y guarda lo ultimo descargado para funcionar sin cobertura.
+un token de GitHub *fine-grained* sobre los dos repositorios, este y el privado,
+y a partir de ahi se actualiza sola y guarda lo ultimo descargado para funcionar
+sin cobertura.
 
 El token necesita dos permisos:
 
-| Permiso | Para que |
-|---|---|
-| `Contents: Read-only` | Leer tus subastas, el catalogo y los precios |
-| `Issues: Read and write` | Cambiar topes (ver 7.5) y anadir objetos (ver 7.6) desde la app |
+| Permiso | Repositorio | Para que |
+|---|---|---|
+| `Contents: Read-only` | El privado | Leer tus subastas, el catalogo y los precios |
+| `Issues: Read and write` | Este | Cambiar topes (ver 7.5) y anadir objetos (ver 7.6) desde la app |
 
 Con solo el primero la app funciona entera salvo cambiar topes y anadir
 objetos, que ni siquiera se ofrecen: el tope sale como texto y no como boton, y
