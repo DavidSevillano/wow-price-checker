@@ -137,9 +137,27 @@ private fun oroCorto(valor: Long): String = when {
 private fun oro(valor: Long): String =
     NumberFormat.getIntegerInstance(Locale("es", "ES")).format(valor) + " g"
 
-/** El sufijo comun de tus personajes no distingue nada, asi que estorba. */
+/**
+ * El sufijo que comparten todos los personajes de `orden`, si lo hay. No
+ * distingue nada, asi que estorba. Se deduce de los datos, y no va escrito
+ * aqui, porque este codigo es publico y los nombres no.
+ */
+internal fun sufijoComun(nombres: List<String>): String {
+    if (nombres.size < 2) return ""
+    var sufijo = nombres.first()
+    for (nombre in nombres.drop(1)) {
+        while (!nombre.endsWith(sufijo)) sufijo = sufijo.drop(1)
+    }
+    // Al menos tres letras, y nunca el nombre entero de ninguno.
+    return if (sufijo.length >= 3 && nombres.all { it.length > sufijo.length }) sufijo else ""
+}
+
+private var sufijoPersonajes = ""
+
 private fun mote(nombre: String): String =
-    if (nombre.length > 5 && nombre.lowercase().endsWith("sufij")) nombre.dropLast(5) else nombre
+    if (sufijoPersonajes.isNotEmpty() && nombre.length > sufijoPersonajes.length &&
+        nombre.endsWith(sufijoPersonajes)
+    ) nombre.dropLast(sufijoPersonajes.length) else nombre
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -167,6 +185,7 @@ private fun App() {
     val avisos = remember { SnackbarHostState() }
 
     var catalogo by remember { mutableStateOf(Repositorio.catalogo(context)) }
+    sufijoPersonajes = sufijoComun(catalogo.orden)
     var datos by remember { mutableStateOf(Repositorio.datos(context)) }
     var precios by remember { mutableStateOf(Repositorio.precios(context)) }
     var cargando by remember { mutableStateOf(false) }
