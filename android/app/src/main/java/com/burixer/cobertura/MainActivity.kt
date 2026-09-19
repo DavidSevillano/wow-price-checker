@@ -1193,10 +1193,10 @@ private fun DialogoAjustes(
         text = {
             Column {
                 Text(
-                    text = "Un token de acceso personal sobre el repositorio, que se " +
-                        "queda en este móvil. Necesita Contents: Read-only para ver " +
-                        "los datos, y Issues: Read and write para cambiar topes y " +
-                        "añadir objetos.",
+                    text = "Un token de acceso personal sobre los dos repositorios, que se " +
+                        "queda en este móvil. Necesita Contents: Read-only en el " +
+                        "privado (<repo>-privado) para ver los datos, e Issues: Read " +
+                        "and write en el público para cambiar topes y añadir objetos.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

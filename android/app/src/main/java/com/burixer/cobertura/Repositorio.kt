@@ -16,6 +16,10 @@ import java.net.URL
  * configurar nada. Con un token de GitHub se baja el volcado de verdad del repo
  * privado y lo guarda en disco, asi que a partir de ahi tambien funciona sin
  * cobertura.
+ *
+ * Son dos repositorios: el del codigo, que es publico y donde se abren las
+ * issues de topes y objetos, y el privado, `<ese>-privado`, con las subastas,
+ * los personajes y los datos. El token tiene que poder leer los dos.
  */
 object Repositorio {
 
@@ -45,6 +49,9 @@ object Repositorio {
 
     fun repo(context: Context): String =
         prefs(context).getString(CLAVE_REPO, REPO_POR_DEFECTO).orEmpty().ifBlank { REPO_POR_DEFECTO }
+
+    /** El repositorio de las subastas y los datos, que no pueden ser publicos. */
+    fun repoPrivado(context: Context): String = repo(context) + "-privado"
 
     fun descargadoEn(context: Context): Long = prefs(context).getLong(CLAVE_DESCARGA, 0L)
 
@@ -101,7 +108,7 @@ object Repositorio {
                 )
             )
         }
-        val repo = repo(context)
+        val repo = repoPrivado(context)
 
         runCatching {
             val subastas = JSONArray()
