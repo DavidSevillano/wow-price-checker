@@ -39,38 +39,75 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
-    # Solo para empujar los datos de la app a la rama 'datos'. El resto de la
-    # pasada no escribe nada en el repositorio.
+    # Este repositorio es publico y la pasada no escribe en el: lo que publica
+    # va al repositorio privado, con su propio token.
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v7
 
-      - name: Traer mis volcados
-        # Lo que sube sync_subastas.py desde el PC y la Steam Deck: que tienes
-        # a la venta, con que personajes y que has vendido. Vive en la rama
-        # 'subastas' y no en main porque se publica cada vez que sales al
-        # selector de personajes, y en main eran veinte commits por tarde.
+      - name: Traer lo privado
+        # Lo que no puede estar en un repositorio publico vive en uno privado,
+        # <este>-privado, y se lee con el secret PRIVADO_TOKEN:
         #
-        # Que la rama no exista todavia no es un error: es el dia uno, o una
-        # maquina que aun no ha volcado nada. Sin esos ficheros, la pasada se
-        # limita a no vigilar tus subastas, y los chollos siguen saliendo.
+        # - personajes.yaml, en su 'main': el orden de tus personajes.
+        # - la rama 'subastas': lo que sube sync_subastas.py desde el PC y la
+        #   Steam Deck, que tienes a la venta, con que personajes y que has
+        #   vendido.
+        #
+        # Que falte algo no es un error: es el dia uno, o un fork sin el
+        # secret. Sin esos ficheros la pasada se limita a no vigilar tus
+        # subastas, y los chollos siguen saliendo.
+        env:
+          PRIVADO_TOKEN: ${{ secrets.PRIVADO_TOKEN }}
         run: |
-          if ! git fetch -q --depth=1 origin subastas; then
-            echo "La rama 'subastas' aun no existe; sigo sin ellos."
+          if [ -z "$PRIVADO_TOKEN" ]; then
+            echo "::warning::Sin el secret PRIVADO_TOKEN: sigo sin tus subastas."
             exit 0
           fi
-          # Una por una: que falte la de ventas no es motivo para quedarse sin
-          # las subastas, y un checkout de varias rutas falla entero si una no
-          # esta en la rama.
-          for carpeta in mis_subastas mis_personajes mis_ventas; do
-            if git checkout -q FETCH_HEAD -- "$carpeta" 2>/dev/null; then
-              echo "Traido: $carpeta."
-            else
-              echo "Sin $carpeta en la rama todavia."
-            fi
+          privado="https://x-access-token:${PRIVADO_TOKEN}@github.com/${GITHUB_REPOSITORY}-privado.git"
+
+          if git fetch -q --depth=1 "$privado" main 2>/dev/null; then
+            git show FETCH_HEAD:personajes.yaml > personajes.yaml 2>/dev/null \
+              && echo "Traido: personajes.yaml." \
+              || { rm -f personajes.yaml; echo "Sin personajes.yaml todavia."; }
+          fi
+
+          if git fetch -q --depth=1 "$privado" subastas 2>/dev/null; then
+            # Una por una: que falte la de ventas no es motivo para quedarse
+            # sin las subastas, y un checkout de varias rutas falla entero si
+            # una no esta en la rama.
+            for carpeta in mis_subastas mis_personajes mis_ventas; do
+              if git checkout -q FETCH_HEAD -- "$carpeta" 2>/dev/null; then
+                echo "Traido: $carpeta."
+              else
+                echo "Sin $carpeta en la rama todavia."
+              fi
+            done
+          else
+            echo "La rama 'subastas' aun no existe; sigo sin ellos."
+          fi
+
+          # Los logs de un repositorio publico los lee cualquiera. Todo nombre
+          # de personaje tuyo sale como *** a partir de aqui, en todos los
+          # pasos. Sin PyYAML todavia: la lista es una linea '- Nombre' por
+          # personaje.
+          {
+            sed -n 's/^[[:space:]]*-[[:space:]]*\([^#[:space:]]\+\).*/\1/p' personajes.yaml 2>/dev/null || true
+            python3 - <<'PY' || true
+          import glob, json
+          for fichero in glob.glob("mis_personajes/*.json"):
+              try:
+                  with open(fichero, encoding="utf-8") as f:
+                      for personaje in json.load(f).get("characters", []):
+                          print(personaje.get("name", ""))
+              except (OSError, ValueError, AttributeError):
+                  pass
+          PY
+          } | sort -u | while read -r nombre; do
+            if [ -n "$nombre" ]; then echo "::add-mask::$nombre"; fi
           done
 
       - name: Instalar Python
@@ -124,8 +161,8 @@ jobs:
 
       - name: Publicar datos para la app
         # Los ficheros que lee la app del movil: el catalogo de objetos y el
-        # precio a batir en cada reino donde vendes. Se van a una rama aparte
-        # para no ensuciar el historial de main con un commit por hora.
+        # precio a batir en cada reino donde vendes. Van a la rama 'datos' del
+        # repositorio privado: dicen en que reinos vendes y con que personajes.
         #
         # Va despues de las alertas y con !cancelled() porque es lo menos
         # urgente de la pasada: si falla, las alertas ya han salido.
@@ -138,13 +175,17 @@ jobs:
       - name: Subir los datos de la app
         if: "!cancelled() && !inputs.dry_run && hashFiles('publicar/**') != ''"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRIVADO_TOKEN: ${{ secrets.PRIVADO_TOKEN }}
         run: |
+          if [ -z "$PRIVADO_TOKEN" ]; then
+            echo "::warning::Sin el secret PRIVADO_TOKEN: no publico los datos de la app."
+            exit 0
+          fi
           git config --global user.name 'github-actions[bot]'
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
           cd publicar
           git init -q
-          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote add origin "https://x-access-token:${PRIVADO_TOKEN}@github.com/${GITHUB_REPOSITORY}-privado.git"
           # La rama puede no existir todavia, y eso no es un error.
           git fetch --depth=1 origin datos 2>/dev/null || true
           git checkout -B datos
