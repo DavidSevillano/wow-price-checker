@@ -47,6 +47,13 @@ jobs:
     steps:
       - name: Descargar repositorio
         uses: actions/checkout@v7
+        with:
+          # Sin esto, checkout deja un 'http.https://github.com/.extraheader'
+          # con el token de ESTE repositorio, y ese encabezado pisa las
+          # credenciales de la URL del repositorio privado: git responde
+          # "Repository not found" aunque el token sea correcto. La pasada ya
+          # no escribe aqui, asi que esas credenciales no hacen falta.
+          persist-credentials: false
 
       - name: Traer lo privado
         # Lo que no puede estar en un repositorio publico vive en uno privado,
@@ -75,12 +82,6 @@ jobs:
           token=$(printf '%s' "$PRIVADO_TOKEN" | tr -d '[:space:]')
           echo "::add-mask::$token"
           privado="https://${token}@github.com/${GITHUB_REPOSITORY}-privado.git"
-
-          # TEMPORAL: diagnostico del token guardado en el secret.
-          echo "longitud del token: ${#token} (sin recortar: ${#PRIVADO_TOKEN})"
-          echo "empieza por: ${token:0:11}"
-          echo "GET /repos: $(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "https://api.github.com/repos/${GITHUB_REPOSITORY}-privado")"
-          echo "GET contents/personajes.yaml: $(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "https://api.github.com/repos/${GITHUB_REPOSITORY}-privado/contents/personajes.yaml")"
 
           # Que la rama no exista es normal el dia uno; que el token no llegue
           # al repositorio privado, no. Sin esto los dos casos se veian igual y
