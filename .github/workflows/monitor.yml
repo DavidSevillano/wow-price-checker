@@ -76,6 +76,12 @@ jobs:
           echo "::add-mask::$token"
           privado="https://${token}@github.com/${GITHUB_REPOSITORY}-privado.git"
 
+          # TEMPORAL: diagnostico del token guardado en el secret.
+          echo "longitud del token: ${#token} (sin recortar: ${#PRIVADO_TOKEN})"
+          echo "empieza por: ${token:0:11}"
+          echo "GET /repos: $(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "https://api.github.com/repos/${GITHUB_REPOSITORY}-privado")"
+          echo "GET contents/personajes.yaml: $(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "https://api.github.com/repos/${GITHUB_REPOSITORY}-privado/contents/personajes.yaml")"
+
           # Que la rama no exista es normal el dia uno; que el token no llegue
           # al repositorio privado, no. Sin esto los dos casos se veian igual y
           # se tardaba en dar con el fallo. El token va fuera del mensaje: en
