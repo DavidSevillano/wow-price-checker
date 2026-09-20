@@ -204,7 +204,10 @@ jobs:
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
           cd publicar
           git init -q
-          git remote add origin "https://x-access-token:${PRIVADO_TOKEN}@github.com/${GITHUB_REPOSITORY}-privado.git"
+          # El token de usuario, como en el paso que se trae lo privado.
+          token=$(printf '%s' "$PRIVADO_TOKEN" | tr -d '[:space:]')
+          echo "::add-mask::$token"
+          git remote add origin "https://${token}@github.com/${GITHUB_REPOSITORY}-privado.git"
           # La rama puede no existir todavia, y eso no es un error.
           git fetch --depth=1 origin datos 2>/dev/null || true
           git checkout -B datos
