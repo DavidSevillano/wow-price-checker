@@ -69,13 +69,25 @@ jobs:
           fi
           privado="https://x-access-token:${PRIVADO_TOKEN}@github.com/${GITHUB_REPOSITORY}-privado.git"
 
-          if git fetch -q --depth=1 "$privado" main 2>/dev/null; then
+          # Que la rama no exista es normal el dia uno; que el token no llegue
+          # al repositorio privado, no. Sin esto los dos casos se veian igual y
+          # se tardaba en dar con el fallo. El token va fuera del mensaje: en
+          # un repositorio publico los logs los lee cualquiera.
+          traer() {
+            if fallo=$(git fetch --depth=1 "$privado" "$1" 2>&1); then
+              return 0
+            fi
+            echo "::warning::No he podido leer la rama '$1' del repositorio privado: ${fallo//$PRIVADO_TOKEN/***}"
+            return 1
+          }
+
+          if traer main; then
             git show FETCH_HEAD:personajes.yaml > personajes.yaml 2>/dev/null \
               && echo "Traido: personajes.yaml." \
               || { rm -f personajes.yaml; echo "Sin personajes.yaml todavia."; }
           fi
 
-          if git fetch -q --depth=1 "$privado" subastas 2>/dev/null; then
+          if traer subastas; then
             # Una por una: que falte la de ventas no es motivo para quedarse
             # sin las subastas, y un checkout de varias rutas falla entero si
             # una no esta en la rama.
@@ -87,7 +99,7 @@ jobs:
               fi
             done
           else
-            echo "La rama 'subastas' aun no existe; sigo sin ellos."
+            echo "Sigo sin tus subastas."
           fi
 
           # Los logs de un repositorio publico los lee cualquiera. Todo nombre
