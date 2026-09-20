@@ -67,7 +67,14 @@ jobs:
             echo "::warning::Sin el secret PRIVADO_TOKEN: sigo sin tus subastas."
             exit 0
           fi
-          privado="https://x-access-token:${PRIVADO_TOKEN}@github.com/${GITHUB_REPOSITORY}-privado.git"
+          # El token va de usuario, que es como git admite un fine-grained; con
+          # 'x-access-token:token' --lo que usa una GitHub App-- GitHub
+          # responde "Repository not found", igual que si no hubiera permiso.
+          # El tr quita el salto de linea que se cuela al pegarlo en el secret,
+          # que rompe la URL.
+          token=$(printf '%s' "$PRIVADO_TOKEN" | tr -d '[:space:]')
+          echo "::add-mask::$token"
+          privado="https://${token}@github.com/${GITHUB_REPOSITORY}-privado.git"
 
           # Que la rama no exista es normal el dia uno; que el token no llegue
           # al repositorio privado, no. Sin esto los dos casos se veian igual y
@@ -77,7 +84,7 @@ jobs:
             if fallo=$(git fetch --depth=1 "$privado" "$1" 2>&1); then
               return 0
             fi
-            echo "::warning::No he podido leer la rama '$1' del repositorio privado: ${fallo//$PRIVADO_TOKEN/***}"
+            echo "::warning::No he podido leer la rama '$1' del repositorio privado: ${fallo//$token/***}"
             return 1
           }
 
