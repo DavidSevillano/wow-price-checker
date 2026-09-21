@@ -680,3 +680,167 @@ def test_el_repositorio_sale_del_entorno_en_actions(monkeypatch):
     embed = build_embed(make_deal(), REALMS[1305])
 
     assert "github.com/otro/repo/issues/new" in _campo(embed, "Ajustar tope")["value"]
+
+
+# -- El ilvl en las lineas de undercut y de venta ----------------------------
+
+
+def test_un_undercut_dice_el_ilvl_de_la_subasta():
+    """El mismo objeto se pone a muchos ilvl: sin el, no sabes cual cambiar."""
+    contenido = texto(build_undercut_messages([un_undercut(ilvl=308)])[0])
+    assert "Grebas de las profundidades nocivas (308)" in contenido
+
+
+def test_el_mismo_objeto_a_dos_ilvl_se_distingue():
+    contenido = texto(
+        build_undercut_messages(
+            [un_undercut(ilvl=298, auction_id=1), un_undercut(ilvl=311, auction_id=2)]
+        )[0]
+    )
+    assert "(298)" in contenido
+    assert "(311)" in contenido
+
+
+def test_un_empate_tambien_dice_el_ilvl():
+    contenido = texto(
+        build_undercut_messages([un_undercut(oro_mio=9000, oro_rival=9000, ilvl=295)])[0]
+    )
+    assert "(295) — te igualan" in contenido
+
+
+def test_una_receta_no_lleva_ilvl_en_el_undercut():
+    """Lo que no escala sale del juego con ilvl 1, y eso no dice nada."""
+    contenido = texto(
+        build_undercut_messages([un_undercut(objeto="Patrón: cordón", ilvl=1)])[0]
+    )
+    assert "Patrón: cordón —" in contenido
+    assert "(1)" not in contenido
+
+
+def test_una_receta_vendida_no_lleva_ilvl():
+    contenido = texto(build_venta_messages([una_venta(objeto="Patrón: cordón", ilvl=1)])[0])
+    assert "Patrón: cordón —" in contenido
+    assert "(1)" not in contenido
+
+
+def test_una_venta_de_equipo_si_lleva_el_ilvl():
+    contenido = texto(build_venta_messages([una_venta(ilvl=295)])[0])
+    assert "Grebas de las profundidades nocivas (295)" in contenido
+
+
+# -- Ritmo de envio ---------------------------------------------------------
+
+
+def test_si_discord_dice_que_no_quedan_envios_espera_antes_del_siguiente(requests_mock):
+    """Con muchos personajes adelantados salen rafagas de mensajes, y el webhook
+    solo admite unos pocos seguidos. Discord dice en cada respuesta cuantos
+    quedan: esperando cuando llega a cero no se llega a chocar con el 429."""
+    esperas = []
+    requests_mock.post(
+        WEBHOOK,
+        status_code=204,
+        headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset-After": "1.25"},
+    )
+    notifier = DiscordNotifier(WEBHOOK, session=requests.Session(), sleep=esperas.append)
+
+    notifier.send_warning("titulo", "texto")
+
+    assert esperas == [1.25]
+
+
+def test_si_quedan_envios_no_espera(requests_mock):
+    esperas = []
+    requests_mock.post(
+        WEBHOOK,
+        status_code=204,
+        headers={"X-RateLimit-Remaining": "3", "X-RateLimit-Reset-After": "1.25"},
+    )
+    notifier = DiscordNotifier(WEBHOOK, session=requests.Session(), sleep=esperas.append)
+
+    notifier.send_warning("titulo", "texto")
+
+    assert esperas == []
+
+
+def test_unas_cabeceras_raras_no_rompen_el_envio(requests_mock):
+    esperas = []
+    requests_mock.post(
+        WEBHOOK,
+        status_code=204,
+        headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset-After": "mucho"},
+    )
+    notifier = DiscordNotifier(WEBHOOK, session=requests.Session(), sleep=esperas.append)
+
+    notifier.send_warning("titulo", "texto")
+
+    assert esperas == []
+
+
+def test_esperar_al_limite_no_gasta_los_reintentos_de_los_fallos(requests_mock):
+    """Un 429 no es un fallo: Discord dice cuanto esperar y luego acepta. Con
+    los reintentos contados juntos, tres 429 seguidos tiraban un aviso bueno."""
+    requests_mock.post(
+        WEBHOOK,
+        [{"status_code": 429, "json": {"retry_after": 0.5}}] * 3 + [{"status_code": 204}],
+    )
+    notifier = DiscordNotifier(
+        WEBHOOK, session=requests.Session(), max_retries=2, sleep=lambda _: None
+    )
+
+    notifier.send_warning("titulo", "texto")
+
+    assert requests_mock.call_count == 4
+
+
+def test_un_429_eterno_acaba_rindiendose(requests_mock):
+    requests_mock.post(WEBHOOK, status_code=429, json={"retry_after": 0.5})
+    notifier = DiscordNotifier(WEBHOOK, session=requests.Session(), sleep=lambda _: None)
+
+    with pytest.raises(DiscordError, match="429"):
+        notifier.send_warning("titulo", "texto")
+
+
+# -- Lo que llega antes de un fallo cuenta como entregado --------------------
+
+
+def test_si_falla_a_mitad_el_error_dice_que_chollos_si_llegaron(requests_mock):
+    """Diez chollos por mensaje: si cae el segundo, los del primero ya estan en
+    Discord y hay que poder marcarlos, o la pasada siguiente los repite."""
+    requests_mock.post(WEBHOOK, [{"status_code": 204}, {"status_code": 500}])
+    notifier = DiscordNotifier(
+        WEBHOOK, session=requests.Session(), max_retries=0, sleep=lambda _: None
+    )
+    deals = [make_deal(auction_id=i) for i in range(15)]
+
+    with pytest.raises(DiscordError) as fallo:
+        notifier.send_deals(deals, REALMS)
+
+    assert fallo.value.entregados == deals[:10]
+
+
+def test_si_falla_a_mitad_el_error_dice_que_undercuts_si_llegaron(requests_mock):
+    requests_mock.post(WEBHOOK, [{"status_code": 204}, {"status_code": 500}])
+    notifier = DiscordNotifier(
+        WEBHOOK, session=requests.Session(), max_retries=0, sleep=lambda _: None
+    )
+    pepe = un_undercut(personaje="Pepe", auction_id=1)
+    ana = un_undercut(personaje="Ana", auction_id=2)
+    ya = un_undercut(personaje="Pepe", auction_id=3)
+
+    with pytest.raises(DiscordError) as fallo:
+        notifier.send_undercuts([pepe, ana], ya_avisados=[ya])
+
+    # Solo las nuevas: las ya avisadas ya constan, y la de Ana no llego.
+    assert fallo.value.entregados == [pepe]
+
+
+def test_si_falla_el_primero_no_se_entrego_nada(requests_mock):
+    requests_mock.post(WEBHOOK, status_code=500)
+    notifier = DiscordNotifier(
+        WEBHOOK, session=requests.Session(), max_retries=0, sleep=lambda _: None
+    )
+
+    with pytest.raises(DiscordError) as fallo:
+        notifier.send_deals([make_deal()], REALMS)
+
+    assert fallo.value.entregados == []

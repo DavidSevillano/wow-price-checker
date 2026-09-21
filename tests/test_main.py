@@ -1336,3 +1336,164 @@ def test_se_canta_la_venta_aunque_no_hayas_jugado_en_todo_un_listado(
         )
 
     assert "💰 1 venta(s)" in caplog.text
+
+
+# -- Un fallo en las ventas no hace repetir los undercuts --------------------
+
+UNDERCUT_WEBHOOK = "https://discord.com/api/webhooks/2/undercut"
+
+
+def test_si_fallan_las_ventas_los_undercuts_enviados_no_se_repiten(
+    entorno, tmp_path, monkeypatch
+):
+    """Los undercuts van por un webhook y las ventas por otro.
+
+    Si el de ventas fallaba, la excepcion subia antes de guardar la memoria de
+    undercuts: los que ya habian llegado a Discord no constaban como avisados, y
+    la pasada siguiente te los volvia a cantar.
+    """
+    from wowalerts.misubastas import MyAuction, escribir_snapshot
+
+    monkeypatch.setenv("DISCORD_UNDERCUT_WEBHOOK_URL", UNDERCUT_WEBHOOK)
+    monkeypatch.setenv("DISCORD_VENTAS_WEBHOOK_URL", VENTAS_WEBHOOK)
+    entorno["mock"].post(UNDERCUT_WEBHOOK, json={"id": "1"})
+    entorno["mock"].get(UNDERCUT_WEBHOOK, json={"id": "1"})
+    # La segunda pasada reescribe el panel que creo la primera.
+    entorno["mock"].patch(UNDERCUT_WEBHOOK + "/messages/1", status_code=200)
+    entorno["mock"].post(VENTAS_WEBHOOK, status_code=500)
+
+    ahora = datetime.now(timezone.utc)
+    subastas = tmp_path / "subastas"
+    subastas.mkdir()
+    (tmp_path / "roster").mkdir()
+    (tmp_path / "ventas").mkdir()
+    escribir_snapshot(
+        subastas / "deck.json",
+        [
+            MyAuction(
+                auction_id=99,
+                item_id=5000,
+                item_name="Greaves of the Noxious Depths",
+                ilvl=311,
+                buyout_copper=200_000 * 10_000,
+                quantity=1,
+                character="Pepe",
+                realm="Dun Modr",
+                realm_slug="dun-modr",
+                account=2,
+                bonus_ids=(12843,),
+                exported_at=int((ahora - timedelta(hours=6)).timestamp()),
+            )
+        ],
+    )
+    # Una venta por cantar, para que la pasada llegue a usar el webhook roto.
+    _sembrar_una_desaparecida(entorno["state"], ahora - timedelta(hours=1), ahora)
+
+    entorno["mock"].get(
+        f"{BASE}/realm/dun-modr",
+        json={"connected_realm": {"href": f"{BASE}/connected-realm/1305"}},
+    )
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={
+            "auctions": [
+                subasta(99, 200_000 * 10_000),
+                subasta(910, 150_000 * 10_000),  # te adelanta
+            ]
+        },
+    )
+
+    argumentos = (
+        "--undercut",
+        "--ventas",
+        "--mis-subastas",
+        str(subastas),
+        "--personajes",
+        str(tmp_path / "roster"),
+        "--mis-ventas",
+        str(tmp_path / "ventas"),
+    )
+    assert ejecutar(entorno, *argumentos) == cli.EXIT_CONFIG_ERROR
+
+    def avisos_de_undercut():
+        return [
+            r
+            for r in entorno["mock"].request_history
+            if r.method == "POST" and r.url == UNDERCUT_WEBHOOK
+        ]
+
+    assert len(avisos_de_undercut()) == 1
+
+    ejecutar(entorno, *argumentos)
+
+    assert len(avisos_de_undercut()) == 1
+
+
+def test_si_discord_cae_a_mitad_lo_que_ya_llego_no_se_repite(entorno):
+    """Quince chollos van en dos mensajes. Si cae el segundo, los diez del
+    primero ya estan en Discord: la pasada siguiente solo debe mandar los cinco
+    que faltan, no los quince otra vez."""
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": [subasta(i, 45_000 * 10_000) for i in range(1, 16)]},
+    )
+    entorno["mock"].post(WEBHOOK, [{"status_code": 204}] + [{"status_code": 500}] * 4)
+
+    assert ejecutar(entorno) == cli.EXIT_CONFIG_ERROR
+
+    entorno["mock"].post(WEBHOOK, status_code=204)
+    antes = len(mensajes_discord(entorno["mock"]))
+    assert ejecutar(entorno) == cli.EXIT_OK
+
+    nuevos = mensajes_discord(entorno["mock"])[antes:]
+    assert sum(len(m["embeds"]) for m in nuevos) == 5
+
+
+def test_si_cae_el_webhook_de_undercuts_la_pasada_falla_limpia(
+    entorno, tmp_path, monkeypatch, caplog
+):
+    """La rama que apunta lo entregado antes de dejar subir el error tiene que
+    llegar a dejar subir el error, y no reventar por el camino."""
+    Path(entorno["config"]).write_text(
+        CONFIG_SIN_UNDERCUT.replace("    avisar_undercut: false\n", ""),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DISCORD_UNDERCUT_WEBHOOK_URL", UNDERCUT_WEBHOOK)
+    entorno["mock"].post(UNDERCUT_WEBHOOK, status_code=500)
+    entorno["mock"].get(UNDERCUT_WEBHOOK, json={})
+
+    subastas_dir = tmp_path / "subastas"
+    subastas_dir.mkdir()
+    (subastas_dir / "pc.json").write_text(
+        json.dumps(
+            {"auctions": [_mia(900, 5000, "Grebas", 80_000, (12843,), 311)]}
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "roster").mkdir()
+    entorno["mock"].get(
+        f"{BASE}/realm/dun-modr",
+        json={"connected_realm": {"href": f"{BASE}/connected-realm/1305"}},
+    )
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={
+            "auctions": [
+                _ajena(900, 5000, 80_000, (12843,)),
+                _ajena(910, 5000, 70_000, (12843,)),
+            ]
+        },
+    )
+
+    with caplog.at_level(logging.INFO):
+        codigo = ejecutar(
+            entorno,
+            "--undercut",
+            "--mis-subastas",
+            str(subastas_dir),
+            "--personajes",
+            str(tmp_path / "roster"),
+        )
+
+    assert codigo == cli.EXIT_CONFIG_ERROR
+    assert "No he podido enviar el aviso a Discord" in caplog.text

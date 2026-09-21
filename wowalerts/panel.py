@@ -32,15 +32,16 @@ def _quien(subasta: MyAuction) -> str:
 
 def _linea(undercut: Undercut) -> str:
     """Una subasta adelantada, con el precio que hay que batir."""
-    from .notifier import format_gold
+    from .notifier import format_gold, nombre_con_ilvl
 
+    nombre = nombre_con_ilvl(undercut.mine.item_name, undercut.mine.ilvl)
     if undercut.tied:
         return (
-            f"⚠️ {undercut.mine.item_name} — te igualan a "
+            f"⚠️ {nombre} — te igualan a "
             f"{format_gold(undercut.rival_price_gold)} g"
         )
     return (
-        f"⚠️ {undercut.mine.item_name} — ~~{format_gold(undercut.my_price_gold)}~~ "
+        f"⚠️ {nombre} — ~~{format_gold(undercut.my_price_gold)}~~ "
         f"**{format_gold(undercut.rival_price_gold)} g**"
     )
 

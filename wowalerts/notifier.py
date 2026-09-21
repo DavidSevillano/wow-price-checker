@@ -38,6 +38,9 @@ COLOR_VENTA = 0xD4AF37       # oro viejo: dinero que entra
 MAX_EMBED_DESCRIPTION = 4096
 # Tope propio de lineas por mensaje: mas de esto ya no se lee de un vistazo.
 MAX_UNDERCUT_LINES_PER_MESSAGE = 20
+# Cuantas veces se espera lo que pide un 429 antes de rendirse. Es generoso a
+# proposito: esperar sale gratis y el aviso llega, rendirse lo pierde.
+MAX_ESPERAS_POR_LIMITE = 5
 # Los nombres de objeto de WoW no pasan de 60 caracteres, pero recortarlos
 # garantiza que una linea suelta nunca pueda desbordar un mensaje entero.
 MAX_ITEM_NAME = 100
@@ -57,7 +60,16 @@ TIME_LEFT_ES = {
 
 
 class DiscordError(Exception):
-    """No se ha podido entregar el aviso a Discord."""
+    """No se ha podido entregar el aviso a Discord.
+
+    `entregados` son los avisos que si llegaron antes del fallo: un envio va en
+    varios mensajes, y si cae el tercero los dos primeros ya estan en Discord.
+    Quien llama los marca como avisados para no repetirlos la pasada siguiente.
+    """
+
+    def __init__(self, mensaje: str, entregados: Sequence[Any] = ()) -> None:
+        super().__init__(mensaje)
+        self.entregados = list(entregados)
 
 
 def format_gold(amount: int) -> str:
@@ -274,11 +286,27 @@ def _en_orden(grupos: dict, orden: Mapping[tuple[str, str], int] | None) -> list
     )
 
 
-def _undercut_line(undercut: Undercut) -> str:
-    """Una linea del aviso: que objeto y a que precio hay que batir."""
-    nombre = undercut.mine.item_name
+def nombre_con_ilvl(item_name: str, ilvl: int | None) -> str:
+    """El nombre del objeto con su ilvl detras: 'Grebas (308)'.
+
+    El mismo objeto se pone a la venta a muchos ilvl a la vez, y cada uno es un
+    producto distinto con su propio precio: sin el ilvl no sabes cual de ellas
+    es la que te han adelantado o la que se ha vendido.
+
+    Lo que no escala (patrones, decoracion) sale del juego con ilvl 1, que no
+    dice nada, y va sin el; igual que en la ventana del addon.
+    """
+    nombre = item_name
     if len(nombre) > MAX_ITEM_NAME:
         nombre = nombre[: MAX_ITEM_NAME - 1].rstrip() + "…"
+    if ilvl and ilvl > 1:
+        nombre += f" ({ilvl})"
+    return nombre
+
+
+def _undercut_line(undercut: Undercut) -> str:
+    """Una linea del aviso: que objeto y a que precio hay que batir."""
+    nombre = nombre_con_ilvl(undercut.mine.item_name, undercut.mine.ilvl)
 
     if undercut.tied:
         return f"• {nombre} — te igualan a {format_gold(undercut.rival_price_gold)} g"
@@ -313,7 +341,22 @@ def build_undercut_messages(
     panel_url: str | None = None,
     orden: Mapping[tuple[str, str], int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Un mensaje por personaje, con sus subastas adelantadas en una tarjeta.
+    """Un mensaje por personaje; ver `_undercut_messages`."""
+    return [
+        mensaje
+        for mensaje, _ in _undercut_messages(undercuts, ya_avisados, panel_url, orden)
+    ]
+
+
+def _undercut_messages(
+    undercuts: Sequence[Undercut],
+    ya_avisados: Sequence[Undercut] = (),
+    panel_url: str | None = None,
+    orden: Mapping[tuple[str, str], int] | None = None,
+) -> list[tuple[dict[str, Any], list[Undercut]]]:
+    """Cada mensaje de undercut junto con los undercuts que lleva dentro.
+
+    Un mensaje por personaje, con sus subastas adelantadas en una tarjeta.
 
     Agrupar por personaje es lo que hace el aviso accionable: cada mensaje es
     un viaje al buzon de un personaje concreto, y dice todo lo que hay que
@@ -349,7 +392,7 @@ def build_undercut_messages(
         )
         por_personaje.setdefault(clave, []).append(undercut)
 
-    messages: list[dict[str, Any]] = []
+    messages: list[tuple[dict[str, Any], list[Undercut]]] = []
     for (character, _realm, account), suyas in _en_orden(por_personaje, orden):
         # El reino no hace falta: lo que necesitas para ir a cambiarlo es a que
         # cuenta entrar y con que personaje.
@@ -367,51 +410,47 @@ def build_undercut_messages(
         grupos = _repartir(
             [_undercut_line(u) for u in suyas], MAX_EMBED_DESCRIPTION
         )
+        # Cada linea es una subasta, en el mismo orden que `suyas`: asi se sabe
+        # que undercuts lleva cada trozo.
+        hechas = 0
         for indice, grupo in enumerate(grupos):
-            messages.append(
-                {
-                    "embeds": [
-                        {
-                            "title": titulo if indice == 0 else continuacion,
-                            "description": "\n".join(grupo),
-                            "color": COLOR_UNDERCUT,
-                        }
-                    ]
-                }
-            )
+            mensaje = {
+                "embeds": [
+                    {
+                        "title": titulo if indice == 0 else continuacion,
+                        "description": "\n".join(grupo),
+                        "color": COLOR_UNDERCUT,
+                    }
+                ]
+            }
+            messages.append((mensaje, suyas[hechas : hechas + len(grupo)]))
+            hechas += len(grupo)
 
     if panel_url and messages:
         # El panel es el unico sitio donde estan todas, incluidas las que hoy no
         # han entrado en ningun mensaje; el enlace va una sola vez, al final.
         enlace = f"\n[📊 Ver el panel con todas]({panel_url})"
-        ultimo = messages[-1]["embeds"][0]
+        ultimo = messages[-1][0]["embeds"][0]
         if len(ultimo["description"]) + len(enlace) <= MAX_EMBED_DESCRIPTION:
             ultimo["description"] += enlace
         else:
-            messages.append(
-                {
-                    "embeds": [
-                        {
-                            "title": "📊 Todas tus subastas",
-                            "description": enlace.strip(),
-                            "color": COLOR_UNDERCUT,
-                        }
-                    ]
-                }
-            )
+            mensaje = {
+                "embeds": [
+                    {
+                        "title": "📊 Todas tus subastas",
+                        "description": enlace.strip(),
+                        "color": COLOR_UNDERCUT,
+                    }
+                ]
+            }
+            messages.append((mensaje, []))
 
     return messages
 
 
 def _venta_line(venta: Venta) -> str:
     """Una linea del aviso: que se ha vendido y cuanto llega al buzon."""
-    nombre = venta.subasta.item_name
-    if len(nombre) > MAX_ITEM_NAME:
-        nombre = nombre[: MAX_ITEM_NAME - 1].rstrip() + "…"
-    if venta.subasta.ilvl:
-        # Con el mismo objeto puesto a varios ilvl, sin esto no sabes cual se ha
-        # vendido y la unica forma de comprobarlo es el buzon.
-        nombre += f" ({venta.subasta.ilvl})"
+    nombre = nombre_con_ilvl(venta.subasta.item_name, venta.subasta.ilvl)
     if venta.subasta.quantity > 1:
         nombre += f" ×{venta.subasta.quantity}"
     return f"• {nombre} — **{format_gold(venta.neto_gold)} g**"
@@ -517,9 +556,15 @@ class DiscordNotifier:
         messages = build_messages(
             deals, realm_names, icon_urls, snapshot_at, compradores
         )
-        for message in messages:
-            self._post(message)
-        return deals_to_send(deals)
+        shown = deals_to_send(deals)
+        for indice, message in enumerate(messages):
+            try:
+                self._post(message)
+            except DiscordError as exc:
+                # Van de diez en diez: lo de los mensajes anteriores ya llego.
+                exc.entregados = shown[: indice * MAX_EMBEDS_PER_MESSAGE]
+                raise
+        return shown
 
     def send_undercuts(
         self,
@@ -533,10 +578,19 @@ class DiscordNotifier:
         Como en `send_deals`, lo que no cabe no se marca como avisado y sale en
         la pasada siguiente.
         """
-        for message in build_undercut_messages(
+        # Por identidad y no por igualdad: una ya avisada puede ser igual a una
+        # nueva, y esa no es de las que hay que marcar ahora.
+        nuevas = {id(u) for u in undercuts}
+        entregados: list[Undercut] = []
+        for message, lleva in _undercut_messages(
             undercuts, ya_avisados, panel_url, orden
         ):
-            self._post(message)
+            try:
+                self._post(message)
+            except DiscordError as exc:
+                exc.entregados = entregados
+                raise
+            entregados.extend(u for u in lleva if id(u) in nuevas)
         return list(undercuts[:MAX_DEALS_PER_RUN])
 
     def send_ventas(
@@ -647,8 +701,13 @@ class DiscordNotifier:
 
     def _post(self, payload: Mapping[str, Any]) -> None:
         last_error = "motivo desconocido"
+        # Los 429 llevan su propia cuenta: no son un fallo, Discord dice cuanto
+        # esperar y despues acepta. Contados con los fallos de verdad, tres 429
+        # seguidos en una rafaga tiraban un aviso bueno.
+        fallos = 0
+        limitados = 0
 
-        for attempt in range(self.max_retries + 1):
+        while True:
             try:
                 response = self.session.post(
                     self.webhook_url, json=payload, timeout=self.timeout
@@ -657,10 +716,14 @@ class DiscordNotifier:
                 last_error = str(exc)
             else:
                 if response.status_code in (200, 204):
+                    self._respetar_ritmo(response)
                     return
                 if response.status_code == 429:
-                    self._sleep(_discord_retry_after(response))
                     last_error = "Discord esta limitando los envios (HTTP 429)"
+                    limitados += 1
+                    if limitados > MAX_ESPERAS_POR_LIMITE:
+                        break
+                    self._sleep(_discord_retry_after(response))
                     continue
                 if response.status_code in (401, 403, 404):
                     raise DiscordError(
@@ -670,10 +733,29 @@ class DiscordNotifier:
                     )
                 last_error = f"HTTP {response.status_code}: {response.text[:200]}"
 
-            if attempt < self.max_retries:
-                self._sleep(2**attempt)
+            if fallos >= self.max_retries:
+                break
+            self._sleep(2**fallos)
+            fallos += 1
 
         raise DiscordError(f"No he podido enviar el aviso a Discord: {last_error}")
+
+    def _respetar_ritmo(self, response: requests.Response) -> None:
+        """Espera si Discord dice que ya no quedan envios en esta ventana.
+
+        Un webhook admite unos pocos mensajes seguidos, y una pasada con muchos
+        personajes adelantados manda uno por personaje. Discord dice en cada
+        respuesta cuantos quedan y cuando se recargan: esperar al llegar a cero
+        es mas rapido y mas limpio que chocar con el 429 y reintentar.
+        """
+        if response.headers.get("X-RateLimit-Remaining") != "0":
+            return
+        try:
+            espera = float(response.headers.get("X-RateLimit-Reset-After", ""))
+        except ValueError:
+            return
+        if espera > 0:
+            self._sleep(min(espera, 60.0))
 
 
 def _discord_retry_after(response: requests.Response) -> float:

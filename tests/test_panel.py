@@ -202,3 +202,16 @@ def test_el_pie_lleva_los_totales():
 
     assert "2 venta(s) en total" in panel["embeds"][0]["footer"]["text"]
     assert "300 g netos" in panel["embeds"][0]["footer"]["text"]
+
+
+def test_el_panel_dice_el_ilvl_de_cada_adelantada():
+    """Con el mismo objeto a varios ilvl, el nombre solo no dice cual es."""
+    subasta = MyAuction(**{**mia().__dict__, "ilvl": 298})
+    panel = build_panel([subasta], [adelantada(subasta)])
+    assert "Grebas (298)" in texto(panel)
+
+
+def test_el_panel_no_pone_ilvl_a_las_recetas():
+    subasta = MyAuction(**{**mia(objeto="Patrón: cordón").__dict__, "ilvl": 1})
+    panel = build_panel([subasta], [adelantada(subasta)])
+    assert "Patrón: cordón —" in texto(panel)

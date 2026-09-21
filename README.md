@@ -686,7 +686,7 @@ Tus 57 subastas vigiladas van primeras. Nada que hacer.
 
 **Mbarval · WoW 2** — 6 vigiladas, todas primeras ✅
 **Dbardan · WoW 2** — 4 vigiladas, 1 adelantada
-⚠️ Zapatillas del culto siseante — ~~50.000~~ **30.000 g**
+⚠️ Zapatillas del culto siseante (308) — ~~50.000~~ **30.000 g**
 ```
 
 **Fijalo en el canal** (clic derecho en el mensaje > Fijar) y lo tienes a un
@@ -695,6 +695,9 @@ cuenta como estas.
 
 Los personajes que tienen algo que atender salen arriba, y de cada uno solo se
 detallan las subastas adelantadas: listar las que van bien seria ilegible.
+Cada una lleva su ilvl entre parentesis, igual que los avisos: tienes el mismo
+objeto puesto a varios ilvl y cada uno es un producto con su propio precio. Lo
+que no escala (patrones, decoracion) va sin el.
 
 No se publica uno nuevo cada hora: se reescribe el mismo, cuyo id se guarda en
 `.state/panel.json`. Si lo borras, la pasada siguiente crea otro.
@@ -1200,6 +1203,8 @@ ajusta en `config.yaml` con `ah_cut_pct`.
 El aviso lleva el **ilvl** entre parentesis. Con el mismo objeto puesto a 292,
 295, 298 y 305 a la vez, sin eso no se sabe cual se ha ido, y al mirar la casa
 de subastas ves otro del mismo nombre y crees que no se ha vendido nada.
+Los patrones y lo que no escala van sin el: el juego les da ilvl 1, que no dice
+nada.
 
 ### 6.8 El panel de ventas por reino
 

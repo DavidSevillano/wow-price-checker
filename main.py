@@ -712,20 +712,35 @@ def run_mis_subastas(
                 # lo que siga adelantado, que es lo unico accionable.
                 log.info("🔕 En silencio: no envio estos avisos todavia.")
             elif not dry_run:
-                enviados = notifier_undercut.send_undercuts(
-                    frescos, ya_avisados, panel_url, orden
-                )
+
+                def marcar(undercuts) -> None:
+                    for undercut in undercuts:
+                        notified.mark(
+                            notified.key(
+                                undercut.realm_id,
+                                undercut.mine.auction_id,
+                                undercut.rival_auction_id,
+                            )
+                        )
+
+                try:
+                    enviados = notifier_undercut.send_undercuts(
+                        frescos, ya_avisados, panel_url, orden
+                    )
+                except DiscordError as exc:
+                    # Los personajes cuyo mensaje si llego no se repiten.
+                    marcar(exc.entregados)
+                    notified.save()
+                    raise
                 log.info("📨 Enviados a Discord %s aviso(s).", len(enviados))
                 # Solo se marcan los que han salido de verdad, igual que con los
                 # chollos.
-                for undercut in enviados:
-                    notified.mark(
-                        notified.key(
-                            undercut.realm_id,
-                            undercut.mine.auction_id,
-                            undercut.rival_auction_id,
-                        )
-                    )
+                marcar(enviados)
+                # Se guarda ya, no al final de la pasada: las ventas van por
+                # otro webhook, y si ese fallara la excepcion subiria antes de
+                # llegar al final. Lo que ya ha salido constaria como no
+                # avisado y la pasada siguiente te lo volveria a cantar.
+                notified.save()
 
     if hacer_ventas:
         if not ventas:
@@ -1317,9 +1332,18 @@ def scan_once(
         else:
             icon_urls = resolve_icons(client, icon_cache, fresh)
             icon_cache.save()
-            sent = notifier.send_deals(
-                fresh, realm_names, icon_urls, result.snapshot_at, compradores
-            )
+            try:
+                sent = notifier.send_deals(
+                    fresh, realm_names, icon_urls, result.snapshot_at, compradores
+                )
+            except DiscordError as exc:
+                # Lo que llego antes del fallo ya esta en Discord: se apunta
+                # antes de dejar subir el error, o la pasada siguiente lo
+                # repetiria.
+                for deal in exc.entregados:
+                    notified.mark(deal.realm_id, deal.auction_id)
+                notified.save()
+                raise
             log.info("📨 Enviados a Discord %s chollo(s).", len(sent))
 
             # Solo se marcan los que han salido de verdad. Si algo no cupo en
