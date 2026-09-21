@@ -82,6 +82,23 @@ local function sinReino(nombre)
     return (tostring(nombre):match("^([^%-]+)"))
 end
 
+-- Tus personajes como conjunto, para mirar un nombre de un vistazo. Se
+-- rehace solo si cambia la lista: esto se consulta por cada fila de cada
+-- resultado de busqueda, y cada subasta tuya repasa todas las filas.
+local listaDeMios, mios = nil, {}
+
+local function misPersonajes()
+    local lista = vigilados().personajes
+    if lista ~= listaDeMios then
+        mios = {}
+        for _, nombre in ipairs(lista) do
+            mios[nombre] = true
+        end
+        listaDeMios = lista
+    end
+    return mios
+end
+
 -- Lo tuyo no compite contigo. El juego marca lo de este personaje y lo de su
 -- cuenta de juego, pero no lo de tus otras cuentas (WoW 2 y WoW 3): esos se
 -- reconocen por el nombre.
@@ -89,10 +106,7 @@ function R.esNuestro(resultado)
     if resultado.containsOwnerItem or resultado.containsAccountItem then
         return true
     end
-    local mios = {}
-    for _, nombre in ipairs(vigilados().personajes) do
-        mios[nombre] = true
-    end
+    local mios = misPersonajes()
     for _, dueno in ipairs(resultado.owners or {}) do
         if mios[sinReino(dueno)] then
             return true

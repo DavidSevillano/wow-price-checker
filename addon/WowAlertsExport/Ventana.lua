@@ -249,6 +249,47 @@ local function fila(indice)
         GameTooltip:Hide()
     end)
 
+    -- Al pasar el raton, la ficha del objeto, como en las bolsas: la ventana
+    -- solo cabe el nombre recortado, y con el mismo objeto puesto a varios
+    -- ilvl a veces hay que ver cual es. Solo tiene `datos` una fila de
+    -- subasta; los titulos de grupo la dejan a nil y no ensenan nada.
+    -- EnableMouse no se come la rueda: esa va aparte (EnableMouseWheel), asi
+    -- que la lista sigue desplazandose con el raton encima.
+    f:EnableMouse(true)
+    f:SetScript("OnEnter", function(self)
+        local datos = self.datos
+        if not datos then
+            return
+        end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        -- Una mascota trae un enlace battlepet:, que la ficha de objetos no
+        -- sabe pintar: esas van por el itemID. Y con pcall, porque una ficha
+        -- que falla no debe dejar un error en pantalla por pasar el raton.
+        local ok = false
+        if datos.enlace and datos.enlace:find("|Hitem:", 1, true) then
+            ok = pcall(GameTooltip.SetHyperlink, GameTooltip, datos.enlace)
+        end
+        if not ok and datos.itemID then
+            ok = pcall(GameTooltip.SetItemByID, GameTooltip, datos.itemID)
+        end
+        if not ok then
+            GameTooltip:SetText(self.nombre:GetText() or "")
+        end
+        if datos.grupo == "adelantada" then
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddDoubleLine("Tu precio", precioTexto(datos.precio), 1, 1, 1, 1, 1, 1)
+            if datos.igualada then
+                GameTooltip:AddLine("Un rival te iguala al mismo precio.", 1, 0.29, 0.24)
+            else
+                GameTooltip:AddDoubleLine("Rival", precioTexto(datos.precioRival), 1, 1, 1, 1, 0.29, 0.24)
+            end
+        end
+        GameTooltip:Show()
+    end)
+    f:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
     filas[indice] = f
     return f
 end
@@ -267,6 +308,7 @@ local function titulo(indice, texto, r, g, b)
     f.ilvl:SetText("")
     f.tiempo:SetText("")
     f.auctionID = nil
+    f.datos = nil
     f.boton:Hide()
     f:Show()
     return f
@@ -276,6 +318,7 @@ local function pintarFila(indice, datos)
     local f = fila(indice)
     f:SetHeight(ALTO_FILA)
     f.auctionID = datos.auctionID
+    f.datos = datos
     f.boton:Show()
     -- Apagada si ya se pidio cancelarla: un clic de mas no hace nada.
     f.boton:SetEnabled(not datos.cancelada)

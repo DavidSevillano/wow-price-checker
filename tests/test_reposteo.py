@@ -2046,7 +2046,7 @@ def test_la_version_del_toc_es_la_del_addon():
 
     en_toc = re.search(r"^## Version: (.+)$", toc, re.MULTILINE).group(1).strip()
     en_lua = re.search(r'^local ADDON_VERSION = "(.+)"$', lua, re.MULTILINE).group(1)
-    assert en_toc == en_lua == "1.23"
+    assert en_toc == en_lua == "1.24"
 
 
 # -- Lo que el juego confirma y lo que se repone por fuera --------------------

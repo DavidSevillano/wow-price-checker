@@ -772,6 +772,10 @@ cancelas asi entra en el ciclo normal: se recoge del buzon y se vuelve a poner.
 Lo que no esta vigilado se cancela y ya, porque de eso el addon no sabe a que
 precio reponerlo. Ojo, que cancelar cuesta el deposito.
 
+Al pasar el raton por una fila sale **la ficha del objeto**, como en las bolsas,
+y en las adelantadas debajo **tu precio y el del rival**. El nombre en la fila va
+recortado, y con el mismo objeto a varios ilvl a veces hace falta verlo entero.
+
 Puedes machacar la tecla sin mirar: las pulsaciones que llegan mientras el juego
 responde no hacen nada. En cuanto en esa ventana ya no queda nada que hacer, sin
 esperar a otra pulsacion, sale un aviso en el chat: `Todas
