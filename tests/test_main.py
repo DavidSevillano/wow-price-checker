@@ -1497,3 +1497,28 @@ def test_si_cae_el_webhook_de_undercuts_la_pasada_falla_limpia(
 
     assert codigo == cli.EXIT_CONFIG_ERROR
     assert "No he podido enviar el aviso a Discord" in caplog.text
+
+
+# -- Avisos pausados desde la app -------------------------------------------
+
+
+def test_con_los_avisos_pausados_no_se_envia_nada_y_al_reanudar_si(entorno, caplog):
+    """La pausa calla el envio como la ventana de silencio: el chollo no se
+    marca como avisado, asi que al reanudar sale si sigue vivo."""
+    entorno["mock"].get(
+        f"{BASE}/connected-realm/1305/auctions",
+        json={"auctions": [subasta(1, 45_000 * 10_000)]},
+    )
+    ruta = Path(entorno["config"])
+    ruta.write_text(CONFIG + "  avisos_pausados: true\n", encoding="utf-8")
+
+    with caplog.at_level(logging.INFO):
+        assert ejecutar(entorno) == cli.EXIT_OK
+
+    assert mensajes_discord(entorno["mock"]) == []
+    assert "pausados" in caplog.text
+
+    ruta.write_text(CONFIG + "  avisos_pausados: false\n", encoding="utf-8")
+    assert ejecutar(entorno) == cli.EXIT_OK
+
+    assert len(mensajes_discord(entorno["mock"])) == 1

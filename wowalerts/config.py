@@ -129,6 +129,10 @@ class Settings:
     # cuyo reloj va en UTC, asi que sin esto la ventana se desplazaria sola con
     # el cambio de hora.
     zona_horaria: str = "Europe/Madrid"
+    # Interruptor de la app: con los avisos pausados la pasada se comporta como
+    # en la ventana de silencio, pero sin hora de fin. Sigue vigilando y no
+    # envia nada; al reanudar sale lo que siga vivo.
+    avisos_pausados: bool = False
     # ------------------------------------------------------------------------
     #  Ventas de tus propias subastas
     # ------------------------------------------------------------------------
@@ -457,6 +461,7 @@ def _parse_settings(value: Any) -> Settings:
                 value.get("silencio_hasta", defaults.silencio_hasta)
             ),
             zona_horaria=str(value.get("zona_horaria", defaults.zona_horaria)),
+            avisos_pausados=value.get("avisos_pausados", defaults.avisos_pausados),
             ah_cut_pct=int(value.get("ah_cut_pct", defaults.ah_cut_pct)),
             listing_hours=int(value.get("listing_hours", defaults.listing_hours)),
         )
@@ -489,6 +494,14 @@ def _parse_settings(value: Any) -> Settings:
     if not 0 <= settings.espera_maxima_minutos <= 30:
         raise ConfigError(
             "'espera_maxima_minutos' va entre 0 (desactivado) y 30."
+        )
+    # Sin convertir con bool(): un "false" entre comillas es una cadena no
+    # vacia, y bool() lo daria por verdadero, pausando justo al pedir lo
+    # contrario.
+    if not isinstance(settings.avisos_pausados, bool):
+        raise ConfigError(
+            "'avisos_pausados' va sin comillas: true o false "
+            f"(vale {settings.avisos_pausados!r})."
         )
     for campo in ("silencio_desde", "silencio_hasta"):
         hora = getattr(settings, campo)

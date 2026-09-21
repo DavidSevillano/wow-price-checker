@@ -148,6 +148,13 @@ object Repositorio {
                     .onSuccess { File(context.filesDir, nombre).writeText(it) }
             }
 
+            // Si los avisos estan pausados lo dice config.yaml, en main. Se lee
+            // de ahi y no del catalogo porque el catalogo tarda hasta una hora
+            // en regenerarse, y el interruptor tiene que confirmarse en cuanto
+            // el workflow lo aplica. Opcional como lo anterior.
+            runCatching { leer(repo, "config.yaml", token) }
+                .onSuccess { Avisos.apuntarConfig(context, it) }
+
             // Un tope que enviaste y que el catalogo recien bajado ya trae deja
             // de estar pendiente. Va aqui y no en la pantalla porque el catalogo
             // solo cambia cuando se descarga.

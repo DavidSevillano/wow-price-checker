@@ -1578,6 +1578,35 @@ objeto vigilado.
   casar con la tabla, sin dar error. Eso se arregla en `config.yaml`: ver la
   seccion 2.
 
+### 7.7 Pausar los avisos
+
+La **campana** de arriba, en el listado, para y vuelve a encender todo lo que
+llega a Discord: chollos, undercuts, ventas y avisos del propio vigilante. Pide
+confirmacion y, mientras estan pausados, la campana sale tachada en rojo y hay
+una franja arriba que lo recuerda: pausarlos y olvidarlo es el fallo facil.
+
+Funciona como la ventana de silencio de la seccion 6.6, pero sin hora de fin:
+**se calla el envio, no la deteccion**. Las pasadas siguen corriendo cada hora y
+lo callado no se pierde; al reanudar te llega lo que siga vigente.
+
+Por dentro va igual que los topes: la app abre una issue `Avisos: pausar` o
+`Avisos: reanudar`, el workflow `avisos.yml` cambia una sola linea de
+`config.yaml`,
+
+```yaml
+settings:
+  avisos_pausados: true
+```
+
+y lo comenta en la issue. El token no necesita nada nuevo: con `Issues: Read and
+write` basta. Hay tambien una plantilla, *Pausar o reanudar avisos*, para
+hacerlo desde la web de GitHub.
+
+Tarda **un minuto** en aplicarse (lo que tarda el workflow) y entra en vigor en
+la pasada siguiente. Hasta que la app ve el cambio en `config.yaml` lo ensena
+como pendiente; si a la media hora no lo ve, algo ha fallado y vuelve a ensenar
+lo que dice `config.yaml`: mira la issue, que se queda abierta con el motivo.
+
 ---
 
 ## 8. La web publica de precios

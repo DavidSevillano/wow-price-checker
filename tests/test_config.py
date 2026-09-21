@@ -453,3 +453,25 @@ def test_personajes_yaml_sin_la_clave_se_explica(tmp_path):
 
     with pytest.raises(ConfigError, match="orden_personajes"):
         load_config(tmp_path / "config.yaml")
+
+
+# -- Pausa de avisos desde la app -------------------------------------------
+
+BASE_PAUSA = 'region: eu\nitems:\n  - name: "X"\n    max_price_by_ilvl: { 311: 1 }\n'
+
+
+def test_los_avisos_no_estan_pausados_por_defecto(tmp_path):
+    assert load_config(write(tmp_path, VALID)).settings.avisos_pausados is False
+
+
+def test_la_pausa_de_avisos_se_lee(tmp_path):
+    text = BASE_PAUSA + "settings:\n  avisos_pausados: true\n"
+    assert load_config(write(tmp_path, text)).settings.avisos_pausados is True
+
+
+def test_una_pausa_que_no_es_si_o_no_da_error(tmp_path):
+    """Un 'avisos_pausados: "false"' entre comillas es una cadena, y una cadena
+    no vacia es verdadera: se pausaria justo cuando pides lo contrario."""
+    text = BASE_PAUSA + 'settings:\n  avisos_pausados: "false"\n'
+    with pytest.raises(ConfigError, match="avisos_pausados"):
+        load_config(write(tmp_path, text))

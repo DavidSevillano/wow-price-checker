@@ -41,6 +41,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
@@ -199,6 +201,12 @@ private fun App() {
     var pendientes by remember { mutableStateOf(Topes.pendientes(context)) }
     var editando by remember { mutableStateOf<Variante?>(null) }
 
+    // El interruptor de avisos. `pausados` es lo que se ensena: lo pedido si
+    // aun va de camino, y si no lo que dice config.yaml.
+    var pausados by remember { mutableStateOf(Avisos.pausados(context)) }
+    var avisosPendiente by remember { mutableStateOf(Avisos.pendiente(context)) }
+    var cambiandoAvisos by remember { mutableStateOf(false) }
+
     val cobertura = remember(datos) { Calculo.cobertura(catalogo, datos) }
     val elegido = cobertura.firstOrNull { it.objeto.id == abierto }
 
@@ -222,6 +230,8 @@ private fun App() {
                     // La descarga ya ha borrado los pendientes que el catalogo
                     // nuevo confirma; esto releele lo que queda vivo.
                     pendientes = Topes.pendientes(context)
+                    pausados = Avisos.pausados(context)
+                    avisosPendiente = Avisos.pendiente(context)
                     if (avisar) avisos.showSnackbar("Datos actualizados desde GitHub.")
                 }
                 .onFailure { fallo ->
@@ -284,6 +294,22 @@ private fun App() {
                             Icon(Icons.Filled.Add, contentDescription = "Añadir objeto")
                         }
                     }
+                    // El interruptor de avisos, en rojo mientras estan pausados:
+                    // pausarlos y olvidarlo es el fallo facil, asi que se tiene
+                    // que ver desde cualquier pantalla del listado.
+                    if (elegido == null && Repositorio.token(context).isNotBlank()) {
+                        IconButton(onClick = { cambiandoAvisos = true }) {
+                            if (pausados) {
+                                Icon(
+                                    Icons.Filled.NotificationsOff,
+                                    contentDescription = "Avisos pausados",
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            } else {
+                                Icon(Icons.Filled.Notifications, contentDescription = "Avisos activos")
+                            }
+                        }
+                    }
                     IconButton(onClick = { ajustes = true }) {
                         Icon(Icons.Filled.Settings, contentDescription = "Ajustes")
                     }
@@ -291,7 +317,13 @@ private fun App() {
             )
         },
     ) { relleno ->
-        Box(Modifier.padding(relleno)) {
+        Column(Modifier.padding(relleno)) {
+            if (pausados && elegido == null) {
+                AvisoPausa(
+                    pendiente = avisosPendiente != null,
+                    alPulsar = { cambiandoAvisos = true },
+                )
+            }
             // La pantalla entra por el lado hacia el que vas, como en cualquier
             // app: sin eso, abrir un objeto es un parpadeo y no se sabe si has
             // entrado o si se ha recargado la lista.
@@ -373,6 +405,31 @@ private fun App() {
                             avisos.showSnackbar(
                                 "Objeto enviado. Si GitHub lo acepta, se vigila desde la " +
                                     "pasada siguiente."
+                            )
+                        }
+                        .onFailure { fallo ->
+                            avisos.showSnackbar(fallo.message ?: "No he podido enviarlo.")
+                        }
+                }
+            },
+        )
+    }
+
+    if (cambiandoAvisos) {
+        DialogoAvisos(
+            pausados = pausados,
+            pendiente = avisosPendiente,
+            alCerrar = { cambiandoAvisos = false },
+            alConfirmar = { pausar ->
+                cambiandoAvisos = false
+                alcance.launch {
+                    Avisos.enviar(context, pausar)
+                        .onSuccess {
+                            pausados = Avisos.pausados(context)
+                            avisosPendiente = Avisos.pendiente(context)
+                            avisos.showSnackbar(
+                                if (pausar) "Pausa enviada. En un minuto deja de avisar."
+                                else "Enviado. En un minuto vuelve a avisar."
                             )
                         }
                         .onFailure { fallo ->
@@ -1189,6 +1246,80 @@ private fun DialogoObjeto(
                 },
                 enabled = valido,
             ) { Text("Enviar") }
+        },
+        dismissButton = {
+            TextButton(onClick = alCerrar) { Text("Cancelar") }
+        },
+    )
+}
+
+/** La franja que recuerda que los avisos estan parados. */
+@Composable
+private fun AvisoPausa(pendiente: Boolean, alPulsar: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = alPulsar),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Filled.NotificationsOff,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = if (pendiente) "Pausando avisos… se aplica en un minuto."
+                else "Avisos pausados: no llega nada a Discord.",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+        }
+    }
+}
+
+/** Confirmar antes de pausar o reanudar: es un cambio que dura hasta deshacerlo. */
+@Composable
+private fun DialogoAvisos(
+    pausados: Boolean,
+    pendiente: Boolean?,
+    alCerrar: () -> Unit,
+    alConfirmar: (Boolean) -> Unit,
+) {
+    val pausar = !pausados
+    AlertDialog(
+        onDismissRequest = alCerrar,
+        title = { Text(if (pausar) "¿Pausar los avisos?" else "¿Reanudar los avisos?") },
+        text = {
+            Column {
+                Text(
+                    text = if (pausar) {
+                        "Se sigue vigilando cada hora, pero no llega nada a Discord: " +
+                            "ni chollos, ni undercuts, ni ventas. Al reanudar te llega " +
+                            "lo que siga vigente."
+                    } else {
+                        "Vuelven a llegar los avisos desde la pasada siguiente, con lo " +
+                            "que siga vigente de lo que se callo durante la pausa."
+                    },
+                    fontSize = 14.sp,
+                )
+                if (pendiente != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Hay un cambio enviado que GitHub aún no ha aplicado.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { alConfirmar(pausar) }) {
+                Text(if (pausar) "Pausar" else "Reanudar")
+            }
         },
         dismissButton = {
             TextButton(onClick = alCerrar) { Text("Cancelar") }

@@ -1060,6 +1060,15 @@ def run(args: argparse.Namespace) -> int:
             ajustes.silencio_hasta,
             ajustes.zona_horaria,
         )
+    # El interruptor de la app es un silencio sin hora de fin: mismo efecto, y
+    # por eso el mismo camino. Lo callado no se marca como avisado y sale al
+    # reanudar si sigue vivo.
+    if ajustes.avisos_pausados:
+        callado = True
+        log.info(
+            "⏸️ Avisos pausados desde la app: sigo vigilando, pero no envio "
+            "nada hasta que los reanudes."
+        )
 
     state_dir = Path(args.state_dir)
     item_cache = ItemIdCache(state_dir / "item_ids.json")
