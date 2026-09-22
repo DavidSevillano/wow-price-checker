@@ -204,6 +204,7 @@ private fun App() {
     // El interruptor de avisos. `pausados` es lo que se ensena: lo pedido si
     // aun va de camino, y si no lo que dice config.yaml.
     var pausados by remember { mutableStateOf(Avisos.pausados(context)) }
+    var motivoAvisos by remember { mutableStateOf(Avisos.motivo(context)) }
     var avisosPendiente by remember { mutableStateOf(Avisos.pendiente(context)) }
     var cambiandoAvisos by remember { mutableStateOf(false) }
 
@@ -232,6 +233,7 @@ private fun App() {
                     pendientes = Topes.pendientes(context)
                     pausados = Avisos.pausados(context)
                     avisosPendiente = Avisos.pendiente(context)
+                    motivoAvisos = Avisos.motivo(context)
                     if (avisar) avisos.showSnackbar("Datos actualizados desde GitHub.")
                 }
                 .onFailure { fallo ->
@@ -299,14 +301,14 @@ private fun App() {
                     // que ver desde cualquier pantalla del listado.
                     if (elegido == null && Repositorio.token(context).isNotBlank()) {
                         IconButton(onClick = { cambiandoAvisos = true }) {
-                            if (pausados) {
+                            if (pausados == true) {
                                 Icon(
                                     Icons.Filled.NotificationsOff,
                                     contentDescription = "Avisos pausados",
                                     tint = MaterialTheme.colorScheme.error,
                                 )
                             } else {
-                                Icon(Icons.Filled.Notifications, contentDescription = "Avisos activos")
+                                Icon(Icons.Filled.Notifications, contentDescription = "Avisos")
                             }
                         }
                     }
@@ -318,7 +320,7 @@ private fun App() {
         },
     ) { relleno ->
         Column(Modifier.padding(relleno)) {
-            if (pausados && elegido == null) {
+            if (pausados == true && elegido == null) {
                 AvisoPausa(
                     pendiente = avisosPendiente != null,
                     alPulsar = { cambiandoAvisos = true },
@@ -419,6 +421,7 @@ private fun App() {
         DialogoAvisos(
             pausados = pausados,
             pendiente = avisosPendiente,
+            motivo = motivoAvisos,
             alCerrar = { cambiandoAvisos = false },
             alConfirmar = { pausar ->
                 cambiandoAvisos = false
@@ -427,6 +430,7 @@ private fun App() {
                         .onSuccess {
                             pausados = Avisos.pausados(context)
                             avisosPendiente = Avisos.pendiente(context)
+                            motivoAvisos = Avisos.motivo(context)
                             avisos.showSnackbar(
                                 if (pausar) "Pausa enviada. En un minuto deja de avisar."
                                 else "Enviado. En un minuto vuelve a avisar."
@@ -1281,30 +1285,43 @@ private fun AvisoPausa(pendiente: Boolean, alPulsar: () -> Unit) {
     }
 }
 
-/** Confirmar antes de pausar o reanudar: es un cambio que dura hasta deshacerlo. */
+/**
+ * Pausar o reanudar, con las dos acciones siempre a la vista.
+ *
+ * No se ofrece solo "la contraria de lo que hay puesto": si la app se equivoca
+ * al leer el estado --o no ha podido leerlo-- eso deja sin salida, que es lo
+ * que paso leyendo config.yaml del repositorio que no era. La que ya esta
+ * puesta sale apagada, y eso mismo es lo que te dice como estan.
+ */
 @Composable
 private fun DialogoAvisos(
-    pausados: Boolean,
+    pausados: Boolean?,
     pendiente: Boolean?,
+    motivo: String?,
     alCerrar: () -> Unit,
     alConfirmar: (Boolean) -> Unit,
 ) {
-    val pausar = !pausados
     AlertDialog(
         onDismissRequest = alCerrar,
-        title = { Text(if (pausar) "¿Pausar los avisos?" else "¿Reanudar los avisos?") },
+        title = { Text("Avisos de Discord") },
         text = {
             Column {
                 Text(
-                    text = if (pausar) {
-                        "Se sigue vigilando cada hora, pero no llega nada a Discord: " +
-                            "ni chollos, ni undercuts, ni ventas. Al reanudar te llega " +
-                            "lo que siga vigente."
-                    } else {
-                        "Vuelven a llegar los avisos desde la pasada siguiente, con lo " +
-                            "que siga vigente de lo que se callo durante la pausa."
+                    text = when (pausados) {
+                        true -> "Ahora mismo están pausados: no llega nada a Discord."
+                        false -> "Ahora mismo están activos."
+                        null -> "No sé cómo están: no he podido leer config.yaml."
                     },
                     fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "En pausa se sigue vigilando cada hora, pero no se envía nada: " +
+                        "ni chollos, ni undercuts, ni ventas. Al reanudar te llega lo que " +
+                        "siga vigente. Tarda un minuto en aplicarse.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (pendiente != null) {
                     Spacer(Modifier.height(8.dp))
@@ -1314,11 +1331,26 @@ private fun DialogoAvisos(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                if (motivo != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = motivo,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = { alConfirmar(pausar) }) {
-                Text(if (pausar) "Pausar" else "Reanudar")
+            Row {
+                TextButton(
+                    onClick = { alConfirmar(true) },
+                    enabled = pausados != true,
+                ) { Text("Pausar") }
+                TextButton(
+                    onClick = { alConfirmar(false) },
+                    enabled = pausados != false,
+                ) { Text("Reanudar") }
             }
         },
         dismissButton = {

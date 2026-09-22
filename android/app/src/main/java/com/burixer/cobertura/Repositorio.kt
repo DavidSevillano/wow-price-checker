@@ -108,6 +108,9 @@ object Repositorio {
                 )
             )
         }
+        // El del codigo se resuelve antes de que `repo` pase a ser el privado:
+        // a partir de esa linea el nombre queda tapado.
+        val repoCodigo = repo(context)
         val repo = repoPrivado(context)
 
         runCatching {
@@ -151,9 +154,18 @@ object Repositorio {
             // Si los avisos estan pausados lo dice config.yaml, en main. Se lee
             // de ahi y no del catalogo porque el catalogo tarda hasta una hora
             // en regenerarse, y el interruptor tiene que confirmarse en cuanto
-            // el workflow lo aplica. Opcional como lo anterior.
-            runCatching { leer(repo, "config.yaml", token) }
+            // el workflow lo aplica.
+            //
+            // Del repositorio PUBLICO, no de `repo`, que aqui arriba es el
+            // privado: config.yaml es codigo y vive con el codigo. Leerlo del
+            // privado daba 404, y como el fallo se tragaba, la app se quedaba
+            // creyendo para siempre que los avisos estaban activos y solo
+            // ofrecia pausarlos.
+            runCatching { leer(repoCodigo, "config.yaml", token) }
                 .onSuccess { Avisos.apuntarConfig(context, it) }
+                // No se deja morir: sin estado, el interruptor no sabe que
+                // ofrecer, y hay que poder decirlo en pantalla.
+                .onFailure { Avisos.apuntarFallo(context, it.message) }
 
             // Un tope que enviaste y que el catalogo recien bajado ya trae deja
             // de estar pendiente. Va aqui y no en la pantalla porque el catalogo

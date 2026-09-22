@@ -21,6 +21,7 @@ object Avisos {
     private const val PREFS = "cobertura"
     private const val CLAVE_REAL = "avisos_pausados"
     private const val CLAVE_PENDIENTE = "avisos_pendiente"
+    private const val CLAVE_MOTIVO = "avisos_motivo"
 
     /**
      * Cuanto se cree un pendiente. El workflow tarda un minuto en aplicarlo;
@@ -41,10 +42,20 @@ object Avisos {
     /** Apunta el estado de verdad y olvida el pendiente si ya coincide. */
     fun apuntarConfig(context: Context, config: String) {
         val real = pausadosEnConfig(config)
-        val editor = prefs(context).edit().putBoolean(CLAVE_REAL, real)
+        val editor = prefs(context).edit().putBoolean(CLAVE_REAL, real).remove(CLAVE_MOTIVO)
         if (pendiente(context) == real) editor.remove(CLAVE_PENDIENTE)
         editor.apply()
     }
+
+    /** Por que no se ha podido leer config.yaml, para poder decirlo. */
+    fun apuntarFallo(context: Context, motivo: String?) {
+        prefs(context).edit()
+            .putString(CLAVE_MOTIVO, motivo ?: "no he podido leer config.yaml")
+            .apply()
+    }
+
+    fun motivo(context: Context): String? =
+        prefs(context).getString(CLAVE_MOTIVO, null)
 
     /** Lo pedido desde el movil y todavia no aplicado, o null. */
     fun pendiente(context: Context): Boolean? {
@@ -55,9 +66,19 @@ object Avisos {
         return fila.optBoolean("pausar")
     }
 
-    /** Lo que hay que ensenar: lo pedido si esta en camino, si no lo real. */
-    fun pausados(context: Context): Boolean =
-        pendiente(context) ?: prefs(context).getBoolean(CLAVE_REAL, false)
+    /**
+     * Lo que hay que ensenar: lo pedido si esta en camino, si no lo real.
+     *
+     * null cuando todavia no se ha podido leer config.yaml. Es un estado de
+     * verdad y no un "activos" por defecto: dandolo por activos, el
+     * interruptor solo ofrecia pausar y no habia forma de reanudarlos.
+     */
+    fun pausados(context: Context): Boolean? {
+        pendiente(context)?.let { return it }
+        val guardados = prefs(context)
+        if (!guardados.contains(CLAVE_REAL)) return null
+        return guardados.getBoolean(CLAVE_REAL, false)
+    }
 
     /** El cuerpo de la issue. La etiqueta es el contrato con aplicar_avisos.py. */
     fun cuerpo(pausar: Boolean): String =
