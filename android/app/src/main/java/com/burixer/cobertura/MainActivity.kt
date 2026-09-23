@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -22,6 +23,8 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -355,7 +358,12 @@ private fun App() {
                     alPulsar = { cambiandoAvisos = true },
                 )
             }
-            if (buscando) {
+            AnimatedContent(
+                targetState = buscando,
+                transitionSpec = { lateral(haciaDentro = targetState) },
+                label = "buscar",
+            ) { enBuscador ->
+            if (enBuscador) {
                 Buscador(
                     mercado = mercado,
                     cargando = !mercadoLeido,
@@ -363,8 +371,7 @@ private fun App() {
                     tusObjetos = cobertura.map { it.objeto },
                     datos = datos,
                 )
-                return@Column
-            }
+            } else {
             // La pantalla entra por el lado hacia el que vas, como en cualquier
             // app: sin eso, abrir un objeto es un parpadeo y no se sabe si has
             // entrado o si se ha recargado la lista.
@@ -406,6 +413,8 @@ private fun App() {
                         else ({ editando = it }),
                     )
                 }
+            }
+            }
             }
         }
     }
@@ -1454,62 +1463,28 @@ private fun etiqueta(producto: Producto, valor: Int?): String = when {
 }
 
 /**
- * Una fila de la lista del buscador. Sin `producto` es que nadie lo vende ahora
- * mismo en la region: se ve, apagada y sin poder abrirla.
+ * Entrar hacia la derecha y volver hacia la izquierda, como el resto de la app:
+ * sin eso, abrir algo es un parpadeo y no se sabe si has entrado o recargado.
  */
-@Composable
-private fun FilaBusqueda(
-    icono: String?,
-    es: String,
-    en: String,
-    producto: Producto?,
-    alPulsar: () -> Unit,
-) {
-    val desde = producto?.variantes?.mapNotNull { v -> v.ofertas.firstOrNull() }
-        ?.minByOrNull { it.oro }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(enabled = producto != null, onClick = alPulsar)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icono(icono, 36.dp)
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(es, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 2)
-            if (en != es) {
-                Text(
-                    text = en,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = desde?.let { "desde ${oroCorto(it.oro)}" } ?: "nadie lo vende",
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            color = if (desde != null) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-}
+private fun lateral(haciaDentro: Boolean): ContentTransform = ContentTransform(
+    targetContentEnter = slideInHorizontally(
+        tween(ENTRADA_MS, easing = FastOutSlowInEasing)
+    ) { ancho -> if (haciaDentro) ancho / 5 else -ancho / 5 } +
+        fadeIn(tween(ENTRADA_MS, easing = FastOutSlowInEasing)),
+    initialContentExit = fadeOut(tween(SALIDA_MS, easing = FastOutSlowInEasing)),
+    sizeTransform = SizeTransform(clip = false),
+)
+
+/** Lo que se ha abierto en el buscador, y en que variante empieza. */
+private data class Seleccion(val producto: Producto, val valor: Int?)
 
 /**
  * Donde esta mas barato cualquier cosa de la region, como en la casa de subastas.
  *
- * Escribes, eliges el producto y salen los reinos del mas barato al mas caro.
- * Se marca donde tienes personaje porque solo ahi puedes comprar sin hacerte
- * uno, y si el objeto es de los que vigilas, el tope, que es tu referencia de
- * si un precio es bueno.
+ * Con la caja vacia salen tus objetos, cada uno con sus ilvl a un toque; al
+ * escribir, cualquier cosa que se venda. Al elegir salen los reinos del mas
+ * barato al mas caro.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun Buscador(
     mercado: Mercado?,
@@ -1520,109 +1495,267 @@ private fun Buscador(
     datos: Datos,
 ) {
     var texto by remember { mutableStateOf("") }
-    var elegido by remember { mutableStateOf<Producto?>(null) }
-    BackHandler(enabled = elegido != null) { elegido = null }
+    var abierto by remember { mutableStateOf<Seleccion?>(null) }
+    BackHandler(enabled = abierto != null) { abierto = null }
 
-    if (cargando) {
-        Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-        }
-        return
+    // 0 cargando, 1 sin datos, 2 listo. Un cruce suave entre ellos, para que la
+    // lista no aparezca de golpe cuando acaba de leerse.
+    val fase = when {
+        cargando -> 0
+        mercado == null || mercado.productos.isEmpty() -> 1
+        else -> 2
     }
-    if (mercado == null || mercado.productos.isEmpty()) {
-        Text(
-            text = "Todavía no hay precios de la región. Se publican en la próxima " +
-                "pasada del escaneo; después toca actualizar.",
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(16.dp),
-        )
-        return
+    AnimatedContent(
+        targetState = fase,
+        transitionSpec = {
+            fadeIn(tween(ENTRADA_MS)) togetherWith fadeOut(tween(SALIDA_MS))
+        },
+        label = "buscador",
+    ) { f ->
+        when {
+            f == 0 -> Box(
+                Modifier.fillMaxWidth().padding(32.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+            }
+            f == 1 || mercado == null -> Text(
+                text = "Todavía no hay precios de la región. Se publican en la próxima " +
+                    "pasada del escaneo; después toca actualizar.",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(16.dp),
+            )
+            else -> AnimatedContent(
+                targetState = abierto,
+                // Cambiar de ilvl dentro no es cambiar de pantalla.
+                contentKey = { it?.producto },
+                transitionSpec = { lateral(haciaDentro = targetState != null) },
+                label = "buscador-pantalla",
+            ) { seleccion ->
+                if (seleccion == null) {
+                    ListaBuscador(
+                        texto = texto,
+                        alEscribir = { texto = it },
+                        mercado = mercado,
+                        tusObjetos = tusObjetos,
+                        alAbrir = { producto, valor -> abierto = Seleccion(producto, valor) },
+                    )
+                } else {
+                    FichaMercado(seleccion, mercado, catalogo, datos)
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ListaBuscador(
+    texto: String,
+    alEscribir: (String) -> Unit,
+    mercado: Mercado,
+    tusObjetos: List<Objeto>,
+    alAbrir: (Producto, Int?) -> Unit,
+) {
+    val escribiendo = texto.trim().length >= 2
+    val encontrados = remember(texto, mercado) { mercado.buscar(texto) }
+    // Tu objeto en el mercado. Si ahora no lo vende nadie se abre igual, vacio:
+    // saber que no lo hay en ningun sitio tambien es la respuesta.
+    val tuyos = remember(mercado, tusObjetos) {
+        val porId = mercado.productos.filter { !it.mascota }.associateBy { it.id }
+        tusObjetos.map { o ->
+            o to (porId[o.id] ?: Producto(false, o.id, o.es, o.en, o.icono, emptyList()))
+        }
     }
 
-    val producto = elegido
-    if (producto == null) {
-        val escribiendo = texto.trim().length >= 2
-        val encontrados = remember(texto, mercado) { mercado.buscar(texto) }
-        // Tus objetos, a un toque: son los que de verdad miras. Tambien los que
-        // no vende nadie ahora mismo, porque saberlo es justo la respuesta.
-        val tuyos = remember(mercado, tusObjetos) {
-            val porId = mercado.productos.filter { !it.mascota }.associateBy { it.id }
-            tusObjetos.map { it to porId[it.id] }
-        }
-        LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-            item {
-                OutlinedTextField(
-                    value = texto,
-                    onValueChange = { texto = it },
-                    placeholder = { Text("Buscar objeto o mascota") },
-                    singleLine = true,
-                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                    trailingIcon = {
-                        if (texto.isNotEmpty()) {
-                            IconButton(onClick = { texto = "" }) {
-                                Icon(Icons.Filled.Close, contentDescription = "Borrar")
-                            }
+    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+        item(key = "caja") {
+            OutlinedTextField(
+                value = texto,
+                onValueChange = alEscribir,
+                placeholder = { Text("Buscar objeto o mascota") },
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (texto.isNotEmpty()) {
+                        IconButton(onClick = { alEscribir("") }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Borrar")
                         }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp, 12.dp, 16.dp, 6.dp),
-                )
-                if (escribiendo && encontrados.isEmpty()) {
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp, 12.dp, 16.dp, 6.dp),
+            )
+        }
+        if (escribiendo) {
+            if (encontrados.isEmpty()) {
+                item(key = "nada") {
                     Text(
                         text = "Nada con ese nombre a la venta por encima de 500 g.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        modifier = Modifier
+                            .animateItem()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
                     )
                 }
             }
-            if (escribiendo) {
-                items(encontrados, key = { (if (it.mascota) "m" else "o") + it.id }) { p ->
-                    FilaBusqueda(p.icono, p.es, p.en, p) { elegido = p }
-                }
-            } else {
-                item {
-                    Column(Modifier.padding(16.dp, 10.dp, 16.dp, 4.dp)) {
-                        Titulo("Tus objetos", "${tuyos.size}")
+            items(encontrados, key = { (if (it.mascota) "m" else "o") + it.id }) { p ->
+                Column(Modifier.animateItem()) {
+                    FilaProducto(p.icono, p.es, p.en, alPulsar = {
+                        alAbrir(p, p.variantes.firstOrNull()?.valor)
+                    }) {
+                        // El precio solo cuando no hay nada que elegir: con varias
+                        // variantes, el mas barato seria de un ilvl cualquiera.
+                        p.variantes.singleOrNull()?.ofertas?.firstOrNull()?.let {
+                            Text(
+                                text = "desde ${oroCorto(it.oro)}",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
                     }
                 }
-                items(tuyos, key = { "t" + it.first.id }) { (objeto, p) ->
-                    FilaBusqueda(objeto.icono, objeto.es, objeto.en, p) { elegido = p }
+            }
+        } else {
+            item(key = "titulo") {
+                Column(
+                    Modifier
+                        .animateItem()
+                        .padding(16.dp, 10.dp, 16.dp, 4.dp)
+                ) {
+                    Titulo("Tus objetos", "${tuyos.size}")
                 }
-                item {
+            }
+            items(tuyos, key = { "t" + it.first.id }) { (objeto, producto) ->
+                val conOferta = producto.variantes.filter { it.ofertas.isNotEmpty() }
+                    .map { it.valor }.toSet()
+                val ilvls = objeto.escalones.map { it.ilvl }
+                Column(Modifier.animateItem()) {
+                    FilaProducto(
+                        objeto.icono, objeto.es, objeto.en,
+                        alPulsar = {
+                            alAbrir(producto, ilvls.firstOrNull() ?: producto.variantes.firstOrNull()?.valor)
+                        },
+                        debajo = if (objeto.escala) {
+                            {
+                                // Tus ilvl, a un toque. Apagados los que ahora no
+                                // vende nadie en la region.
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.padding(top = 8.dp),
+                                ) {
+                                    ilvls.forEach { ilvl ->
+                                        FichaIlvl(ilvl, hay = ilvl in conOferta) {
+                                            alAbrir(producto, ilvl)
+                                        }
+                                    }
+                                }
+                            }
+                        } else null,
+                    ) {}
+                }
+            }
+            item(key = "pie") {
+                Text(
+                    text = "Escribe arriba para buscar cualquier otra cosa: " +
+                        "${mercado.productos.size} productos en ${mercado.grupos.size} " +
+                        "reinos. Materiales y consumibles no salen: cuestan lo mismo " +
+                        "en toda la región.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .animateItem()
+                        .padding(16.dp),
+                )
+            }
+        }
+    }
+}
+
+/** Un ilvl que se puede tocar, en la lista de tus objetos. */
+@Composable
+private fun FichaIlvl(ilvl: Int, hay: Boolean, alPulsar: () -> Unit) {
+    Box(
+        Modifier
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))
+            .clickable(onClick = alPulsar)
+            .padding(horizontal = 10.dp, vertical = 5.dp)
+    ) {
+        Text(
+            text = "$ilvl",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp,
+            color = if (hay) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun FilaProducto(
+    icono: String?,
+    es: String,
+    en: String,
+    alPulsar: () -> Unit,
+    debajo: (@Composable () -> Unit)? = null,
+    derecha: @Composable () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = alPulsar)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icono(icono, 36.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(es, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 2)
+                if (en != es) {
                     Text(
-                        text = "Escribe arriba para buscar cualquier otra cosa: " +
-                            "${mercado.productos.size} productos en ${mercado.grupos.size} " +
-                            "reinos. Materiales y consumibles no salen: cuestan lo mismo " +
-                            "en toda la región.",
-                        fontSize = 12.sp,
+                        text = en,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(16.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
+            Spacer(Modifier.width(8.dp))
+            derecha()
         }
-        return
+        debajo?.invoke()
     }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+}
 
+/**
+ * Los reinos mas baratos de un producto.
+ *
+ * Se marca en que cuenta tienes personaje en cada reino, porque solo ahi puedes
+ * comprar sin hacerte uno, y si el objeto es de los que vigilas, el tope, que es
+ * tu referencia de si un precio es bueno.
+ */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+private fun FichaMercado(seleccion: Seleccion, mercado: Mercado, catalogo: Catalogo, datos: Datos) {
+    val producto = seleccion.producto
     // El tope solo existe si el objeto es de los que vigilas.
     val vigilado = if (producto.mascota) null
     else catalogo.objetos.firstOrNull { it.id == producto.id }
 
-    // Si lo vigilas, se abre en el primer ilvl de tu tabla: los de debajo no
-    // los compras.
-    var indice by remember(producto) {
-        val tuyos = vigilado?.escalones.orEmpty().map { it.ilvl }.toSet()
-        mutableStateOf(producto.variantes.indexOfFirst { it.valor in tuyos }.coerceAtLeast(0))
-    }
-    val variante = producto.variantes.getOrNull(indice) ?: producto.variantes.first()
-    val tope = when {
-        vigilado == null -> null
-        vigilado.escala -> vigilado.escalones.firstOrNull { it.ilvl == variante.valor }?.tope
-        else -> vigilado.tope
-    }
+    // Si lo vigilas, solo tus ilvl: los demas no los compras. Si no, todo lo
+    // que hay a la venta.
+    val opciones = if (vigilado != null && vigilado.escala) vigilado.escalones.map { it.ilvl }
+    else producto.variantes.map { it.valor }
+    var valor by remember(producto) { mutableStateOf(seleccion.valor ?: opciones.firstOrNull()) }
+
     // slug de reino -> tus personajes ahi
     val mios = remember(datos) {
         datos.personajes.values
@@ -1630,138 +1763,178 @@ private fun Buscador(
             .groupBy { slugDeReino(it.reino) }
     }
 
-    LazyColumn(contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 32.dp)) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icono(producto.icono, 48.dp)
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Text(producto.es, fontSize = 17.sp, fontWeight = FontWeight.Medium)
-                    if (producto.en != producto.es) {
-                        Text(
-                            text = producto.en,
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-            if (producto.variantes.size > 1) {
-                Spacer(Modifier.height(14.dp))
-                producto.variantes.withIndex().chunked(4).forEach { fila ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        fila.forEach { (i, v) ->
-                            FilterChip(
-                                selected = i == indice,
-                                onClick = { indice = i },
-                                label = {
-                                    Text(
-                                        text = etiqueta(producto, v.valor),
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 13.sp,
-                                    )
-                                },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor =
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
-                                    selectedLabelColor = MaterialTheme.colorScheme.onSurface,
-                                ),
-                                border = FilterChipDefaults.filterChipBorder(
-                                    enabled = true,
-                                    selected = i == indice,
-                                    borderColor = MaterialTheme.colorScheme.outline,
-                                    selectedBorderColor = MaterialTheme.colorScheme.primary,
-                                ),
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(6.dp))
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Titulo(
-                when {
-                    variante.valor == null -> "Los reinos más baratos"
-                    producto.mascota -> "Los reinos más baratos — ${etiqueta(producto, variante.valor)}"
-                    else -> "Los reinos más baratos — ilvl ${variante.valor}"
-                },
-                "${variante.ofertas.size}",
-            )
-            Spacer(Modifier.height(8.dp))
-        }
-        items(variante.ofertas, key = { it.grupo.nombre }) { oferta ->
-            val tuyos = oferta.grupo.slugs.flatMap { mios[it].orEmpty() }
-            // La cuenta y no el personaje: es lo que decide que WoW abres.
-            val cuentas = tuyos.mapNotNull { it.cuenta }.distinct().sorted()
-            val bajoTope = tope != null && oferta.oro <= tope
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    Modifier
-                        .width(3.dp)
-                        .height(34.dp)
-                        .background(
-                            if (tuyos.isNotEmpty()) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outline
-                        )
-                )
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icono(producto.icono, 48.dp)
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(producto.es, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+                if (producto.en != producto.es) {
                     Text(
-                        text = oferta.grupo.nombre,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = when {
-                            tuyos.isEmpty() -> "sin personaje tuyo"
-                            cuentas.isEmpty() -> "tienes personaje"
-                            else -> cuentas.joinToString(" · ") { "WoW $it" }
-                        },
+                        text = producto.en,
                         fontSize = 12.sp,
-                        color = if (tuyos.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = oro(oferta.oro),
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 13.sp,
-                        fontWeight = if (bajoTope) FontWeight.Medium else FontWeight.Normal,
-                        color = if (bajoTope) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        text = (if (oferta.cuantas == 1) "1 en venta" else "${oferta.cuantas} en venta") +
-                            if (bajoTope) " · bajo tope" else "",
-                        fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         }
-        item {
+        if (opciones.size > 1) {
+            Spacer(Modifier.height(14.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+            ) {
+                opciones.forEach { v ->
+                    FilterChip(
+                        selected = v == valor,
+                        onClick = { valor = v },
+                        label = {
+                            Text(
+                                text = etiqueta(producto, v),
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor =
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                            selectedLabelColor = MaterialTheme.colorScheme.onSurface,
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = v == valor,
+                            borderColor = MaterialTheme.colorScheme.outline,
+                            selectedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // Al cambiar de ilvl la lista se cruza, subiendo o bajando segun hacia
+        // donde vas, igual que en la ficha de un objeto.
+        AnimatedContent(
+            targetState = valor,
+            transitionSpec = {
+                val sube = (targetState ?: 0) > (initialState ?: 0)
+                (slideInVertically(
+                    tween(ENTRADA_MS, easing = FastOutSlowInEasing)
+                ) { alto -> if (sube) alto / 12 else -alto / 12 } +
+                    fadeIn(tween(ENTRADA_MS, easing = FastOutSlowInEasing))) togetherWith
+                    fadeOut(tween(SALIDA_MS)) using SizeTransform(clip = false)
+            },
+            label = "variante-mercado",
+        ) { actual ->
+            val ofertas = producto.variantes.firstOrNull { it.valor == actual }?.ofertas.orEmpty()
+            val topeActual = when {
+                vigilado == null -> null
+                vigilado.escala -> vigilado.escalones.firstOrNull { it.ilvl == actual }?.tope
+                else -> vigilado.tope
+            }
+            Column {
+                Titulo(
+                    when {
+                        actual == null -> "Los reinos más baratos"
+                        producto.mascota -> "Los reinos más baratos — ${etiqueta(producto, actual)}"
+                        else -> "Los reinos más baratos — ilvl $actual"
+                    },
+                    "${ofertas.size}",
+                )
+                Spacer(Modifier.height(8.dp))
+                if (ofertas.isEmpty()) {
+                    Text(
+                        text = "Nadie lo vende ahora mismo en ningún reino de la región.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                ofertas.forEach { oferta ->
+                    FilaOferta(oferta, mios, topeActual)
+                }
+                if (ofertas.isNotEmpty()) {
+                    Text(
+                        text = "Solo los ${ofertas.size} reinos más baratos de " +
+                            "${mercado.grupos.size} · precios del ${fecha(mercado.generado)}",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 16.dp),
+                    )
+                }
+                Spacer(Modifier.height(32.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilaOferta(oferta: Oferta, mios: Map<String, List<Personaje>>, tope: Long?) {
+    val tuyos = oferta.grupo.slugs.flatMap { mios[it].orEmpty() }
+    // La cuenta y no el personaje: es lo que decide que WoW abres.
+    val cuentas = tuyos.mapNotNull { it.cuenta }.distinct().sorted()
+    val bajoTope = tope != null && oferta.oro <= tope
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .width(3.dp)
+                .height(34.dp)
+                .background(
+                    if (tuyos.isNotEmpty()) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.outline
+                )
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
             Text(
-                text = "Solo los ${variante.ofertas.size} reinos más baratos de " +
-                    "${mercado.grupos.size} · precios del ${fecha(mercado.generado)}",
+                text = oferta.grupo.nombre,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = when {
+                    tuyos.isEmpty() -> "sin personaje tuyo"
+                    cuentas.isEmpty() -> "tienes personaje"
+                    else -> cuentas.joinToString(" · ") { "WoW $it" }
+                },
+                fontSize = 12.sp,
+                color = if (tuyos.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = oro(oferta.oro),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                fontWeight = if (bajoTope) FontWeight.Medium else FontWeight.Normal,
+                color = if (bajoTope) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = (if (oferta.cuantas == 1) "1 en venta" else "${oferta.cuantas} en venta") +
+                    if (bajoTope) " · bajo tope" else "",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 16.dp),
             )
         }
     }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
 }
 
 private fun fecha(exportado: Long): String {
