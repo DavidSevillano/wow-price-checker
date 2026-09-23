@@ -31,7 +31,7 @@ items:
   - name: "Greaves of the Noxious Depths"
     max_price_by_ilvl:
       { 295: 6999, 298: 12000, 305: 15000, 308: 20000, 311: 70000,
-        318: 150000, 321: 200000, 324: 200000, 328: 500000 }
+        318: 150000, 321: 200000, 324: 250000, 328: 500000 }
 
   - name: "Temple Delver's Mystic Helm"
     max_price_by_ilvl:
