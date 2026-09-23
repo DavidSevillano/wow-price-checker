@@ -12,13 +12,13 @@ Publica dos cosas:
                   cuesta cuatro peticiones y asi la app nunca se queda atras.
 
   precios.json    el mas barato de cada objeto e ilvl en los reinos donde
-                  vendes. Es el dato que no sobrevive a la pasada: el volcado de
-                  un reino son decenas de miles de subastas que se miran y se
-                  tiran.
+                  vendes (`reinos`) y en todos los de la region (`mercado`, el
+                  buscador de la app). Es el dato que no sobrevive a la pasada:
+                  el volcado de un reino son decenas de miles de subastas que se
+                  miran y se tiran.
 
 Va aparte de main.py a proposito. main.py es el que te manda las alertas y no
-conviene tocarlo para esto; ademas, aqui solo se bajan los veinte y pico reinos
-donde tienes personajes, no los 92 de la region.
+conviene tocarlo para esto.
 """
 
 from __future__ import annotations
@@ -39,9 +39,14 @@ from wowalerts.config import ConfigError, load_config
 from wowalerts.items import ItemResolutionError, resolve_item_ids
 from wowalerts.misubastas import slugify_realm
 from wowalerts.personajes import leer_rosters
-from wowalerts.precios import construir_precios, minimos_del_reino, reinos_a_vigilar
+from wowalerts.precios import (
+    construir_mercado,
+    construir_precios,
+    minimos_del_reino,
+    reinos_a_vigilar,
+)
 from wowalerts.realms import resolve_connected_realms
-from wowalerts.state import ItemIdCache, RealmIdCache
+from wowalerts.state import ItemIdCache, JsonMapCache, RealmIdCache
 
 log = logging.getLogger("datos_app")
 
@@ -119,19 +124,46 @@ def construir_catalogo(client, client_es, config, reglas: dict) -> dict:
     }
 
 
+def fichas_de_grupos(client, realm_ids, state_dir) -> dict[int, tuple[str, list[str]]]:
+    """Nombre y slugs de cada connected realm, cacheados entre pasadas.
+
+    Un grupo no cambia de reinos casi nunca, y sin cache serian 92 peticiones
+    mas cada hora para volver a oir lo mismo.
+    """
+    cache = JsonMapCache(Path(state_dir) / "grupos_reinos.json", "grupos")
+    fichas: dict[int, tuple[str, list[str]]] = {}
+    for realm_id in realm_ids:
+        guardada = cache.get(realm_id)
+        if isinstance(guardada, dict) and guardada.get("nombre"):
+            fichas[realm_id] = (guardada["nombre"], list(guardada.get("slugs") or []))
+            continue
+        ficha = client.connected_realm_ficha(realm_id)
+        if ficha is None:
+            # Sin cachear: el nombre de relleno no debe sobrevivir a la pasada.
+            fichas[realm_id] = (f"Reino {realm_id}", [])
+            continue
+        cache.set(realm_id, {"nombre": ficha[0], "slugs": ficha[1]})
+        fichas[realm_id] = ficha
+    cache.save()
+    return fichas
+
+
 def recoger_precios(client, config, reglas, roster_path, state_dir) -> dict:
-    """Baja los reinos donde vendes y se queda con el precio a batir."""
+    """Baja toda la region y se queda con el precio mas barato de cada reino.
+
+    Dos usos del mismo volcado: el precio a batir en los reinos donde vendes
+    (`reinos`) y el buscador de la app, que dice donde esta mas barato cada
+    objeto en toda la region (`mercado`).
+    """
     roster = leer_rosters(roster_path)
     reino_por_personaje = {p.name: p.realm for p in roster}
     reinos = reinos_a_vigilar(reino_por_personaje, config.orden_personajes)
     if not reinos:
         log.warning(
             "Ninguno de los personajes de orden_personajes esta en %s: sin reinos "
-            "que mirar.",
+            "donde vendes.",
             roster_path,
         )
-        return construir_precios({}, int(datetime.now(timezone.utc).timestamp()))
-
     log.info("Reinos donde vendes: %s", len(reinos))
 
     cache = RealmIdCache(Path(state_dir) / "realm_ids.json")
@@ -144,8 +176,19 @@ def recoger_precios(client, config, reglas, roster_path, state_dir) -> dict:
     for nombre, realm_id in ids_por_reino.items():
         reinos_por_id.setdefault(realm_id, []).append(nombre)
 
+    try:
+        region = set(client.connected_realm_ids())
+    except BlizzardError as exc:
+        # El buscador se queda con tus reinos; lo de siempre sigue saliendo.
+        log.warning("No he podido listar los reinos de la region: %s", exc)
+        region = set()
+    todos = sorted(region | set(reinos_por_id))
+    log.info("Reinos de la region a bajar: %s", len(todos))
+    fichas = fichas_de_grupos(client, todos, state_dir)
+
     vigilados = set(reglas)
     por_reino: dict[str, tuple[dict, int]] = {}
+    grupos: list[tuple[str, list[str], dict, int]] = []
 
     def una(realm_id: int):
         try:
@@ -155,7 +198,7 @@ def recoger_precios(client, config, reglas, roster_path, state_dir) -> dict:
             return realm_id, None
 
     with ThreadPoolExecutor(max_workers=config.settings.max_workers) as pool:
-        for realm_id, snapshot in pool.map(una, reinos_por_id):
+        for realm_id, snapshot in pool.map(una, todos):
             if snapshot is None:
                 # Sin dato es mejor que un dato viejo disfrazado de actual: el
                 # reino simplemente no sale, y la app lo dice.
@@ -166,14 +209,18 @@ def recoger_precios(client, config, reglas, roster_path, state_dir) -> dict:
             visto = int(
                 (snapshot.taken_at or datetime.now(timezone.utc)).timestamp()
             )
-            for nombre in reinos_por_id[realm_id]:
-                por_reino[slugify_realm(nombre)] = (minimos, visto)
-            log.info(
-                "  %s: %s producto(s) con precio", ", ".join(reinos_por_id[realm_id]),
-                len(minimos),
-            )
+            nombre, slugs = fichas[realm_id]
+            grupos.append((nombre, slugs, minimos, visto))
+            for mio in reinos_por_id.get(realm_id, []):
+                por_reino[slugify_realm(mio)] = (minimos, visto)
+            log.debug("  %s: %s producto(s) con precio", nombre, len(minimos))
 
-    return construir_precios(por_reino, int(datetime.now(timezone.utc).timestamp()))
+    log.info("Reinos con dato: %s de %s", len(grupos), len(todos))
+    return construir_precios(
+        por_reino,
+        int(datetime.now(timezone.utc).timestamp()),
+        mercado=construir_mercado(grupos),
+    )
 
 
 def escribir(destino: Path, nombre: str, contenido: dict) -> bool:

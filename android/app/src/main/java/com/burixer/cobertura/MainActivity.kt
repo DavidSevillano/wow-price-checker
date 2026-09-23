@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -194,6 +195,7 @@ private fun App() {
     var ajustes by remember { mutableStateOf(false) }
     var anadiendo by remember { mutableStateOf(false) }
     var abierto by remember { mutableStateOf<Int?>(null) }
+    var buscando by remember { mutableStateOf(false) }
 
     // Topes enviados y todavia no confirmados. Se leen de disco porque la app se
     // muere al salir: en memoria moririan con ella y volverias a ver el numero
@@ -212,6 +214,7 @@ private fun App() {
     val elegido = cobertura.firstOrNull { it.objeto.id == abierto }
 
     BackHandler(enabled = elegido != null) { abierto = null }
+    BackHandler(enabled = buscando) { buscando = false }
 
     // La descarga de al abrir no dice nada cuando sale bien: no has pedido nada,
     // y un aviso cada vez que entras acaba siendo ruido que se ignora. Los
@@ -261,7 +264,11 @@ private fun App() {
                     titleContentColor = MaterialTheme.colorScheme.onSurface,
                 ),
                 navigationIcon = {
-                    if (elegido != null) {
+                    if (buscando) {
+                        IconButton(onClick = { buscando = false }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
+                        }
+                    } else if (elegido != null) {
                         IconButton(onClick = { abierto = null }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
                         }
@@ -269,9 +276,13 @@ private fun App() {
                 },
                 title = {
                     Text(
-                        text = elegido?.objeto?.es ?: "Quién no lo tiene",
+                        text = when {
+                            buscando -> "Dónde está más barato"
+                            elegido != null -> elegido.objeto.es
+                            else -> "Quién no lo tiene"
+                        },
                         fontWeight = FontWeight.Medium,
-                        fontSize = if (elegido != null) 17.sp else 20.sp,
+                        fontSize = if (elegido != null || buscando) 17.sp else 20.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -288,10 +299,15 @@ private fun App() {
                             Icon(Icons.Filled.Refresh, contentDescription = "Actualizar")
                         }
                     }
+                    if (elegido == null && !buscando) {
+                        IconButton(onClick = { buscando = true }) {
+                            Icon(Icons.Filled.Search, contentDescription = "Buscar precio")
+                        }
+                    }
                     // Sin token no se ofrece: el envio fallaria y el boton solo
                     // serviria para descubrirlo a base de tocarlo. Y solo en el
                     // listado: dentro de un objeto no viene a cuento.
-                    if (elegido == null && Repositorio.token(context).isNotBlank()) {
+                    if (elegido == null && !buscando && Repositorio.token(context).isNotBlank()) {
                         IconButton(onClick = { anadiendo = true }) {
                             Icon(Icons.Filled.Add, contentDescription = "Añadir objeto")
                         }
@@ -299,7 +315,7 @@ private fun App() {
                     // El interruptor de avisos, en rojo mientras estan pausados:
                     // pausarlos y olvidarlo es el fallo facil, asi que se tiene
                     // que ver desde cualquier pantalla del listado.
-                    if (elegido == null && Repositorio.token(context).isNotBlank()) {
+                    if (elegido == null && !buscando && Repositorio.token(context).isNotBlank()) {
                         IconButton(onClick = { cambiandoAvisos = true }) {
                             if (pausados == true) {
                                 Icon(
@@ -320,11 +336,15 @@ private fun App() {
         },
     ) { relleno ->
         Column(Modifier.padding(relleno)) {
-            if (pausados == true && elegido == null) {
+            if (pausados == true && elegido == null && !buscando) {
                 AvisoPausa(
                     pendiente = avisosPendiente != null,
                     alPulsar = { cambiandoAvisos = true },
                 )
+            }
+            if (buscando) {
+                Buscador(catalogo = catalogo, precios = precios, datos = datos)
+                return@Column
             }
             // La pantalla entra por el lado hacia el que vas, como en cualquier
             // app: sin eso, abrir un objeto es un parpadeo y no se sabe si has
@@ -1405,6 +1425,255 @@ private fun DialogoAjustes(
             TextButton(onClick = alCerrar) { Text("Cancelar") }
         },
     )
+}
+
+private val TILDES = Regex("""\p{Mn}+""")
+
+/** Para buscar sin que importen mayusculas ni tildes: 'almofar' encuentra 'Almófar'. */
+private fun normal(texto: String): String = TILDES.replace(
+    java.text.Normalizer.normalize(texto, java.text.Normalizer.Form.NFD), ""
+).lowercase()
+
+/**
+ * Donde esta mas barato un objeto vigilado, en toda la region.
+ *
+ * Primero eliges el objeto; despues salen los reinos del mas barato al mas
+ * caro. Se marca donde tienes personaje porque solo ahi puedes comprar sin
+ * hacerte uno, y el tope porque es la referencia de si un precio es bueno.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
+    var texto by remember { mutableStateOf("") }
+    var elegido by remember { mutableStateOf<Objeto?>(null) }
+    BackHandler(enabled = elegido != null) { elegido = null }
+
+    if (precios.mercado.isEmpty()) {
+        Text(
+            text = "Todavía no hay precios de toda la región. Se publican en la " +
+                "próxima pasada del escaneo; después toca actualizar.",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(16.dp),
+        )
+        return
+    }
+
+    val objeto = elegido
+    if (objeto == null) {
+        val filtro = normal(texto.trim())
+        val encontrados = catalogo.objetos.filter {
+            filtro.isEmpty() || filtro in normal(it.es) || filtro in normal(it.en)
+        }
+        LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+            item {
+                OutlinedTextField(
+                    value = texto,
+                    onValueChange = { texto = it },
+                    placeholder = { Text("Nombre del objeto, en español o inglés") },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp, 12.dp, 16.dp, 6.dp),
+                )
+            }
+            if (encontrados.isEmpty()) {
+                item {
+                    Text(
+                        text = "Ningún objeto vigilado se llama así. El buscador solo " +
+                            "conoce los de tu lista.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                }
+            }
+            items(encontrados, key = { it.id }) { o ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { elegido = o }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icono(o.icono, 36.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(o.es, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 2)
+                        if (o.en != o.es) {
+                            Text(
+                                text = o.en,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+            }
+        }
+        return
+    }
+
+    // Los ilvl de tu tabla mas los que hay a la venta en algun sitio. Se abre en
+    // el primero que se vende, que es por donde empezaria cualquiera a mirar.
+    val enVenta = remember(objeto.id, precios) { precios.ilvlsEnMercado(objeto.id) }
+    val ilvls = if (objeto.escala) {
+        (objeto.escalones.map { it.ilvl } + enVenta).distinct().sorted()
+    } else emptyList()
+    var ilvl by remember(objeto.id) { mutableStateOf(enVenta.firstOrNull() ?: ilvls.firstOrNull()) }
+
+    val tope = if (objeto.escala) objeto.escalones.firstOrNull { it.ilvl == ilvl }?.tope
+    else objeto.tope
+    val lista = remember(objeto.id, ilvl, precios) {
+        precios.dondeMasBarato(objeto.id, ilvl, objeto.escala)
+    }
+    // slug de reino -> tus personajes ahi
+    val mios = remember(datos) {
+        datos.personajes.values
+            .filter { it.reino.isNotBlank() }
+            .groupBy({ slugDeReino(it.reino) }, { it.nombre })
+    }
+
+    LazyColumn(contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 32.dp)) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icono(objeto.icono, 48.dp)
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(objeto.es, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+                    if (objeto.en != objeto.es) {
+                        Text(
+                            text = objeto.en,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            if (ilvls.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                ilvls.chunked(4).forEach { fila ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        fila.forEach { n ->
+                            FilterChip(
+                                selected = n == ilvl,
+                                onClick = { ilvl = n },
+                                label = {
+                                    Text(
+                                        text = "$n",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 13.sp,
+                                        // Apagado el que no vende nadie: se
+                                        // puede tocar, pero ya sabes que sale vacio.
+                                        color = if (n in enVenta) MaterialTheme.colorScheme.onSurface
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor =
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                                    selectedLabelColor = MaterialTheme.colorScheme.onSurface,
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = n == ilvl,
+                                    borderColor = MaterialTheme.colorScheme.outline,
+                                    selectedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Titulo(
+                if (ilvl != null && objeto.escala) "Del más barato al más caro — ilvl $ilvl"
+                else "Del más barato al más caro",
+                "${lista.size}/${precios.mercado.size}",
+            )
+            Spacer(Modifier.height(8.dp))
+            if (lista.isEmpty()) {
+                Text(
+                    text = "Nadie lo vende ahora mismo en ningún reino de la región.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        items(lista, key = { it.first.nombre }) { (grupo, precio) ->
+            val tuyos = grupo.slugs.flatMap { mios[it].orEmpty() }
+            val bajoTope = tope != null && precio.oro <= tope
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .width(3.dp)
+                        .height(34.dp)
+                        .background(
+                            if (tuyos.isNotEmpty()) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline
+                        )
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = grupo.nombre,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = if (tuyos.isEmpty()) "sin personaje tuyo"
+                        else "tienes a " + tuyos.joinToString(", ") { mote(it) },
+                        fontSize = 12.sp,
+                        color = if (tuyos.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = oro(precio.oro),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        fontWeight = if (bajoTope) FontWeight.Medium else FontWeight.Normal,
+                        color = if (bajoTope) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = (if (precio.cuantas == 1) "1 en venta" else "${precio.cuantas} en venta") +
+                            if (bajoTope) " · bajo tope" else "",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+        }
+        item {
+            Text(
+                text = "${precios.mercado.size} grupos de reinos mirados · precios del " +
+                    fecha(precios.generado),
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 16.dp),
+            )
+        }
+    }
 }
 
 private fun fecha(exportado: Long): String {

@@ -476,3 +476,27 @@ def test_un_objeto_que_no_existe_no_tumba_la_pasada(requests_mock, client):
     requests_mock.get("https://eu.api.blizzard.com/data/wow/item/271440", status_code=404)
 
     assert client.item_datos(271440) is None
+
+
+def test_la_ficha_del_grupo_trae_nombres_y_slugs(requests_mock, client):
+    give_token(requests_mock)
+    requests_mock.get(
+        REALM_URL,
+        json={
+            "realms": [
+                {"slug": "sanguino", "name": {"en_GB": "Sanguino"}},
+                {"slug": "dun-modr", "name": {"en_GB": "Dun Modr"}},
+            ]
+        },
+    )
+
+    assert client.connected_realm_ficha(1305) == (
+        "Sanguino / Dun Modr", ["dun-modr", "sanguino"]
+    )
+
+
+def test_la_ficha_del_grupo_es_none_si_falla(requests_mock, client):
+    give_token(requests_mock)
+    requests_mock.get(REALM_URL, status_code=404)
+
+    assert client.connected_realm_ficha(1305) is None

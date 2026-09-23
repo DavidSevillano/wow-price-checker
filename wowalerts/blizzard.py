@@ -444,6 +444,36 @@ class BlizzardClient:
             log.warning("No he podido leer el nombre del reino %s", realm_id)
         return f"Reino {realm_id}"
 
+    def connected_realm_ficha(self, realm_id: int) -> tuple[str, list[str]] | None:
+        """Nombre legible y slugs de los reinos de un connected realm.
+
+        Lo mismo que `connected_realm_name`, pero con los slugs, que es lo que
+        permite cruzar el grupo con los reinos de tus personajes. None si no se
+        ha podido leer, para que quien llame no cachee un nombre de mentira.
+        """
+        try:
+            response = self._api_get(
+                f"/data/wow/connected-realm/{realm_id}",
+                namespace=f"dynamic-{self.region}",
+                localized=False,
+            )
+        except BlizzardError:
+            return None
+        if response.status_code != 200:
+            return None
+
+        nombres: list[str] = []
+        slugs: list[str] = []
+        for realm in response.json().get("realms", []):
+            nombre = _realm_display_name(realm, self.locale)
+            if nombre:
+                nombres.append(nombre)
+            if isinstance(realm.get("slug"), str) and realm["slug"]:
+                slugs.append(realm["slug"])
+        if not nombres:
+            return None
+        return " / ".join(dict.fromkeys(nombres)), sorted(set(slugs))
+
     def connected_realm_id_for(self, realm_slug: str) -> int | None:
         """Connected realm al que pertenece un reino, por su slug.
 
