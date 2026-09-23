@@ -360,6 +360,7 @@ private fun App() {
                     mercado = mercado,
                     cargando = !mercadoLeido,
                     catalogo = catalogo,
+                    tusObjetos = cobertura.map { it.objeto },
                     datos = datos,
                 )
                 return@Column
@@ -1510,7 +1511,14 @@ private fun FilaBusqueda(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Buscador(mercado: Mercado?, cargando: Boolean, catalogo: Catalogo, datos: Datos) {
+private fun Buscador(
+    mercado: Mercado?,
+    cargando: Boolean,
+    catalogo: Catalogo,
+    // Tus objetos en el orden de la pantalla principal, que es al que estas hecho.
+    tusObjetos: List<Objeto>,
+    datos: Datos,
+) {
     var texto by remember { mutableStateOf("") }
     var elegido by remember { mutableStateOf<Producto?>(null) }
     BackHandler(enabled = elegido != null) { elegido = null }
@@ -1538,9 +1546,9 @@ private fun Buscador(mercado: Mercado?, cargando: Boolean, catalogo: Catalogo, d
         val encontrados = remember(texto, mercado) { mercado.buscar(texto) }
         // Tus objetos, a un toque: son los que de verdad miras. Tambien los que
         // no vende nadie ahora mismo, porque saberlo es justo la respuesta.
-        val tuyos = remember(mercado, catalogo) {
+        val tuyos = remember(mercado, tusObjetos) {
             val porId = mercado.productos.filter { !it.mascota }.associateBy { it.id }
-            catalogo.objetos.map { it to porId[it.id] }
+            tusObjetos.map { it to porId[it.id] }
         }
         LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
             item {
@@ -1619,7 +1627,7 @@ private fun Buscador(mercado: Mercado?, cargando: Boolean, catalogo: Catalogo, d
     val mios = remember(datos) {
         datos.personajes.values
             .filter { it.reino.isNotBlank() }
-            .groupBy({ slugDeReino(it.reino) }, { it.nombre })
+            .groupBy { slugDeReino(it.reino) }
     }
 
     LazyColumn(contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 32.dp)) {
@@ -1684,6 +1692,8 @@ private fun Buscador(mercado: Mercado?, cargando: Boolean, catalogo: Catalogo, d
         }
         items(variante.ofertas, key = { it.grupo.nombre }) { oferta ->
             val tuyos = oferta.grupo.slugs.flatMap { mios[it].orEmpty() }
+            // La cuenta y no el personaje: es lo que decide que WoW abres.
+            val cuentas = tuyos.mapNotNull { it.cuenta }.distinct().sorted()
             val bajoTope = tope != null && oferta.oro <= tope
             Row(
                 Modifier
@@ -1710,8 +1720,11 @@ private fun Buscador(mercado: Mercado?, cargando: Boolean, catalogo: Catalogo, d
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = if (tuyos.isEmpty()) "sin personaje tuyo"
-                        else "tienes a " + tuyos.joinToString(", ") { mote(it) },
+                        text = when {
+                            tuyos.isEmpty() -> "sin personaje tuyo"
+                            cuentas.isEmpty() -> "tienes personaje"
+                            else -> cuentas.joinToString(" · ") { "WoW $it" }
+                        },
                         fontSize = 12.sp,
                         color = if (tuyos.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant
                         else MaterialTheme.colorScheme.primary,
