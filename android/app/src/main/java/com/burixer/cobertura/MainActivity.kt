@@ -229,7 +229,14 @@ private fun App() {
     val elegido = cobertura.firstOrNull { it.objeto.id == abierto }
 
     BackHandler(enabled = elegido != null) { abierto = null }
-    BackHandler(enabled = buscando) { buscando = false }
+    // Lo abierto en el buscador vive aqui y no dentro: la flecha de arriba y el
+    // atras del sistema tienen que hacer lo mismo, volver primero a la lista
+    // de la lupa y solo despues salir del buscador.
+    var abiertoEnBuscador by remember { mutableStateOf<Seleccion?>(null) }
+    fun atrasEnBuscador() {
+        if (abiertoEnBuscador != null) abiertoEnBuscador = null else buscando = false
+    }
+    BackHandler(enabled = buscando) { atrasEnBuscador() }
 
     // La descarga de al abrir no dice nada cuando sale bien: no has pedido nada,
     // y un aviso cada vez que entras acaba siendo ruido que se ignora. Los
@@ -281,7 +288,7 @@ private fun App() {
                 ),
                 navigationIcon = {
                     if (buscando) {
-                        IconButton(onClick = { buscando = false }) {
+                        IconButton(onClick = { atrasEnBuscador() }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
                         }
                     } else if (elegido != null) {
@@ -369,6 +376,8 @@ private fun App() {
                     cargando = !mercadoLeido,
                     catalogo = catalogo,
                     tusObjetos = cobertura.map { it.objeto },
+                    abierto = abiertoEnBuscador,
+                    alAbrir = { abiertoEnBuscador = it },
                     datos = datos,
                 )
             } else {
@@ -1492,11 +1501,11 @@ private fun Buscador(
     catalogo: Catalogo,
     // Tus objetos en el orden de la pantalla principal, que es al que estas hecho.
     tusObjetos: List<Objeto>,
+    abierto: Seleccion?,
+    alAbrir: (Seleccion) -> Unit,
     datos: Datos,
 ) {
     var texto by remember { mutableStateOf("") }
-    var abierto by remember { mutableStateOf<Seleccion?>(null) }
-    BackHandler(enabled = abierto != null) { abierto = null }
 
     // 0 cargando, 1 sin datos, 2 listo. Un cruce suave entre ellos, para que la
     // lista no aparezca de golpe cuando acaba de leerse.
@@ -1539,7 +1548,7 @@ private fun Buscador(
                         alEscribir = { texto = it },
                         mercado = mercado,
                         tusObjetos = tusObjetos,
-                        alAbrir = { producto, valor -> abierto = Seleccion(producto, valor) },
+                        alAbrir = { producto, valor -> alAbrir(Seleccion(producto, valor)) },
                     )
                 } else {
                     FichaMercado(seleccion, mercado, catalogo, datos)
