@@ -30,6 +30,7 @@ object Repositorio {
     private const val FICHERO = "datos.json"
     private const val CATALOGO = "catalogo.json"
     private const val PRECIOS = "precios.json"
+    private const val MERCADO = "mercado.json.gz"
 
     // El catalogo y los precios los publica el workflow en su propia rama, para
     // no ensuciar el historial de main con un commit por hora.
@@ -72,6 +73,9 @@ object Repositorio {
     fun precios(context: Context): Precios =
         leerCache(context, PRECIOS)?.let { runCatching { parsearPrecios(it) }.getOrNull() }
             ?: Precios.VACIOS
+
+    /** El buscador. Null si todavia no se ha descargado o no se puede leer. */
+    fun mercado(context: Context): Mercado? = Mercado.leer(File(context.filesDir, MERCADO))
 
     private fun leerCache(context: Context, nombre: String): String? {
         val fichero = File(context.filesDir, nombre)
@@ -150,6 +154,9 @@ object Repositorio {
                 runCatching { leer(repo, nombre, token, RAMA_DATOS) }
                     .onSuccess { File(context.filesDir, nombre).writeText(it) }
             }
+            // Comprimido, asi que se guarda tal cual llega. Tambien opcional.
+            runCatching { leerBytes(repo, MERCADO, token, RAMA_DATOS) }
+                .onSuccess { File(context.filesDir, MERCADO).writeBytes(it) }
 
             // Si los avisos estan pausados lo dice config.yaml, en main. Se lee
             // de ahi y no del catalogo porque el catalogo tarda hasta una hora
@@ -183,11 +190,14 @@ object Repositorio {
         token: String,
         rama: String? = null,
     ): List<String> {
-        val cuerpo = peticion(
-            "https://api.github.com/repos/$repo/contents/$carpeta" +
-                if (rama != null) "?ref=$rama" else "",
-            token,
-            "application/vnd.github+json",
+        val cuerpo = String(
+            peticion(
+                "https://api.github.com/repos/$repo/contents/$carpeta" +
+                    if (rama != null) "?ref=$rama" else "",
+                token,
+                "application/vnd.github+json",
+            ),
+            Charsets.UTF_8,
         )
         val array = JSONArray(cuerpo)
         return (0 until array.length())
@@ -201,7 +211,14 @@ object Repositorio {
         ruta: String,
         token: String,
         rama: String? = null,
-    ): String = peticion(
+    ): String = String(leerBytes(repo, ruta, token, rama), Charsets.UTF_8)
+
+    private fun leerBytes(
+        repo: String,
+        ruta: String,
+        token: String,
+        rama: String? = null,
+    ): ByteArray = peticion(
         "https://api.github.com/repos/$repo/contents/$ruta" +
             if (rama != null) "?ref=$rama" else "",
         token,
@@ -210,7 +227,7 @@ object Repositorio {
         "application/vnd.github.raw",
     )
 
-    private fun peticion(url: String, token: String, accept: String): String {
+    private fun peticion(url: String, token: String, accept: String): ByteArray {
         val conexion = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             setRequestProperty("Authorization", "Bearer $token")
@@ -237,7 +254,7 @@ object Repositorio {
             if (codigo !in 200..299) {
                 throw IllegalStateException("GitHub ha respondido $codigo.")
             }
-            return conexion.inputStream.bufferedReader().use { it.readText() }
+            return conexion.inputStream.use { it.readBytes() }
         } finally {
             conexion.disconnect()
         }

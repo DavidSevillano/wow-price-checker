@@ -94,33 +94,9 @@ def _precios_json(
     return precios
 
 
-def construir_mercado(
-    grupos: Iterable[
-        tuple[str, Sequence[str], Mapping[tuple[int, int | None], tuple[int, int]], int]
-    ],
-) -> list[dict[str, Any]]:
-    """El buscador de la app: el mas barato de cada objeto en toda la region.
-
-    Va por connected realm y no por reino: los reinos de un grupo comparten casa
-    de subastas, y repetir sus precios en cada uno multiplicaria el fichero por
-    tres sin decir nada nuevo. Los slugs van dentro para que la app sepa en que
-    grupos tienes personaje, que es donde de verdad puedes comprar.
-    """
-    return [
-        {
-            "nombre": nombre,
-            "slugs": sorted(slugs),
-            "visto": visto,
-            "precios": _precios_json(minimos),
-        }
-        for nombre, slugs, minimos, visto in sorted(grupos, key=lambda g: g[0])
-    ]
-
-
 def construir_precios(
     por_reino: Mapping[str, tuple[Mapping[tuple[int, int | None], tuple[int, int]], int]],
     generado: int,
-    mercado: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """El fichero que se publica, listo para escribir.
 
@@ -133,7 +109,4 @@ def construir_precios(
     for slug, (minimos, visto) in por_reino.items():
         reinos[slug] = {"visto": visto, "precios": _precios_json(minimos)}
 
-    salida: dict[str, Any] = {"version": VERSION, "generado": generado, "reinos": reinos}
-    if mercado is not None:
-        salida["mercado"] = mercado
-    return salida
+    return {"version": VERSION, "generado": generado, "reinos": reinos}

@@ -229,44 +229,7 @@ data class Precio(val minCobre: Long, val cuantas: Int) {
  */
 data class ReinoPrecios(val visto: Long, val porObjeto: Map<Int, Map<String, Precio>>)
 
-/**
- * Un connected realm entero, para el buscador: todos sus reinos comparten casa
- * de subastas, asi que da igual por cual entres.
- */
-data class Grupo(
-    val nombre: String,
-    val slugs: List<String>,
-    val visto: Long,
-    val porObjeto: Map<Int, Map<String, Precio>>,
-)
-
-data class Precios(
-    val generado: Long,
-    val reinos: Map<String, ReinoPrecios>,
-    val mercado: List<Grupo> = emptyList(),
-) {
-
-    /**
-     * Los grupos de la region donde se vende ese producto, del mas barato al
-     * mas caro. Lo que no escala se mira entero, como en `de`.
-     */
-    fun dondeMasBarato(itemId: Int, ilvl: Int?, escala: Boolean): List<Pair<Grupo, Precio>> =
-        mercado.mapNotNull { grupo ->
-            val delObjeto = grupo.porObjeto[itemId] ?: return@mapNotNull null
-            val precio = if (escala) {
-                delObjeto[ilvl?.toString() ?: SIN_ILVL]
-            } else {
-                delObjeto.values.minByOrNull { it.minCobre }
-            }
-            precio?.let { grupo to it }
-        }.sortedBy { it.second.minCobre }
-
-    /** Los ilvl de ese objeto que hay a la venta en algun sitio de la region. */
-    fun ilvlsEnMercado(itemId: Int): List<Int> =
-        mercado.flatMap { it.porObjeto[itemId]?.keys.orEmpty() }
-            .mapNotNull { it.toIntOrNull() }
-            .distinct()
-            .sorted()
+data class Precios(val generado: Long, val reinos: Map<String, ReinoPrecios>) {
 
     /** Lo que costaria ser el mas barato de ese reino, o null si no se sabe. */
     fun de(reino: String, itemId: Int, ilvl: Int?, escala: Boolean): Consulta {
@@ -364,42 +327,19 @@ fun parsearPrecios(texto: String): Precios {
 
     for (slug in reinos.keys()) {
         val reino = reinos.getJSONObject(slug)
-        salida[slug] = ReinoPrecios(
-            reino.optLong("visto", 0L), porObjeto(reino.optJSONObject("precios"))
-        )
-    }
-
-    // Un fichero de antes del buscador no trae mercado: el buscador sale vacio
-    // y lo demas sigue igual.
-    val mercado = raiz.optJSONArray("mercado")?.let { array ->
-        (0 until array.length()).map { i ->
-            val g = array.getJSONObject(i)
-            Grupo(
-                nombre = g.optString("nombre"),
-                slugs = g.optJSONArray("slugs")?.let { s ->
-                    (0 until s.length()).map { s.getString(it) }
-                } ?: emptyList(),
-                visto = g.optLong("visto", 0L),
-                porObjeto = porObjeto(g.optJSONObject("precios")),
-            )
+        val porObjeto = HashMap<Int, Map<String, Precio>>()
+        val objetos = reino.optJSONObject("precios") ?: JSONObject()
+        for (idTexto in objetos.keys()) {
+            val itemId = idTexto.toIntOrNull() ?: continue
+            val porIlvl = objetos.getJSONObject(idTexto)
+            val mapa = HashMap<String, Precio>()
+            for (clave in porIlvl.keys()) {
+                val dato = porIlvl.getJSONObject(clave)
+                mapa[clave] = Precio(dato.optLong("min", 0L), dato.optInt("n", 0))
+            }
+            porObjeto[itemId] = mapa
         }
-    } ?: emptyList()
-
-    return Precios(raiz.optLong("generado", 0L), salida, mercado)
-}
-
-private fun porObjeto(objetos: JSONObject?): Map<Int, Map<String, Precio>> {
-    val salida = HashMap<Int, Map<String, Precio>>()
-    if (objetos == null) return salida
-    for (idTexto in objetos.keys()) {
-        val itemId = idTexto.toIntOrNull() ?: continue
-        val porIlvl = objetos.getJSONObject(idTexto)
-        val mapa = HashMap<String, Precio>()
-        for (clave in porIlvl.keys()) {
-            val dato = porIlvl.getJSONObject(clave)
-            mapa[clave] = Precio(dato.optLong("min", 0L), dato.optInt("n", 0))
-        }
-        salida[itemId] = mapa
+        salida[slug] = ReinoPrecios(reino.optLong("visto", 0L), porObjeto)
     }
-    return salida
+    return Precios(raiz.optLong("generado", 0L), salida)
 }

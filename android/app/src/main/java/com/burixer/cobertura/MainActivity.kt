@@ -89,7 +89,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -196,6 +198,16 @@ private fun App() {
     var anadiendo by remember { mutableStateOf(false) }
     var abierto by remember { mutableStateOf<Int?>(null) }
     var buscando by remember { mutableStateOf(false) }
+    // El buscador se lee de disco la primera vez que se abre, y no al arrancar:
+    // son miles de productos y la pantalla principal no los necesita.
+    var mercado by remember { mutableStateOf<Mercado?>(null) }
+    var mercadoLeido by remember { mutableStateOf(false) }
+    LaunchedEffect(buscando, mercadoLeido) {
+        if (buscando && !mercadoLeido) {
+            mercado = withContext(Dispatchers.IO) { Repositorio.mercado(context) }
+            mercadoLeido = true
+        }
+    }
 
     // Topes enviados y todavia no confirmados. Se leen de disco porque la app se
     // muere al salir: en memoria moririan con ella y volverias a ver el numero
@@ -231,6 +243,7 @@ private fun App() {
                     // se releen: si has tocado config.yaml, aqui aparece.
                     catalogo = Repositorio.catalogo(context)
                     precios = Repositorio.precios(context)
+                    mercadoLeido = false
                     // La descarga ya ha borrado los pendientes que el catalogo
                     // nuevo confirma; esto releele lo que queda vivo.
                     pendientes = Topes.pendientes(context)
@@ -343,7 +356,12 @@ private fun App() {
                 )
             }
             if (buscando) {
-                Buscador(catalogo = catalogo, precios = precios, datos = datos)
+                Buscador(
+                    mercado = mercado,
+                    cargando = !mercadoLeido,
+                    catalogo = catalogo,
+                    datos = datos,
+                )
                 return@Column
             }
             // La pantalla entra por el lado hacia el que vas, como en cualquier
@@ -1427,31 +1445,38 @@ private fun DialogoAjustes(
     )
 }
 
-private val TILDES = Regex("""\p{Mn}+""")
-
-/** Para buscar sin que importen mayusculas ni tildes: 'almofar' encuentra 'Almófar'. */
-private fun normal(texto: String): String = TILDES.replace(
-    java.text.Normalizer.normalize(texto, java.text.Normalizer.Form.NFD), ""
-).lowercase()
+/** Como se llama una variante: el ilvl, la calidad de la mascota, o nada. */
+private fun etiqueta(producto: Producto, valor: Int?): String = when {
+    valor == null -> "—"
+    producto.mascota -> Mercado.CALIDADES.getOrNull(valor) ?: "$valor"
+    else -> "$valor"
+}
 
 /**
- * Donde esta mas barato un objeto vigilado, en toda la region.
+ * Donde esta mas barato cualquier cosa de la region, como en la casa de subastas.
  *
- * Primero eliges el objeto; despues salen los reinos del mas barato al mas
- * caro. Se marca donde tienes personaje porque solo ahi puedes comprar sin
- * hacerte uno, y el tope porque es la referencia de si un precio es bueno.
+ * Escribes, eliges el producto y salen los reinos del mas barato al mas caro.
+ * Se marca donde tienes personaje porque solo ahi puedes comprar sin hacerte
+ * uno, y si el objeto es de los que vigilas, el tope, que es tu referencia de
+ * si un precio es bueno.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
+private fun Buscador(mercado: Mercado?, cargando: Boolean, catalogo: Catalogo, datos: Datos) {
     var texto by remember { mutableStateOf("") }
-    var elegido by remember { mutableStateOf<Objeto?>(null) }
+    var elegido by remember { mutableStateOf<Producto?>(null) }
     BackHandler(enabled = elegido != null) { elegido = null }
 
-    if (precios.mercado.isEmpty()) {
+    if (cargando) {
+        Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+        }
+        return
+    }
+    if (mercado == null || mercado.productos.isEmpty()) {
         Text(
-            text = "Todavía no hay precios de toda la región. Se publican en la " +
-                "próxima pasada del escaneo; después toca actualizar.",
+            text = "Todavía no hay precios de la región. Se publican en la próxima " +
+                "pasada del escaneo; después toca actualizar.",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(16.dp),
@@ -1459,51 +1484,63 @@ private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
         return
     }
 
-    val objeto = elegido
-    if (objeto == null) {
-        val filtro = normal(texto.trim())
-        val encontrados = catalogo.objetos.filter {
-            filtro.isEmpty() || filtro in normal(it.es) || filtro in normal(it.en)
-        }
+    val producto = elegido
+    if (producto == null) {
+        val encontrados = remember(texto, mercado) { mercado.buscar(texto) }
         LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
             item {
                 OutlinedTextField(
                     value = texto,
                     onValueChange = { texto = it },
-                    placeholder = { Text("Nombre del objeto, en español o inglés") },
+                    placeholder = { Text("Buscar objeto o mascota") },
                     singleLine = true,
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (texto.isNotEmpty()) {
+                            IconButton(onClick = { texto = "" }) {
+                                Icon(Icons.Filled.Close, contentDescription = "Borrar")
+                            }
+                        }
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp, 12.dp, 16.dp, 6.dp),
                 )
-            }
-            if (encontrados.isEmpty()) {
-                item {
+                val aviso = when {
+                    texto.trim().length < 2 ->
+                        "${mercado.productos.size} productos en ${mercado.grupos.size} " +
+                            "reinos, en español o inglés. Materiales y consumibles no " +
+                            "salen: cuestan lo mismo en toda la región."
+                    encontrados.isEmpty() ->
+                        "Nada con ese nombre a la venta por encima de 500 g."
+                    else -> null
+                }
+                aviso?.let {
                     Text(
-                        text = "Ningún objeto vigilado se llama así. El buscador solo " +
-                            "conoce los de tu lista.",
-                        fontSize = 13.sp,
+                        text = it,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(16.dp),
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                     )
                 }
             }
-            items(encontrados, key = { it.id }) { o ->
+            items(encontrados, key = { (if (it.mascota) "m" else "o") + it.id }) { p ->
+                val desde = p.variantes.mapNotNull { v -> v.ofertas.firstOrNull() }
+                    .minByOrNull { it.oro }
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable { elegido = o }
+                        .clickable { elegido = p }
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icono(o.icono, 36.dp)
+                    Icono(p.icono, 36.dp)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(o.es, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 2)
-                        if (o.en != o.es) {
+                        Text(p.es, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 2)
+                        if (p.en != p.es) {
                             Text(
-                                text = o.en,
+                                text = p.en,
                                 fontSize = 11.sp,
                                 fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1512,6 +1549,15 @@ private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
                             )
                         }
                     }
+                    desde?.let {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "desde ${oroCorto(it.oro)}",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline)
             }
@@ -1519,18 +1565,16 @@ private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
         return
     }
 
-    // Los ilvl de tu tabla mas los que hay a la venta en algun sitio. Se abre en
-    // el primero que se vende, que es por donde empezaria cualquiera a mirar.
-    val enVenta = remember(objeto.id, precios) { precios.ilvlsEnMercado(objeto.id) }
-    val ilvls = if (objeto.escala) {
-        (objeto.escalones.map { it.ilvl } + enVenta).distinct().sorted()
-    } else emptyList()
-    var ilvl by remember(objeto.id) { mutableStateOf(enVenta.firstOrNull() ?: ilvls.firstOrNull()) }
+    var indice by remember(producto) { mutableStateOf(0) }
+    val variante = producto.variantes.getOrNull(indice) ?: producto.variantes.first()
 
-    val tope = if (objeto.escala) objeto.escalones.firstOrNull { it.ilvl == ilvl }?.tope
-    else objeto.tope
-    val lista = remember(objeto.id, ilvl, precios) {
-        precios.dondeMasBarato(objeto.id, ilvl, objeto.escala)
+    // El tope solo existe si el objeto es de los que vigilas.
+    val vigilado = if (producto.mascota) null
+    else catalogo.objetos.firstOrNull { it.id == producto.id }
+    val tope = when {
+        vigilado == null -> null
+        vigilado.escala -> vigilado.escalones.firstOrNull { it.ilvl == variante.valor }?.tope
+        else -> vigilado.tope
     }
     // slug de reino -> tus personajes ahi
     val mios = remember(datos) {
@@ -1542,13 +1586,13 @@ private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
     LazyColumn(contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 32.dp)) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icono(objeto.icono, 48.dp)
+                Icono(producto.icono, 48.dp)
                 Spacer(Modifier.width(12.dp))
                 Column {
-                    Text(objeto.es, fontSize = 17.sp, fontWeight = FontWeight.Medium)
-                    if (objeto.en != objeto.es) {
+                    Text(producto.es, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+                    if (producto.en != producto.es) {
                         Text(
-                            text = objeto.en,
+                            text = producto.en,
                             fontSize = 12.sp,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1556,23 +1600,19 @@ private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
                     }
                 }
             }
-            if (ilvls.isNotEmpty()) {
+            if (producto.variantes.size > 1) {
                 Spacer(Modifier.height(14.dp))
-                ilvls.chunked(4).forEach { fila ->
+                producto.variantes.withIndex().chunked(4).forEach { fila ->
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        fila.forEach { n ->
+                        fila.forEach { (i, v) ->
                             FilterChip(
-                                selected = n == ilvl,
-                                onClick = { ilvl = n },
+                                selected = i == indice,
+                                onClick = { indice = i },
                                 label = {
                                     Text(
-                                        text = "$n",
+                                        text = etiqueta(producto, v.valor),
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = 13.sp,
-                                        // Apagado el que no vende nadie: se
-                                        // puede tocar, pero ya sabes que sale vacio.
-                                        color = if (n in enVenta) MaterialTheme.colorScheme.onSurface
-                                        else MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 },
                                 colors = FilterChipDefaults.filterChipColors(
@@ -1582,7 +1622,7 @@ private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
                                 ),
                                 border = FilterChipDefaults.filterChipBorder(
                                     enabled = true,
-                                    selected = n == ilvl,
+                                    selected = i == indice,
                                     borderColor = MaterialTheme.colorScheme.outline,
                                     selectedBorderColor = MaterialTheme.colorScheme.primary,
                                 ),
@@ -1594,22 +1634,18 @@ private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
             }
             Spacer(Modifier.height(12.dp))
             Titulo(
-                if (ilvl != null && objeto.escala) "Del más barato al más caro — ilvl $ilvl"
-                else "Del más barato al más caro",
-                "${lista.size}/${precios.mercado.size}",
+                when {
+                    variante.valor == null -> "Los reinos más baratos"
+                    producto.mascota -> "Los reinos más baratos — ${etiqueta(producto, variante.valor)}"
+                    else -> "Los reinos más baratos — ilvl ${variante.valor}"
+                },
+                "${variante.ofertas.size}",
             )
             Spacer(Modifier.height(8.dp))
-            if (lista.isEmpty()) {
-                Text(
-                    text = "Nadie lo vende ahora mismo en ningún reino de la región.",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
-        items(lista, key = { it.first.nombre }) { (grupo, precio) ->
-            val tuyos = grupo.slugs.flatMap { mios[it].orEmpty() }
-            val bajoTope = tope != null && precio.oro <= tope
+        items(variante.ofertas, key = { it.grupo.nombre }) { oferta ->
+            val tuyos = oferta.grupo.slugs.flatMap { mios[it].orEmpty() }
+            val bajoTope = tope != null && oferta.oro <= tope
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -1628,7 +1664,7 @@ private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = grupo.nombre,
+                        text = oferta.grupo.nombre,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 2,
@@ -1647,7 +1683,7 @@ private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
                 Spacer(Modifier.width(8.dp))
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = oro(precio.oro),
+                        text = oro(oferta.oro),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 13.sp,
                         fontWeight = if (bajoTope) FontWeight.Medium else FontWeight.Normal,
@@ -1655,7 +1691,7 @@ private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
                         else MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        text = (if (precio.cuantas == 1) "1 en venta" else "${precio.cuantas} en venta") +
+                        text = (if (oferta.cuantas == 1) "1 en venta" else "${oferta.cuantas} en venta") +
                             if (bajoTope) " · bajo tope" else "",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1666,8 +1702,8 @@ private fun Buscador(catalogo: Catalogo, precios: Precios, datos: Datos) {
         }
         item {
             Text(
-                text = "${precios.mercado.size} grupos de reinos mirados · precios del " +
-                    fecha(precios.generado),
+                text = "Solo los ${variante.ofertas.size} reinos más baratos de " +
+                    "${mercado.grupos.size} · precios del ${fecha(mercado.generado)}",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 16.dp),

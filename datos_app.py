@@ -4,7 +4,7 @@
     py datos_app.py --salida /tmp/x    # a otra carpeta
     py datos_app.py --solo-catalogo    # sin bajarse ningun reino
 
-Publica dos cosas:
+Publica tres cosas:
 
   catalogo.json   que objetos vigilas, como se llaman en espanol, su icono y tu
                   tabla de precios por ilvl. Cambia solo cuando tocas
@@ -12,10 +12,12 @@ Publica dos cosas:
                   cuesta cuatro peticiones y asi la app nunca se queda atras.
 
   precios.json    el mas barato de cada objeto e ilvl en los reinos donde
-                  vendes (`reinos`) y en todos los de la region (`mercado`, el
-                  buscador de la app). Es el dato que no sobrevive a la pasada:
-                  el volcado de un reino son decenas de miles de subastas que se
-                  miran y se tiran.
+                  vendes. Es el dato que no sobrevive a la pasada: el volcado de
+                  un reino son decenas de miles de subastas que se miran y se
+                  tiran.
+
+  mercado.json.gz el buscador de la app: los reinos mas baratos de cualquier
+                  cosa que se venda en la region, como la casa de subastas.
 
 Va aparte de main.py a proposito. main.py es el que te manda las alertas y no
 conviene tocarlo para esto.
@@ -24,6 +26,7 @@ conviene tocarlo para esto.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import logging
 import os
@@ -35,12 +38,20 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from wowalerts.blizzard import BlizzardClient, BlizzardError
+from wowalerts.buscador import (
+    COBRE_POR_ORO,
+    PRECIO_MINIMO_ORO,
+    acumular,
+    clave_de_nombre,
+    construir_indice,
+    nombres_que_faltan,
+)
 from wowalerts.config import ConfigError, load_config
 from wowalerts.items import ItemResolutionError, resolve_item_ids
+from wowalerts.mercado import TIPO_MASCOTA, resumir_reino
 from wowalerts.misubastas import slugify_realm
 from wowalerts.personajes import leer_rosters
 from wowalerts.precios import (
-    construir_mercado,
     construir_precios,
     minimos_del_reino,
     reinos_a_vigilar,
@@ -148,12 +159,40 @@ def fichas_de_grupos(client, realm_ids, state_dir) -> dict[int, tuple[str, list[
     return fichas
 
 
-def recoger_precios(client, config, reglas, roster_path, state_dir) -> dict:
-    """Baja toda la region y se queda con el precio mas barato de cada reino.
+def completar_nombres(client, ofertas, state_dir) -> dict:
+    """Nombre en espanol e ingles, e icono, de lo que se vende en la region.
+
+    Se cachean entre pasadas: un nombre no cambia, y son veinte mil productos.
+    Lo que falta se pide a plazos (ver NOMBRES_POR_PASADA).
+    """
+    cache = JsonMapCache(Path(state_dir) / "nombres_mercado.json", "productos")
+    faltan = nombres_que_faltan(ofertas, cache._data)
+
+    def uno(clave):
+        if clave.tipo == TIPO_MASCOTA:
+            return clave, client.pet_species_names(clave.id), None
+        return clave, client.item_names(clave.id), client.item_icon_url(clave.id)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for clave, nombres, icono in pool.map(uno, faltan):
+            es = nombres.get("es_ES") or nombres.get("es_MX")
+            en = nombres.get("en_GB") or nombres.get("en_US")
+            if es or en:
+                cache.set(clave_de_nombre(clave), {"es": es, "en": en, "icono": icono})
+    cache.save()
+    log.info(
+        "Nombres del buscador: %s conocidos, %s pedidos en esta pasada.",
+        len(cache), len(faltan),
+    )
+    return cache._data
+
+
+def recoger_precios(client, config, reglas, roster_path, state_dir) -> tuple[dict, dict]:
+    """Baja toda la region y saca de ella los dos ficheros de precios.
 
     Dos usos del mismo volcado: el precio a batir en los reinos donde vendes
-    (`reinos`) y el buscador de la app, que dice donde esta mas barato cada
-    objeto en toda la region (`mercado`).
+    (precios.json) y el buscador de la app, que dice donde esta mas barato
+    cualquier cosa en toda la region (mercado.json.gz).
     """
     roster = leer_rosters(roster_path)
     reino_por_personaje = {p.name: p.realm for p in roster}
@@ -188,7 +227,8 @@ def recoger_precios(client, config, reglas, roster_path, state_dir) -> dict:
 
     vigilados = set(reglas)
     por_reino: dict[str, tuple[dict, int]] = {}
-    grupos: list[tuple[str, list[str], dict, int]] = []
+    grupos: list[tuple[str, list[str], int]] = []
+    ofertas: dict = {}
 
     def una(realm_id: int):
         try:
@@ -210,16 +250,27 @@ def recoger_precios(client, config, reglas, roster_path, state_dir) -> dict:
                 (snapshot.taken_at or datetime.now(timezone.utc)).timestamp()
             )
             nombre, slugs = fichas[realm_id]
-            grupos.append((nombre, slugs, minimos, visto))
+            acumular(
+                ofertas,
+                len(grupos),
+                resumir_reino(
+                    snapshot.auctions,
+                    config.bonus_ilvl_map,
+                    PRECIO_MINIMO_ORO * COBRE_POR_ORO,
+                    muestras=1,
+                ),
+            )
+            grupos.append((nombre, slugs, visto))
             for mio in reinos_por_id.get(realm_id, []):
                 por_reino[slugify_realm(mio)] = (minimos, visto)
             log.debug("  %s: %s producto(s) con precio", nombre, len(minimos))
 
     log.info("Reinos con dato: %s de %s", len(grupos), len(todos))
-    return construir_precios(
-        por_reino,
-        int(datetime.now(timezone.utc).timestamp()),
-        mercado=construir_mercado(grupos),
+    ahora = int(datetime.now(timezone.utc).timestamp())
+    nombres = completar_nombres(client, ofertas, state_dir)
+    return (
+        construir_precios(por_reino, ahora),
+        construir_indice(ofertas, nombres, grupos, ahora),
     )
 
 
@@ -238,6 +289,27 @@ def escribir(destino: Path, nombre: str, contenido: dict) -> bool:
         return False
     ruta.write_text(texto, encoding="utf-8")
     log.info("%s escrito (%s KB).", nombre, len(texto) // 1024)
+    return True
+
+
+def escribir_gz(destino: Path, nombre: str, contenido: dict) -> bool:
+    """Como `escribir`, pero comprimido: sin comprimir son varios megas.
+
+    `mtime=0` para que los mismos datos den los mismos bytes y se puedan
+    comparar con los de la pasada anterior.
+    """
+    destino.mkdir(parents=True, exist_ok=True)
+    ruta = destino / nombre
+    texto = json.dumps(contenido, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    datos = gzip.compress(texto.encode("utf-8"), mtime=0)
+    if ruta.is_file() and ruta.read_bytes() == datos:
+        log.info("%s sin cambios.", nombre)
+        return False
+    ruta.write_bytes(datos)
+    log.info(
+        "%s escrito (%s KB, %s productos).",
+        nombre, len(datos) // 1024, len(contenido["productos"]),
+    )
     return True
 
 
@@ -299,10 +371,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.solo_catalogo:
         log.info("--solo-catalogo: no bajo ningun reino.")
     else:
-        precios = recoger_precios(
+        precios, indice = recoger_precios(
             client, config, reglas, args.personajes, args.state_dir
         )
         cambios = escribir(destino, "precios.json", precios) or cambios
+        cambios = escribir_gz(destino, "mercado.json.gz", indice) or cambios
 
     log.info("✅ Listo%s.", "" if cambios else " (sin cambios)")
     return EXIT_OK

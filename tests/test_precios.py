@@ -1,5 +1,4 @@
 from wowalerts.precios import (
-    construir_mercado,
     construir_precios,
     minimos_del_reino,
     reinos_a_vigilar,
@@ -91,21 +90,3 @@ def test_el_ilvl_desconocido_se_escribe_como_plano():
         {"garona": ({(258126, None): (700_000, 1)}, 1)}, generado=2
     )
     assert salida["reinos"]["garona"]["precios"]["258126"]["plano"]["min"] == 700_000
-
-
-def test_el_mercado_va_por_grupo_con_sus_slugs_y_ordenado():
-    """Un grupo comparte casa de subastas: sus precios salen una sola vez."""
-    mercado = construir_mercado([
-        ("Zenedar / Bladefist", ["zenedar", "bladefist"], {(271440, 305): (900, 1)}, 5),
-        ("Aszune / Shadowsong", ["shadowsong", "aszune"], {(258126, None): (700, 3)}, 6),
-    ])
-    assert [g["nombre"] for g in mercado] == ["Aszune / Shadowsong", "Zenedar / Bladefist"]
-    assert mercado[0]["slugs"] == ["aszune", "shadowsong"]
-    assert mercado[0]["visto"] == 6
-    assert mercado[0]["precios"]["258126"]["plano"] == {"min": 700, "n": 3}
-
-
-def test_el_mercado_solo_sale_si_se_pasa():
-    """Sin mercado el fichero queda como antes, y la app vieja lo sigue leyendo."""
-    assert "mercado" not in construir_precios({}, generado=1)
-    assert construir_precios({}, generado=1, mercado=[])["mercado"] == []
