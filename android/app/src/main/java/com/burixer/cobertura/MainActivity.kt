@@ -1453,6 +1453,54 @@ private fun etiqueta(producto: Producto, valor: Int?): String = when {
 }
 
 /**
+ * Una fila de la lista del buscador. Sin `producto` es que nadie lo vende ahora
+ * mismo en la region: se ve, apagada y sin poder abrirla.
+ */
+@Composable
+private fun FilaBusqueda(
+    icono: String?,
+    es: String,
+    en: String,
+    producto: Producto?,
+    alPulsar: () -> Unit,
+) {
+    val desde = producto?.variantes?.mapNotNull { v -> v.ofertas.firstOrNull() }
+        ?.minByOrNull { it.oro }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = producto != null, onClick = alPulsar)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icono(icono, 36.dp)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(es, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 2)
+            if (en != es) {
+                Text(
+                    text = en,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = desde?.let { "desde ${oroCorto(it.oro)}" } ?: "nadie lo vende",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 12.sp,
+            color = if (desde != null) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+}
+
+/**
  * Donde esta mas barato cualquier cosa de la region, como en la casa de subastas.
  *
  * Escribes, eliges el producto y salen los reinos del mas barato al mas caro.
@@ -1486,7 +1534,14 @@ private fun Buscador(mercado: Mercado?, cargando: Boolean, catalogo: Catalogo, d
 
     val producto = elegido
     if (producto == null) {
+        val escribiendo = texto.trim().length >= 2
         val encontrados = remember(texto, mercado) { mercado.buscar(texto) }
+        // Tus objetos, a un toque: son los que de verdad miras. Tambien los que
+        // no vende nadie ahora mismo, porque saberlo es justo la respuesta.
+        val tuyos = remember(mercado, catalogo) {
+            val porId = mercado.productos.filter { !it.mascota }.associateBy { it.id }
+            catalogo.objetos.map { it to porId[it.id] }
+        }
         LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
             item {
                 OutlinedTextField(
@@ -1506,71 +1561,55 @@ private fun Buscador(mercado: Mercado?, cargando: Boolean, catalogo: Catalogo, d
                         .fillMaxWidth()
                         .padding(16.dp, 12.dp, 16.dp, 6.dp),
                 )
-                val aviso = when {
-                    texto.trim().length < 2 ->
-                        "${mercado.productos.size} productos en ${mercado.grupos.size} " +
-                            "reinos, en español o inglés. Materiales y consumibles no " +
-                            "salen: cuestan lo mismo en toda la región."
-                    encontrados.isEmpty() ->
-                        "Nada con ese nombre a la venta por encima de 500 g."
-                    else -> null
-                }
-                aviso?.let {
+                if (escribiendo && encontrados.isEmpty()) {
                     Text(
-                        text = it,
+                        text = "Nada con ese nombre a la venta por encima de 500 g.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                     )
                 }
             }
-            items(encontrados, key = { (if (it.mascota) "m" else "o") + it.id }) { p ->
-                val desde = p.variantes.mapNotNull { v -> v.ofertas.firstOrNull() }
-                    .minByOrNull { it.oro }
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { elegido = p }
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icono(p.icono, 36.dp)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(p.es, fontSize = 15.sp, fontWeight = FontWeight.Medium, maxLines = 2)
-                        if (p.en != p.es) {
-                            Text(
-                                text = p.en,
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                    desde?.let {
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "desde ${oroCorto(it.oro)}",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
+            if (escribiendo) {
+                items(encontrados, key = { (if (it.mascota) "m" else "o") + it.id }) { p ->
+                    FilaBusqueda(p.icono, p.es, p.en, p) { elegido = p }
+                }
+            } else {
+                item {
+                    Column(Modifier.padding(16.dp, 10.dp, 16.dp, 4.dp)) {
+                        Titulo("Tus objetos", "${tuyos.size}")
                     }
                 }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                items(tuyos, key = { "t" + it.first.id }) { (objeto, p) ->
+                    FilaBusqueda(objeto.icono, objeto.es, objeto.en, p) { elegido = p }
+                }
+                item {
+                    Text(
+                        text = "Escribe arriba para buscar cualquier otra cosa: " +
+                            "${mercado.productos.size} productos en ${mercado.grupos.size} " +
+                            "reinos. Materiales y consumibles no salen: cuestan lo mismo " +
+                            "en toda la región.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                }
             }
         }
         return
     }
 
-    var indice by remember(producto) { mutableStateOf(0) }
-    val variante = producto.variantes.getOrNull(indice) ?: producto.variantes.first()
-
     // El tope solo existe si el objeto es de los que vigilas.
     val vigilado = if (producto.mascota) null
     else catalogo.objetos.firstOrNull { it.id == producto.id }
+
+    // Si lo vigilas, se abre en el primer ilvl de tu tabla: los de debajo no
+    // los compras.
+    var indice by remember(producto) {
+        val tuyos = vigilado?.escalones.orEmpty().map { it.ilvl }.toSet()
+        mutableStateOf(producto.variantes.indexOfFirst { it.valor in tuyos }.coerceAtLeast(0))
+    }
+    val variante = producto.variantes.getOrNull(indice) ?: producto.variantes.first()
     val tope = when {
         vigilado == null -> null
         vigilado.escala -> vigilado.escalones.firstOrNull { it.ilvl == variante.valor }?.tope

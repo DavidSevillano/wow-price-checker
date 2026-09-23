@@ -159,13 +159,19 @@ def fichas_de_grupos(client, realm_ids, state_dir) -> dict[int, tuple[str, list[
     return fichas
 
 
-def completar_nombres(client, ofertas, state_dir) -> dict:
+def completar_nombres(client, ofertas, state_dir, vigilados=()) -> dict:
     """Nombre en espanol e ingles, e icono, de lo que se vende en la region.
 
     Se cachean entre pasadas: un nombre no cambia, y son veinte mil productos.
-    Lo que falta se pide a plazos (ver NOMBRES_POR_PASADA).
+    Lo que falta se pide a plazos (ver NOMBRES_POR_PASADA), salvo tus objetos
+    vigilados, que ya vienen del catalogo y no esperan a nadie: son los que
+    mas vas a buscar.
     """
     cache = JsonMapCache(Path(state_dir) / "nombres_mercado.json", "productos")
+    for objeto in vigilados:
+        clave = f"o:{objeto['id']}"
+        if cache.get(clave) is None:
+            cache.set(clave, {"es": objeto["es"], "en": objeto["en"], "icono": objeto["icono"]})
     faltan = nombres_que_faltan(ofertas, cache._data)
 
     def uno(clave):
@@ -187,7 +193,9 @@ def completar_nombres(client, ofertas, state_dir) -> dict:
     return cache._data
 
 
-def recoger_precios(client, config, reglas, roster_path, state_dir) -> tuple[dict, dict]:
+def recoger_precios(
+    client, config, reglas, roster_path, state_dir, del_catalogo=()
+) -> tuple[dict, dict]:
     """Baja toda la region y saca de ella los dos ficheros de precios.
 
     Dos usos del mismo volcado: el precio a batir en los reinos donde vendes
@@ -267,7 +275,7 @@ def recoger_precios(client, config, reglas, roster_path, state_dir) -> tuple[dic
 
     log.info("Reinos con dato: %s de %s", len(grupos), len(todos))
     ahora = int(datetime.now(timezone.utc).timestamp())
-    nombres = completar_nombres(client, ofertas, state_dir)
+    nombres = completar_nombres(client, ofertas, state_dir, del_catalogo)
     return (
         construir_precios(por_reino, ahora),
         construir_indice(ofertas, nombres, grupos, ahora),
@@ -364,15 +372,15 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_ERROR
 
     destino = Path(args.salida)
-    cambios = escribir(
-        destino, "catalogo.json", construir_catalogo(client, client_es, config, reglas)
-    )
+    catalogo = construir_catalogo(client, client_es, config, reglas)
+    cambios = escribir(destino, "catalogo.json", catalogo)
 
     if args.solo_catalogo:
         log.info("--solo-catalogo: no bajo ningun reino.")
     else:
         precios, indice = recoger_precios(
-            client, config, reglas, args.personajes, args.state_dir
+            client, config, reglas, args.personajes, args.state_dir,
+            del_catalogo=catalogo["objetos"],
         )
         cambios = escribir(destino, "precios.json", precios) or cambios
         cambios = escribir_gz(destino, "mercado.json.gz", indice) or cambios
