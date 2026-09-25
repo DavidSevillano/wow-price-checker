@@ -172,7 +172,7 @@ def build_panel_ventas(
 ) -> dict[str, Any]:
     """El panel fijado con los reinos donde mas vendes.
 
-    `ranking` viene ya ordenado de mas a menos ventas, con (reino, ventas, oro
+    `ranking` viene ya ordenado de mas a menos oro, con (reino, ventas, oro
     neto, fecha de la ultima). Es lo que decide donde merece la pena repostear:
     un aviso suelto dice que has vendido algo, pero solo la suma de semanas dice
     en que reinos vendes.

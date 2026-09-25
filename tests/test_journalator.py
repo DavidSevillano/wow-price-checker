@@ -339,15 +339,21 @@ def test_sin_filtro_entra_todo():
     assert totales == (2, 2000)
 
 
-def test_a_igualdad_de_ventas_manda_el_oro():
-    """Vender tres cosas de 100.000 importa mas que tres de 500."""
-    ventas = []
-    for _ in range(3):
-        ventas.append(venta(reino="Barato", neto=500))
-        ventas.append(venta(reino="Caro", neto=100_000))
+def test_manda_el_oro_aunque_haya_menos_ventas():
+    """Una venta de 100.000 importa mas que cinco de 500."""
+    ventas = [venta(reino="Barato", neto=500) for _ in range(5)]
+    ventas.append(venta(reino="Caro", neto=100_000))
     filas, _ = ranking(resumir(ventas))
 
     assert [f[0] for f in filas] == ["Caro", "Barato"]
+
+
+def test_a_igualdad_de_oro_mandan_las_ventas():
+    ventas = [venta(reino="Pocas", neto=1000)]
+    ventas += [venta(reino="Muchas", neto=500) for _ in range(2)]
+    filas, _ = ranking(resumir(ventas))
+
+    assert [f[0] for f in filas] == ["Muchas", "Pocas"]
 
 
 def test_un_reino_sin_ventas_vigiladas_no_sale():

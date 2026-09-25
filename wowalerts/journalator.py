@@ -559,7 +559,7 @@ def ranking(
     resumen: Mapping[str, Mapping[str, Mapping]],
     objetos: Iterable[str] | None = None,
 ) -> tuple[list[tuple[str, int, int, str]], tuple[int, int]]:
-    """Los reinos de mas a menos ventas, y los totales.
+    """Los reinos de mas a menos oro vendido, y los totales.
 
     `objetos` deja fuera lo que no vigilas. Journalator apunta todo lo que
     vendes, y mezclar el material de artesania con lo que si rastreas taparia
@@ -580,9 +580,9 @@ def ranking(
         if cuantas:
             filas.append((str(reino), cuantas, oro, ultima))
 
-    # A igualdad de ventas manda el oro: vender tres cosas de 100.000 importa
-    # mas que vender tres de 500.
-    filas.sort(key=lambda fila: (-fila[1], -fila[2], fila[0]))
+    # Manda el oro: vender una cosa de 100.000 importa mas que cinco de 500.
+    # A igualdad de oro, el reino con mas ventas.
+    filas.sort(key=lambda fila: (-fila[2], -fila[1], fila[0]))
     return filas, (sum(f[1] for f in filas), sum(f[2] for f in filas))
 
 
