@@ -166,14 +166,14 @@ MEDALLAS = ("🥇", "🥈", "🥉")
 
 
 def build_panel_ventas(
-    ranking: Sequence[tuple[str, int, int, str]],
+    ranking: Sequence[tuple[str, int, int, str, tuple[int, ...]]],
     totales: tuple[int, int] = (0, 0),
     actualizado: datetime | None = None,
 ) -> dict[str, Any]:
     """El panel fijado con los reinos donde mas vendes.
 
     `ranking` viene ya ordenado de mas a menos oro, con (reino, ventas, oro
-    neto, fecha de la ultima). Es lo que decide donde merece la pena repostear:
+    neto, fecha de la ultima, cuentas que vendieron alli). Es lo que decide donde merece la pena repostear:
     un aviso suelto dice que has vendido algo, pero solo la suma de semanas dice
     en que reinos vendes.
     """
@@ -197,12 +197,18 @@ def build_panel_ventas(
 
     ventas_totales, oro_total = totales
     lineas = []
-    for puesto, (reino, ventas, copper, _ultima) in enumerate(
+    for puesto, (reino, ventas, copper, _ultima, cuentas) in enumerate(
         ranking[:REINOS_EN_EL_PANEL]
     ):
         marca = MEDALLAS[puesto] if puesto < len(MEDALLAS) else f"`{puesto + 1:>2}.`"
+        # 'WoW 2', o 'WoW 2 y 3' si alli vendieron varias cuentas.
+        cuenta = ""
+        if cuentas:
+            numeros = [str(c) for c in cuentas]
+            juntas = ", ".join(numeros[:-1])
+            cuenta = f" · WoW {juntas + ' y ' if juntas else ''}{numeros[-1]}"
         lineas.append(
-            f"{marca} **{reino}** — {ventas} venta{'s' if ventas != 1 else ''} · "
+            f"{marca} **{reino}**{cuenta} — {ventas} venta{'s' if ventas != 1 else ''} · "
             f"{format_gold(copper // COPPER_PER_GOLD)} g"
         )
 

@@ -27,6 +27,7 @@ from wowalerts.journalator import (
     ranking,
     resumir,
     ventas_de_texto,
+    ventas_de_wow,
 )
 
 
@@ -303,8 +304,10 @@ def test_un_fichero_sin_archivo_no_da_nada():
 # -- Resumen y ranking -------------------------------------------------------
 
 
-def venta(reino="Sanguino", objeto="Anillo", neto=1000, dia=5):
-    return Venta(reino, objeto, neto, datetime(2026, 9, dia, tzinfo=timezone.utc))
+def venta(reino="Sanguino", objeto="Anillo", neto=1000, dia=5, cuenta=None):
+    return Venta(
+        reino, objeto, neto, datetime(2026, 9, dia, tzinfo=timezone.utc), cuenta=cuenta
+    )
 
 
 def test_el_resumen_agrupa_por_reino_y_objeto():
@@ -314,6 +317,7 @@ def test_el_resumen_agrupa_por_reino_y_objeto():
         "ventas": 2,
         "oro": 150,
         "ultima": "2026-09-05",
+        "cuentas": [],
     }
     assert resumen["Sanguino"]["Capa"]["ventas"] == 1
 
@@ -394,6 +398,7 @@ def test_las_maquinas_se_suman(tmp_path):
         "ventas": 2,
         "oro": 150,
         "ultima": "2026-09-05",
+        "cuentas": [],
     }
 
 
@@ -472,3 +477,60 @@ def test_los_bloques_solapados_no_inflan_la_cuenta(tmp_path):
     )
 
     assert apuntes_de_wow(tmp_path) == {"Posting": 2}
+
+
+# -- De que cuenta es cada venta ---------------------------------------------
+
+
+def test_cada_venta_lleva_la_cuenta_de_su_carpeta(tmp_path):
+    """'1234#2' es la WoW 2 del selector, igual que en los volcados del addon."""
+    carpeta = tmp_path / "WTF" / "Account" / "1234#2" / "SavedVariables"
+    carpeta.mkdir(parents=True)
+    (carpeta / "Journalator.lua").write_text(
+        fichero_con({"Invoices": [factura()]}), encoding="utf-8"
+    )
+
+    (leida,) = ventas_de_wow(tmp_path)
+    assert leida.cuenta == 2
+
+
+def test_el_resumen_apunta_las_cuentas_que_vendieron():
+    resumen = resumir(
+        [venta(cuenta=3), venta(cuenta=2), venta(cuenta=3), venta(objeto="Capa")]
+    )
+
+    assert resumen["Sanguino"]["Anillo"]["cuentas"] == [2, 3]
+    # Sin cuenta conocida no se inventa ninguna.
+    assert resumen["Sanguino"]["Capa"]["cuentas"] == []
+
+
+def test_el_ranking_junta_las_cuentas_de_todo_el_reino():
+    resumen = resumir(
+        [
+            venta(objeto="Anillo", cuenta=3),
+            venta(objeto="Capa", cuenta=2),
+            venta(objeto="Mena de cobre", cuenta=1),
+        ]
+    )
+    (fila,), _ = ranking(resumen, {"Anillo", "Capa"})
+
+    # La WoW 1 solo vendio algo que no vigilas: no cuenta.
+    assert fila[4] == (2, 3)
+
+
+def test_las_cuentas_de_varias_maquinas_se_juntan(tmp_path):
+    escribir_resumen(tmp_path / "pc.json", [venta(cuenta=2)])
+    escribir_resumen(tmp_path / "deck.json", [venta(cuenta=3)])
+
+    assert leer_resumenes(tmp_path)["Sanguino"]["Anillo"]["cuentas"] == [2, 3]
+
+
+def test_un_resumen_viejo_sin_cuentas_se_sigue_leyendo(tmp_path):
+    (tmp_path / "deck.json").write_text(
+        json.dumps(
+            {"reinos": {"Sanguino": {"Anillo": {"ventas": 1, "oro": 5, "ultima": ""}}}}
+        ),
+        encoding="utf-8",
+    )
+
+    assert leer_resumenes(tmp_path)["Sanguino"]["Anillo"]["cuentas"] == []

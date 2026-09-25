@@ -20,10 +20,12 @@ import logging
 import re
 import struct
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Sequence
+
+from .misubastas import cuenta_de_ruta
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +66,8 @@ class Venta:
     neto: int
     cuando: datetime
     personaje: str = ""
+    # La WoW del selector de cuentas; sale de la carpeta del fichero.
+    cuenta: int | None = None
 
     @property
     def huella(self) -> tuple:
@@ -483,8 +487,9 @@ def ventas_de_wow(wow_root: str | Path) -> list[Venta]:
         except OSError as fallo:
             log.warning("No he podido abrir %s: %s", fichero, fallo)
             continue
+        cuenta = cuenta_de_ruta(fichero)
         for venta in ventas_de_texto(texto):
-            encontradas.setdefault(venta.huella, venta)
+            encontradas.setdefault(venta.huella, replace(venta, cuenta=cuenta))
 
     return sorted(encontradas.values(), key=lambda v: (v.cuando, v.reino, v.objeto))
 
@@ -504,10 +509,14 @@ def resumir(ventas: Iterable[Venta]) -> dict[str, dict[str, dict]]:
 
     for venta in ventas:
         por_objeto = resumen.setdefault(venta.reino, {})
-        fila = por_objeto.setdefault(venta.objeto, {"ventas": 0, "oro": 0, "ultima": ""})
+        fila = por_objeto.setdefault(
+            venta.objeto, {"ventas": 0, "oro": 0, "ultima": "", "cuentas": []}
+        )
         fila["ventas"] += 1
         fila["oro"] += venta.neto
         fila["ultima"] = max(fila["ultima"], venta.cuando.date().isoformat())
+        if venta.cuenta is not None and venta.cuenta not in fila["cuentas"]:
+            fila["cuentas"] = sorted([*fila["cuentas"], venta.cuenta])
 
     return resumen
 
@@ -558,7 +567,7 @@ def _tiene_ventas(path: Path) -> bool:
 def ranking(
     resumen: Mapping[str, Mapping[str, Mapping]],
     objetos: Iterable[str] | None = None,
-) -> tuple[list[tuple[str, int, int, str]], tuple[int, int]]:
+) -> tuple[list[tuple[str, int, int, str, tuple[int, ...]]], tuple[int, int]]:
     """Los reinos de mas a menos oro vendido, y los totales.
 
     `objetos` deja fuera lo que no vigilas. Journalator apunta todo lo que
@@ -566,19 +575,21 @@ def ranking(
     justo lo que interesa ver.
     """
     filtro = None if objetos is None else set(objetos)
-    filas: list[tuple[str, int, int, str]] = []
+    filas: list[tuple[str, int, int, str, tuple[int, ...]]] = []
 
     for reino, por_objeto in resumen.items():
         cuantas = oro = 0
         ultima = ""
+        cuentas: set[int] = set()
         for objeto, fila in por_objeto.items():
             if filtro is not None and objeto not in filtro:
                 continue
             cuantas += _entero(fila.get("ventas"))
             oro += _entero(fila.get("oro"))
             ultima = max(ultima, str(fila.get("ultima") or ""))
+            cuentas.update(_cuentas(fila))
         if cuantas:
-            filas.append((str(reino), cuantas, oro, ultima))
+            filas.append((str(reino), cuantas, oro, ultima, tuple(sorted(cuentas))))
 
     # Manda el oro: vender una cosa de 100.000 importa mas que cinco de 500.
     # A igualdad de oro, el reino con mas ventas.
@@ -614,12 +625,23 @@ def leer_resumenes(origen: str | Path) -> dict[str, dict[str, dict]]:
                 if not isinstance(fila, dict):
                     continue
                 acumulado = destino.setdefault(
-                    str(objeto), {"ventas": 0, "oro": 0, "ultima": ""}
+                    str(objeto), {"ventas": 0, "oro": 0, "ultima": "", "cuentas": []}
                 )
                 acumulado["ventas"] += _entero(fila.get("ventas"))
                 acumulado["oro"] += _entero(fila.get("oro"))
                 acumulado["ultima"] = max(
                     acumulado["ultima"], str(fila.get("ultima") or "")
                 )
+                acumulado["cuentas"] = sorted(
+                    set(acumulado["cuentas"]) | set(_cuentas(fila))
+                )
 
     return total
+
+
+def _cuentas(fila: Mapping) -> list[int]:
+    # Los resumenes de antes de apuntar la cuenta no traen el campo.
+    cuentas = fila.get("cuentas")
+    if not isinstance(cuentas, list):
+        return []
+    return [c for c in cuentas if isinstance(c, int) and not isinstance(c, bool)]

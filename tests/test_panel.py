@@ -151,9 +151,9 @@ def test_sin_caducados_el_panel_no_dice_nada():
 from wowalerts.panel import REINOS_EN_EL_PANEL, build_panel_ventas
 
 
-def fila(reino, ventas, oro, ultima="2026-09-05"):
+def fila(reino, ventas, oro, ultima="2026-09-05", cuentas=()):
     """Una fila del ranking, con el oro en cobre como lo guarda el estado."""
-    return (reino, ventas, oro * 10_000, ultima)
+    return (reino, ventas, oro * 10_000, ultima, tuple(cuentas))
 
 
 def descripcion_ventas(ranking, totales=(0, 0)):
@@ -195,6 +195,24 @@ def test_la_cola_larga_se_resume():
 
 def test_sin_ventas_lo_dice_en_vez_de_salir_vacio():
     assert "Todavia no te he visto vender nada" in descripcion_ventas([])
+
+
+def test_cada_reino_dice_con_que_cuenta_vendiste():
+    texto = descripcion_ventas([fila("Sanguino", 3, 100, cuentas=[2])])
+
+    assert "**Sanguino** · WoW 2 — 3 ventas" in texto
+
+
+def test_si_vendieron_dos_cuentas_salen_las_dos():
+    texto = descripcion_ventas([fila("Sanguino", 3, 100, cuentas=[2, 3])])
+
+    assert "**Sanguino** · WoW 2 y 3 — " in texto
+
+
+def test_sin_cuenta_conocida_no_se_pone_nada():
+    texto = descripcion_ventas([fila("Sanguino", 3, 100)])
+
+    assert "**Sanguino** — 3 ventas" in texto
 
 
 def test_el_pie_lleva_los_totales():
