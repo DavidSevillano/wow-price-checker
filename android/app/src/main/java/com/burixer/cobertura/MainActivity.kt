@@ -694,17 +694,17 @@ private fun Detalle(
             label = "variante",
         ) { actual ->
             Column {
-                Veredicto(
-                    variante = actual,
-                    total = personajes,
-                    pendiente = pendientes[Topes.clave(cobertura.objeto.id, actual.ilvl)],
-                    // Solo se deja tocar un escalon que ya esta en tu tabla.
-                    // Anadir uno nuevo es otra operacion, y esa sigue siendo
-                    // trabajo de config.yaml.
-                    alTocarTope = if (actual.vigilado && alTocarTope != null) {
-                        { alTocarTope(actual) }
-                    } else null,
-                )
+                // Solo un escalon que ya esta en tu tabla: anadir uno nuevo es
+                // otra operacion, y esa sigue siendo trabajo de config.yaml.
+                if (actual.vigilado) {
+                    TopeAviso(
+                        tope = actual.tope,
+                        pendiente = pendientes[Topes.clave(cobertura.objeto.id, actual.ilvl)],
+                        alTocar = alTocarTope?.let { { it(actual) } },
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
+                Veredicto(variante = actual, total = personajes)
 
                 Spacer(Modifier.height(18.dp))
                 if (actual.faltan.isNotEmpty()) {
@@ -800,12 +800,7 @@ private fun Fichas(
 }
 
 @Composable
-private fun Veredicto(
-    variante: Variante,
-    total: Int,
-    pendiente: Long? = null,
-    alTocarTope: (() -> Unit)? = null,
-) {
+private fun Veredicto(variante: Variante, total: Int) {
     Card(
         colors = CardDefaults.cardColors(
             containerColor = if (variante.faltan.isEmpty())
@@ -839,25 +834,6 @@ private fun Veredicto(
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.weight(1f),
-                )
-            }
-            // El tope y el mercado, juntos: es la comparacion que te dice si el
-            // limite esta alto, y por eso este es el sitio para cambiarlo.
-            //
-            // Mientras el cambio esta en vuelo se ensena el enviado, no el del
-            // catalogo, que sigue siendo el viejo hasta la pasada siguiente.
-            (pendiente ?: variante.tope)?.let {
-                Text(
-                    text = "tope ${oro(it)}" + if (pendiente != null) " (pendiente)" else "",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    color = if (pendiente != null) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = if (alTocarTope != null) {
-                        Modifier
-                            .clickable(onClick = alTocarTope)
-                            .padding(6.dp, 4.dp)
-                    } else Modifier,
                 )
             }
         }
