@@ -1929,7 +1929,8 @@ private fun HistorialDias(dias: List<DiaHistorial>, tope: Long?, entrada: (Strin
     val minimo = dias.minBy { it.oro }
     val maximo = dias.maxOf { it.oro }
     Text(
-        text = "Mínimo de ${dias.size} días: ${oro(minimo.oro)} el " +
+        text = (if (dias.size == 1) "Hoy: " else "Mínimo de ${dias.size} días: ") +
+            "${oro(minimo.oro)} el " +
             "${diaCorto(minimo.dia)} en ${entrada(minimo.reino).titulo}",
         fontSize = 12.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1949,7 +1950,8 @@ private fun HistorialDias(dias: List<DiaHistorial>, tope: Long?, entrada: (Strin
                 fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.width(56.dp),
+                maxLines = 1,
+                modifier = Modifier.width(72.dp),
             )
             Column(Modifier.weight(1f)) {
                 val quien = entrada(d.reino)
