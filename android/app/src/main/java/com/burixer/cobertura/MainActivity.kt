@@ -2058,18 +2058,26 @@ private data class Entrada(val titulo: String, val detalle: String, val personaj
 
     companion object {
         fun de(grupo: String, slugs: List<String>, mios: Map<String, List<Personaje>>): Entrada {
-            val tuyos = slugs.flatMap { mios[it].orEmpty() }
+            // Primero WoW 2 y WoW 3, y WoW 1 solo si no hay otro. Dentro de cada
+            // cuenta, tu orden (sortedBy es estable).
+            val tuyos = slugs.flatMap { mios[it].orEmpty() }.sortedBy { prioridadDeCuenta(it.cuenta) }
             if (tuyos.isEmpty()) {
                 return Entrada(grupo.substringBefore(" / "), "sin personaje tuyo", tuyos)
             }
-            // Con uno basta para entrar: el primero de tu orden, y cuantos mas
-            // hay. Debajo, que WoW abres y en que reino sale en el selector.
+            // Con uno basta para entrar: el primero, y cuantos mas hay. Debajo, que WoW abres y en que reino sale en el selector.
             val primero = tuyos.first()
             val titulo = mote(primero.nombre) + if (tuyos.size > 1) " +${tuyos.size - 1}" else ""
             val detalle = listOfNotNull(primero.cuenta?.let { "WoW $it" }, primero.reino).joinToString(" · ")
             return Entrada(titulo, detalle, tuyos)
         }
     }
+}
+
+private fun prioridadDeCuenta(cuenta: Int?): Int = when (cuenta) {
+    2 -> 0
+    3 -> 1
+    1 -> 2
+    else -> 3
 }
 
 private fun fecha(exportado: Long): String {
