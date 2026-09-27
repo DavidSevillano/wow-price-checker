@@ -2064,9 +2064,9 @@ private data class Entrada(val titulo: String, val detalle: String, val personaj
             if (tuyos.isEmpty()) {
                 return Entrada(grupo.substringBefore(" / "), "sin personaje tuyo", tuyos)
             }
-            // Con uno basta para entrar: el primero, y cuantos mas hay. Debajo, que WoW abres y en que reino sale en el selector.
+            // Con uno basta para entrar: el primero. Debajo, que WoW abres y en que reino sale en el selector.
             val primero = tuyos.first()
-            val titulo = mote(primero.nombre) + if (tuyos.size > 1) " +${tuyos.size - 1}" else ""
+            val titulo = mote(primero.nombre)
             val detalle = listOfNotNull(primero.cuenta?.let { "WoW $it" }, primero.reino).joinToString(" · ")
             return Entrada(titulo, detalle, tuyos)
         }
