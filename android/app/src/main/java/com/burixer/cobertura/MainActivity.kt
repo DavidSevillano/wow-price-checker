@@ -44,6 +44,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Refresh
@@ -382,6 +383,15 @@ private fun App() {
                     alAbrir = { abiertoEnBuscador = it },
                     datos = datos,
                     historial = historial,
+                    pendientes = pendientes,
+                    // Mismo dialogo que en la ficha del objeto, con la variante
+                    // de la pantalla principal: es la que sabe enviarlo.
+                    alTocarTope = if (Repositorio.token(context).isBlank()) null
+                    else ({ id, ilvl ->
+                        cobertura.firstOrNull { it.objeto.id == id }?.variantes
+                            ?.firstOrNull { it.ilvl == ilvl && it.vigilado }
+                            ?.let { editando = it }
+                    }),
                 )
             } else {
             // La pantalla entra por el lado hacia el que vas, como en cualquier
@@ -1508,6 +1518,8 @@ private fun Buscador(
     alAbrir: (Seleccion) -> Unit,
     datos: Datos,
     historial: Historial,
+    pendientes: Map<String, Long>,
+    alTocarTope: ((Int, Int?) -> Unit)?,
 ) {
     var texto by remember { mutableStateOf("") }
 
@@ -1555,7 +1567,7 @@ private fun Buscador(
                         alAbrir = { producto, valor -> alAbrir(Seleccion(producto, valor)) },
                     )
                 } else {
-                    FichaMercado(seleccion, mercado, catalogo, datos, historial)
+                    FichaMercado(seleccion, mercado, catalogo, datos, historial, pendientes, alTocarTope)
                 }
             }
         }
@@ -1763,6 +1775,8 @@ private fun FichaMercado(
     catalogo: Catalogo,
     datos: Datos,
     historial: Historial,
+    pendientes: Map<String, Long>,
+    alTocarTope: ((Int, Int?) -> Unit)?,
 ) {
     val producto = seleccion.producto
     // El tope solo existe si el objeto es de los que vigilas.
@@ -1867,6 +1881,14 @@ private fun FichaMercado(
                 else -> vigilado.tope
             }
             Column {
+                if (vigilado != null && (topeActual != null || !vigilado.escala)) {
+                    TopeAviso(
+                        tope = topeActual,
+                        pendiente = pendientes[Topes.clave(producto.id, actual)],
+                        alTocar = alTocarTope?.let { { it(producto.id, actual) } },
+                    )
+                    Spacer(Modifier.height(16.dp))
+                }
                 Titulo(
                     when {
                         actual == null -> "Los reinos más baratos"
@@ -1903,6 +1925,54 @@ private fun FichaMercado(
                     }
                 }
                 Spacer(Modifier.height(32.dp))
+            }
+        }
+    }
+}
+
+/**
+ * El precio por debajo del cual te avisa Discord, junto a los reinos mas
+ * baratos: es donde se ve si esta alto o bajo, y por eso se cambia aqui.
+ * Mientras el cambio va de camino se ensena el enviado.
+ */
+@Composable
+private fun TopeAviso(tope: Long?, pendiente: Long?, alTocar: (() -> Unit)?) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (alTocar != null) Modifier.clickable(onClick = alTocar) else Modifier),
+    ) {
+        Row(Modifier.padding(14.dp, 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "Te avisa por debajo de",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = (pendiente ?: tope)?.let { oro(it) } ?: "sin tope",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (pendiente != null) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurface,
+                )
+                if (pendiente != null) {
+                    Text(
+                        text = "pendiente: entra en vigor en la pasada siguiente",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (alTocar != null) {
+                Icon(
+                    Icons.Filled.Edit,
+                    contentDescription = "Cambiar tope",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
             }
         }
     }
