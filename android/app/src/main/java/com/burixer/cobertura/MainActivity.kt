@@ -1775,12 +1775,16 @@ private fun FichaMercado(
     else producto.variantes.map { it.valor }
     var valor by remember(producto) { mutableStateOf(seleccion.valor ?: opciones.firstOrNull()) }
 
-    // slug de reino -> tus personajes ahi
-    val mios = remember(datos) {
+    // slug de reino -> tus personajes ahi, en el orden de la pantalla principal
+    val mios = remember(datos, catalogo) {
+        val orden = catalogo.orden
         datos.personajes.values
             .filter { it.reino.isNotBlank() }
+            .sortedBy { orden.indexOf(it.nombre).let { i -> if (i < 0) Int.MAX_VALUE else i } }
             .groupBy { slugDeReino(it.reino) }
     }
+    // El historial guarda el nombre del grupo; con esto se le sacan los slugs.
+    val slugsDeGrupo = remember(mercado) { mercado.grupos.associate { it.nombre to it.slugs } }
 
     Column(
         Modifier
@@ -1889,7 +1893,9 @@ private fun FichaMercado(
                 // Solo de lo que vigilas: es lo unico de lo que se guarda el mes.
                 if (vigilado != null) {
                     Spacer(Modifier.height(24.dp))
-                    HistorialDias(historial.de(producto.id, actual), topeActual)
+                    HistorialDias(historial.de(producto.id, actual), topeActual) { reino ->
+                        Entrada.de(reino, slugsDeGrupo[reino].orEmpty(), mios)
+                    }
                 }
                 Spacer(Modifier.height(32.dp))
             }
@@ -1903,7 +1909,7 @@ private fun FichaMercado(
  * esperar.
  */
 @Composable
-private fun HistorialDias(dias: List<DiaHistorial>, tope: Long?) {
+private fun HistorialDias(dias: List<DiaHistorial>, tope: Long?, entrada: (String) -> Entrada) {
     Titulo("El más barato, día a día", "${dias.size}")
     Spacer(Modifier.height(8.dp))
     if (dias.isEmpty()) {
@@ -1919,7 +1925,7 @@ private fun HistorialDias(dias: List<DiaHistorial>, tope: Long?) {
     val maximo = dias.maxOf { it.oro }
     Text(
         text = "Mínimo de ${dias.size} días: ${oro(minimo.oro)} el " +
-            "${diaCorto(minimo.dia)} en ${minimo.reino}",
+            "${diaCorto(minimo.dia)} en ${entrada(minimo.reino).titulo}",
         fontSize = 12.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(bottom = 6.dp),
@@ -1941,9 +1947,12 @@ private fun HistorialDias(dias: List<DiaHistorial>, tope: Long?) {
                 modifier = Modifier.width(56.dp),
             )
             Column(Modifier.weight(1f)) {
+                val quien = entrada(d.reino)
                 Text(
-                    text = d.reino,
+                    text = quien.titulo,
                     fontSize = 13.sp,
+                    color = if (quien.tuyo) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -1980,9 +1989,8 @@ private fun diaCorto(dia: String): String = runCatching {
 
 @Composable
 private fun FilaOferta(oferta: Oferta, mios: Map<String, List<Personaje>>, tope: Long?) {
-    val tuyos = oferta.grupo.slugs.flatMap { mios[it].orEmpty() }
-    // La cuenta y no el personaje: es lo que decide que WoW abres.
-    val cuentas = tuyos.mapNotNull { it.cuenta }.distinct().sorted()
+    val quien = Entrada.de(oferta.grupo.nombre, oferta.grupo.slugs, mios)
+    val tuyos = quien.personajes
     val bajoTope = tope != null && oferta.oro <= tope
     Row(
         Modifier
@@ -2002,18 +2010,14 @@ private fun FilaOferta(oferta: Oferta, mios: Map<String, List<Personaje>>, tope:
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                text = oferta.grupo.nombre,
+                text = quien.titulo,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = when {
-                    tuyos.isEmpty() -> "sin personaje tuyo"
-                    cuentas.isEmpty() -> "tienes personaje"
-                    else -> cuentas.joinToString(" · ") { "WoW $it" }
-                },
+                text = quien.detalle,
                 fontSize = 12.sp,
                 color = if (tuyos.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant
                 else MaterialTheme.colorScheme.primary,
@@ -2040,6 +2044,32 @@ private fun FilaOferta(oferta: Oferta, mios: Map<String, List<Personaje>>, tope:
         }
     }
     HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+}
+
+/**
+ * A que entras para comprar en un grupo de reinos.
+ *
+ * El nombre del grupo ("Kor'gall / Executus / ...") no sirve para nada en el
+ * selector de personajes: lo que buscas ahi es tu personaje. Si no tienes
+ * ninguno en el grupo, basta el primer reino para saber donde esta.
+ */
+private data class Entrada(val titulo: String, val detalle: String, val personajes: List<Personaje>) {
+    val tuyo get() = personajes.isNotEmpty()
+
+    companion object {
+        fun de(grupo: String, slugs: List<String>, mios: Map<String, List<Personaje>>): Entrada {
+            val tuyos = slugs.flatMap { mios[it].orEmpty() }
+            if (tuyos.isEmpty()) {
+                return Entrada(grupo.substringBefore(" / "), "sin personaje tuyo", tuyos)
+            }
+            // Con uno basta para entrar: el primero de tu orden, y cuantos mas
+            // hay. Debajo, que WoW abres y en que reino sale en el selector.
+            val primero = tuyos.first()
+            val titulo = mote(primero.nombre) + if (tuyos.size > 1) " +${tuyos.size - 1}" else ""
+            val detalle = listOfNotNull(primero.cuenta?.let { "WoW $it" }, primero.reino).joinToString(" · ")
+            return Entrada(titulo, detalle, tuyos)
+        }
+    }
 }
 
 private fun fecha(exportado: Long): String {
