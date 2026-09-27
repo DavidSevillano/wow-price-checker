@@ -204,10 +204,12 @@ private fun App() {
     // El buscador se lee de disco la primera vez que se abre, y no al arrancar:
     // son miles de productos y la pantalla principal no los necesita.
     var mercado by remember { mutableStateOf<Mercado?>(null) }
+    var historial by remember { mutableStateOf(Historial.VACIO) }
     var mercadoLeido by remember { mutableStateOf(false) }
     LaunchedEffect(buscando, mercadoLeido) {
         if (buscando && !mercadoLeido) {
             mercado = withContext(Dispatchers.IO) { Repositorio.mercado(context) }
+            historial = withContext(Dispatchers.IO) { Repositorio.historial(context) }
             mercadoLeido = true
         }
     }
@@ -379,6 +381,7 @@ private fun App() {
                     abierto = abiertoEnBuscador,
                     alAbrir = { abiertoEnBuscador = it },
                     datos = datos,
+                    historial = historial,
                 )
             } else {
             // La pantalla entra por el lado hacia el que vas, como en cualquier
@@ -1504,6 +1507,7 @@ private fun Buscador(
     abierto: Seleccion?,
     alAbrir: (Seleccion) -> Unit,
     datos: Datos,
+    historial: Historial,
 ) {
     var texto by remember { mutableStateOf("") }
 
@@ -1551,7 +1555,7 @@ private fun Buscador(
                         alAbrir = { producto, valor -> alAbrir(Seleccion(producto, valor)) },
                     )
                 } else {
-                    FichaMercado(seleccion, mercado, catalogo, datos)
+                    FichaMercado(seleccion, mercado, catalogo, datos, historial)
                 }
             }
         }
@@ -1753,7 +1757,13 @@ private fun FilaProducto(
  */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-private fun FichaMercado(seleccion: Seleccion, mercado: Mercado, catalogo: Catalogo, datos: Datos) {
+private fun FichaMercado(
+    seleccion: Seleccion,
+    mercado: Mercado,
+    catalogo: Catalogo,
+    datos: Datos,
+    historial: Historial,
+) {
     val producto = seleccion.producto
     // El tope solo existe si el objeto es de los que vigilas.
     val vigilado = if (producto.mascota) null
@@ -1876,11 +1886,97 @@ private fun FichaMercado(seleccion: Seleccion, mercado: Mercado, catalogo: Catal
                         modifier = Modifier.padding(top = 16.dp),
                     )
                 }
+                // Solo de lo que vigilas: es lo unico de lo que se guarda el mes.
+                if (vigilado != null) {
+                    Spacer(Modifier.height(24.dp))
+                    HistorialDias(historial.de(producto.id, actual), topeActual)
+                }
                 Spacer(Modifier.height(32.dp))
             }
         }
     }
 }
+
+/**
+ * El mas barato de cada dia en la region, de hoy hacia atras, con el minimo
+ * del mes destacado: es lo que dice si el precio de hoy es bueno o si toca
+ * esperar.
+ */
+@Composable
+private fun HistorialDias(dias: List<DiaHistorial>, tope: Long?) {
+    Titulo("El más barato, día a día", "${dias.size}")
+    Spacer(Modifier.height(8.dp))
+    if (dias.isEmpty()) {
+        Text(
+            text = "Todavía no hay días apuntados. Cada pasada del escaneo guarda el " +
+                "más barato del día; se van sumando hasta 30.",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+    val minimo = dias.minBy { it.oro }
+    val maximo = dias.maxOf { it.oro }
+    Text(
+        text = "Mínimo de ${dias.size} días: ${oro(minimo.oro)} el " +
+            "${diaCorto(minimo.dia)} en ${minimo.reino}",
+        fontSize = 12.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(bottom = 6.dp),
+    )
+    dias.asReversed().forEach { d ->
+        val esMinimo = d.oro == minimo.oro
+        val bajoTope = tope != null && d.oro <= tope
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = diaCorto(d.dia),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.width(56.dp),
+            )
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = d.reino,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                // La barra da la tendencia de un vistazo, sin leer numeros.
+                Box(
+                    Modifier
+                        .padding(top = 3.dp)
+                        .fillMaxWidth(if (maximo > 0) d.oro.toFloat() / maximo else 0f)
+                        .height(3.dp)
+                        .background(
+                            if (esMinimo) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline
+                        )
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = oro(d.oro),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                fontWeight = if (esMinimo || bajoTope) FontWeight.Medium else FontWeight.Normal,
+                color = if (esMinimo || bajoTope) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
+
+/** '2026-09-27' a '27 sep'. */
+private fun diaCorto(dia: String): String = runCatching {
+    val entrada = java.text.SimpleDateFormat("yyyy-MM-dd", Locale.ROOT)
+    java.text.SimpleDateFormat("d MMM", Locale("es", "ES")).format(entrada.parse(dia)!!)
+}.getOrDefault(dia)
 
 @Composable
 private fun FilaOferta(oferta: Oferta, mios: Map<String, List<Personaje>>, tope: Long?) {

@@ -31,6 +31,7 @@ object Repositorio {
     private const val CATALOGO = "catalogo.json"
     private const val PRECIOS = "precios.json"
     private const val MERCADO = "mercado.json.gz"
+    private const val HISTORIAL = "historial.json"
 
     // El catalogo y los precios los publica el workflow en su propia rama, para
     // no ensuciar el historial de main con un commit por hora.
@@ -76,6 +77,11 @@ object Repositorio {
 
     /** El buscador. Null si todavia no se ha descargado o no se puede leer. */
     fun mercado(context: Context): Mercado? = Mercado.leer(File(context.filesDir, MERCADO))
+
+    /** Los ultimos 30 dias de tus objetos. Vacio hasta la primera descarga. */
+    fun historial(context: Context): Historial =
+        leerCache(context, HISTORIAL)?.let { runCatching { Historial.parsear(it) }.getOrNull() }
+            ?: Historial.VACIO
 
     private fun leerCache(context: Context, nombre: String): String? {
         val fichero = File(context.filesDir, nombre)
@@ -150,7 +156,7 @@ object Repositorio {
             // El catalogo y los precios viven en otra rama y son opcionales: si
             // el workflow no los ha publicado todavia, las subastas que acabamos
             // de bajar siguen sirviendo.
-            for (nombre in listOf(CATALOGO, PRECIOS)) {
+            for (nombre in listOf(CATALOGO, PRECIOS, HISTORIAL)) {
                 runCatching { leer(repo, nombre, token, RAMA_DATOS) }
                     .onSuccess { File(context.filesDir, nombre).writeText(it) }
             }

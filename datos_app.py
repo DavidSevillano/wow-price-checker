@@ -4,7 +4,7 @@
     py datos_app.py --salida /tmp/x    # a otra carpeta
     py datos_app.py --solo-catalogo    # sin bajarse ningun reino
 
-Publica tres cosas:
+Publica cuatro cosas:
 
   catalogo.json   que objetos vigilas, como se llaman en espanol, su icono y tu
                   tabla de precios por ilvl. Cambia solo cuando tocas
@@ -18,6 +18,9 @@ Publica tres cosas:
 
   mercado.json.gz el buscador de la app: los reinos mas baratos de cualquier
                   cosa que se venda en la region, como la casa de subastas.
+
+  historial.json  el mas barato de cada dia de tus objetos en toda la region,
+                  los ultimos 30 dias. Se va llenando en .state pasada a pasada.
 
 Va aparte de main.py a proposito. main.py es el que te manda las alertas y no
 conviene tocarlo para esto.
@@ -47,6 +50,7 @@ from wowalerts.buscador import (
     nombres_que_faltan,
 )
 from wowalerts.config import ConfigError, load_config
+from wowalerts.historial import apuntar, construir_historial, minimos_de_ahora, recortar
 from wowalerts.items import ItemResolutionError, resolve_item_ids
 from wowalerts.mercado import TIPO_MASCOTA, resumir_reino
 from wowalerts.misubastas import slugify_realm
@@ -195,12 +199,13 @@ def completar_nombres(client, ofertas, state_dir, vigilados=()) -> dict:
 
 def recoger_precios(
     client, config, reglas, roster_path, state_dir, del_catalogo=()
-) -> tuple[dict, dict]:
-    """Baja toda la region y saca de ella los dos ficheros de precios.
+) -> tuple[dict, dict, dict]:
+    """Baja toda la region y saca de ella los ficheros de precios.
 
-    Dos usos del mismo volcado: el precio a batir en los reinos donde vendes
-    (precios.json) y el buscador de la app, que dice donde esta mas barato
-    cualquier cosa en toda la region (mercado.json.gz).
+    Tres usos del mismo volcado: el precio a batir en los reinos donde vendes
+    (precios.json), el buscador de la app, que dice donde esta mas barato
+    cualquier cosa en toda la region (mercado.json.gz), y el minimo del dia de
+    tus objetos, que se suma a los de los dias anteriores (historial.json).
     """
     roster = leer_rosters(roster_path)
     reino_por_personaje = {p.name: p.realm for p in roster}
@@ -279,7 +284,21 @@ def recoger_precios(
     return (
         construir_precios(por_reino, ahora),
         construir_indice(ofertas, nombres, grupos, ahora),
+        actualizar_historial(ofertas, vigilados, grupos, state_dir, ahora),
     )
+
+
+def actualizar_historial(ofertas, vigilados, grupos, state_dir, ahora: int) -> dict:
+    """Suma esta pasada al historial de 30 dias que vive en .state.
+
+    El dia es el de UTC: la pasada corre en GitHub y asi no depende de su zona.
+    """
+    hoy = datetime.fromtimestamp(ahora, timezone.utc).date()
+    cache = JsonMapCache(Path(state_dir) / "historial_precios.json", "objetos")
+    apuntar(cache._data, hoy, minimos_de_ahora(ofertas, vigilados, [g[0] for g in grupos]))
+    recortar(cache._data, hoy, vigilados)
+    cache.save()
+    return construir_historial(cache._data, ahora)
 
 
 def escribir(destino: Path, nombre: str, contenido: dict) -> bool:
@@ -378,12 +397,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.solo_catalogo:
         log.info("--solo-catalogo: no bajo ningun reino.")
     else:
-        precios, indice = recoger_precios(
+        precios, indice, historial = recoger_precios(
             client, config, reglas, args.personajes, args.state_dir,
             del_catalogo=catalogo["objetos"],
         )
         cambios = escribir(destino, "precios.json", precios) or cambios
         cambios = escribir_gz(destino, "mercado.json.gz", indice) or cambios
+        cambios = escribir(destino, "historial.json", historial) or cambios
 
     log.info("✅ Listo%s.", "" if cambios else " (sin cambios)")
     return EXIT_OK

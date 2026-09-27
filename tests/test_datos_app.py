@@ -1,3 +1,4 @@
+import datos_app
 from datos_app import fichas_de_grupos
 
 
@@ -53,3 +54,16 @@ def test_los_vigilados_tienen_nombre_sin_pedirlo(tmp_path):
 
     assert nombres["o:212000"] == {"es": "Grebas", "en": "Greaves", "icono": "x.jpg"}
     assert cliente.pedidas == []
+
+
+def test_el_historial_se_guarda_entre_pasadas(tmp_path):
+    from wowalerts.mercado import TIPO_OBJETO, Clave
+
+    grebas = Clave(TIPO_OBJETO, 212000, 305)
+    grupos = [("Aszune", ["aszune"], 1), ("Kazzak", ["kazzak"], 1)]
+    # 2026-09-27 a las 10:00 y a las 11:00 UTC: el mismo dia.
+    datos_app.actualizar_historial({grebas: [(0, 20_000_000, 1)]}, {212000}, grupos, tmp_path, 1790503200)
+    fichero = datos_app.actualizar_historial(
+        {grebas: [(1, 15_000_000, 1)]}, {212000}, grupos, tmp_path, 1790506800
+    )
+    assert fichero["objetos"] == {"212000": {"305": [["2026-09-27", 1500, "Kazzak"]]}}
