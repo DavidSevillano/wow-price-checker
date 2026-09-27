@@ -1775,13 +1775,18 @@ private fun FichaMercado(
     else producto.variantes.map { it.valor }
     var valor by remember(producto) { mutableStateOf(seleccion.valor ?: opciones.firstOrNull()) }
 
-    // slug de reino -> tus personajes ahi, en el orden de la pantalla principal
+    // reino -> tus personajes ahi, en el orden de la pantalla principal. Por
+    // slug y ademas por nombre: los reinos rusos vienen en cirilico y su slug
+    // se queda vacio, pero el nombre si coincide con el del grupo.
     val mios = remember(datos, catalogo) {
         val orden = catalogo.orden
-        datos.personajes.values
+        val ordenados = datos.personajes.values
             .filter { it.reino.isNotBlank() }
             .sortedBy { orden.indexOf(it.nombre).let { i -> if (i < 0) Int.MAX_VALUE else i } }
+        val porSlug = ordenados.filter { slugDeReino(it.reino).isNotEmpty() }
             .groupBy { slugDeReino(it.reino) }
+        val porNombre = ordenados.groupBy { claveDeNombre(it.reino) }
+        porSlug + porNombre.mapKeys { "=" + it.key }
     }
     // El historial guarda el nombre del grupo; con esto se le sacan los slugs.
     val slugsDeGrupo = remember(mercado) { mercado.grupos.associate { it.nombre to it.slugs } }
@@ -2060,7 +2065,9 @@ private data class Entrada(val titulo: String, val detalle: String, val personaj
         fun de(grupo: String, slugs: List<String>, mios: Map<String, List<Personaje>>): Entrada {
             // Primero WoW 2 y WoW 3, y WoW 1 solo si no hay otro. Dentro de cada
             // cuenta, tu orden (sortedBy es estable).
-            val tuyos = slugs.flatMap { mios[it].orEmpty() }.sortedBy { prioridadDeCuenta(it.cuenta) }
+            val claves = slugs + grupo.split(" / ").map { "=" + claveDeNombre(it) }
+            val tuyos = claves.flatMap { mios[it].orEmpty() }.distinct()
+                .sortedBy { prioridadDeCuenta(it.cuenta) }
             if (tuyos.isEmpty()) {
                 return Entrada(grupo.substringBefore(" / "), "sin personaje tuyo", tuyos)
             }
@@ -2072,6 +2079,8 @@ private data class Entrada(val titulo: String, val detalle: String, val personaj
         }
     }
 }
+
+private fun claveDeNombre(reino: String): String = normal(reino.trim())
 
 private fun prioridadDeCuenta(cuenta: Int?): Int = when (cuenta) {
     2 -> 0
