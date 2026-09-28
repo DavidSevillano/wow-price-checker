@@ -1,5 +1,13 @@
 package com.burixer.cobertura
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -166,27 +174,7 @@ private fun TarjetaPedido(
             Spacer(Modifier.height(10.dp))
             Titulo("Para", "${pedido.personajes.size}")
             pedido.personajes.forEach { nombre ->
-                val ficha = datos.personajes[nombre]
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(mote(nombre), fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                        Text(
-                            text = donde(ficha),
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (objeto != null) {
-                        Column(horizontalAlignment = Alignment.End) {
-                            DelReino(objeto, ficha?.reino.orEmpty(), precios, pedido.ilvl)
-                        }
-                    }
-                }
+                FilaPara(nombre, datos.personajes[nombre], objeto, pedido.ilvl, precios)
             }
 
             Spacer(Modifier.height(10.dp))
@@ -205,3 +193,86 @@ private fun TarjetaPedido(
 }
 
 private fun clave(pedido: Pedido) = "${pedido.itemId}|${pedido.ilvl}"
+
+/**
+ * Un personaje del pedido, con lo que vale el objeto en su reino. Al tocarlo se
+ * abre la escalera de ilvl de ese reino, como en "Le falta a": con el ilvl que
+ * compras marcado, tu tope y en rojo el que te pisa.
+ */
+@Composable
+private fun FilaPara(
+    nombre: String,
+    ficha: Personaje?,
+    objeto: Objeto?,
+    ilvl: Int?,
+    precios: Precios,
+) {
+    var desplegado by remember(nombre, ilvl) { mutableStateOf(false) }
+    val reino = ficha?.reino.orEmpty()
+
+    val conPrecio = objeto?.let { precios.escalera(reino, it.id).toMap() }.orEmpty()
+    val topes = objeto?.escalones?.associate { it.ilvl to it.tope }.orEmpty()
+    val escalera = if (objeto?.escala == true) {
+        (topes.keys + conPrecio.keys + listOfNotNull(ilvl)).distinct().sorted()
+    } else {
+        emptyList()
+    }
+    val pisa = if (objeto?.escala == true && ilvl != null) precios.pisa(reino, objeto.id, ilvl)
+    else null
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = escalera.isNotEmpty()) { desplegado = !desplegado }
+            .padding(vertical = 6.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(mote(nombre), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    text = donde(ficha),
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (objeto != null) {
+                Column(horizontalAlignment = Alignment.End) {
+                    DelReino(objeto, reino, precios, ilvl)
+                }
+            }
+        }
+
+        if (pisa != null) {
+            Text(
+                text = "te pisa el ${pisa.first} a ${oro(pisa.second.oro)}",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = desplegado && escalera.isNotEmpty(),
+            enter = expandVertically(tween(ENTRADA_MS, easing = FastOutSlowInEasing)) +
+                fadeIn(tween(ENTRADA_MS)),
+            exit = shrinkVertically(tween(SALIDA_MS)) + fadeOut(tween(SALIDA_MS)),
+        ) {
+            Column(Modifier.padding(top = 6.dp)) {
+                escalera.chunked(3).forEach { grupo ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        grupo.forEach { escalon ->
+                            Escalon(
+                                ilvl = escalon,
+                                precio = conPrecio[escalon],
+                                tuyo = escalon == ilvl,
+                                estorba = pisa != null && escalon == pisa.first,
+                                tope = topes[escalon],
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(5.dp))
+                }
+            }
+        }
+    }
+}
