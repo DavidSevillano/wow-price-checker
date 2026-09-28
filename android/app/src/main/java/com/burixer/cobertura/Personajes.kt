@@ -59,6 +59,8 @@ internal fun Personajes(
     cobertura: List<Cobertura>,
     abierto: String?,
     alAbrir: (String) -> Unit,
+    encargos: List<Encargo>,
+    alApuntar: (Encargo) -> Unit,
 ) {
     // El ilvl que llevas encima. Vive aqui, fuera de la ficha, para que siga
     // elegido al pasar de un personaje a otro.
@@ -96,7 +98,7 @@ internal fun Personajes(
             if (nombre == null) {
                 ListaPersonajes(orden, datos, cobertura, ilvl, alAbrir)
             } else {
-                FichaDelPersonaje(nombre, datos, precios, cobertura, ilvl)
+                FichaDelPersonaje(nombre, datos, precios, cobertura, ilvl, encargos, alApuntar)
             }
         }
     }
@@ -121,7 +123,7 @@ private fun FichaIlvl(texto: String, elegida: Boolean, alPulsar: () -> Unit) {
     )
 }
 
-private fun donde(ficha: Personaje?): String = buildString {
+internal fun donde(ficha: Personaje?): String = buildString {
     ficha?.reino?.takeIf { it.isNotBlank() }?.let { append(it) }
     ficha?.cuenta?.let { if (isNotEmpty()) append(" · "); append("WoW $it") }
 }
@@ -192,6 +194,8 @@ private fun FichaDelPersonaje(
     precios: Precios,
     cobertura: List<Cobertura>,
     ilvl: Int?,
+    encargos: List<Encargo>,
+    alApuntar: (Encargo) -> Unit,
 ) {
     val reino = datos.personajes[nombre]?.reino.orEmpty()
     val objetos = remember(cobertura, nombre, ilvl) {
@@ -223,7 +227,19 @@ private fun FichaDelPersonaje(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        sinPoner.forEach { FilaObjeto(it, reino, precios, ilvl) }
+        sinPoner.forEach { fila ->
+            // Lo que escala se compra a un ilvl: sin elegir uno no hay que apuntar.
+            val encargo = when {
+                !fila.objeto.escala -> Encargo(fila.objeto.id, null, nombre)
+                ilvl != null -> Encargo(fila.objeto.id, ilvl, nombre)
+                else -> null
+            }
+            FilaObjeto(
+                fila, reino, precios, ilvl,
+                apuntado = encargo != null && encargo in encargos,
+                alApuntar = encargo?.let { { alApuntar(it) } },
+            )
+        }
 
         Spacer(Modifier.height(18.dp))
         Titulo(if (ilvl != null) "Puestos — ilvl $ilvl" else "Puestos", "${puestos.size}")
@@ -246,7 +262,14 @@ private fun FichaDelPersonaje(
  * reino con tu tope, y marcados los ilvl que ya tiene puestos.
  */
 @Composable
-private fun FilaObjeto(fila: ObjetoDelPersonaje, reino: String, precios: Precios, ilvl: Int?) {
+private fun FilaObjeto(
+    fila: ObjetoDelPersonaje,
+    reino: String,
+    precios: Precios,
+    ilvl: Int?,
+    apuntado: Boolean = false,
+    alApuntar: (() -> Unit)? = null,
+) {
     val objeto = fila.objeto
     var desplegado by remember(objeto.id, reino) { mutableStateOf(false) }
 
@@ -280,6 +303,10 @@ private fun FilaObjeto(fila: ObjetoDelPersonaje, reino: String, precios: Precios
             Spacer(Modifier.width(8.dp))
             Column(horizontalAlignment = Alignment.End) {
                 if (fila.puesto) Suyo(fila) else DelReino(objeto, reino, precios, ilvl)
+            }
+            if (alApuntar != null) {
+                Spacer(Modifier.width(4.dp))
+                BotonCompra(apuntado, alApuntar)
             }
         }
 
@@ -342,7 +369,7 @@ private fun Suyo(fila: ObjetoDelPersonaje) {
 }
 
 @Composable
-private fun DelReino(objeto: Objeto, reino: String, precios: Precios, ilvl: Int?) {
+internal fun DelReino(objeto: Objeto, reino: String, precios: Precios, ilvl: Int?) {
     // Con un ilvl elegido, el precio de ese ilvl. Sin elegir, mirado entero: en
     // lo que escala sale el ilvl mas barato del reino, y el resto de la
     // escalera esta a un toque.

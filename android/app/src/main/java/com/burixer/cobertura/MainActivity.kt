@@ -50,8 +50,14 @@ import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -63,8 +69,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -208,8 +216,10 @@ private fun App() {
     var mercado by remember { mutableStateOf<Mercado?>(null) }
     var historial by remember { mutableStateOf(Historial.VACIO) }
     var mercadoLeido by remember { mutableStateOf(false) }
-    LaunchedEffect(buscando, mercadoLeido) {
-        if (buscando && !mercadoLeido) {
+    // La lista de la compra tambien lo usa: es de donde salen los reinos baratos.
+    var comprando by remember { mutableStateOf(false) }
+    LaunchedEffect(buscando, comprando, mercadoLeido) {
+        if ((buscando || comprando) && !mercadoLeido) {
             mercado = withContext(Dispatchers.IO) { Repositorio.mercado(context) }
             historial = withContext(Dispatchers.IO) { Repositorio.historial(context) }
             mercadoLeido = true
@@ -240,7 +250,30 @@ private fun App() {
         if (personajeAbierto != null) personajeAbierto = null else viendoPersonajes = false
     }
     BackHandler(enabled = viendoPersonajes) { atrasEnPersonajes() }
-    val enInicio = elegido == null && !buscando && !viendoPersonajes
+
+    // La lista de la compra. Se guarda en cada cambio: la app muere al salir.
+    var encargos by remember { mutableStateOf(Compra.leer(context)) }
+    fun cambiarEncargos(nuevos: List<Encargo>) {
+        encargos = nuevos
+        Compra.guardar(context, nuevos)
+    }
+    val alApuntar: (Encargo) -> Unit = { cambiarEncargos(Compra.alternar(encargos, it)) }
+    BackHandler(enabled = comprando) { comprando = false }
+    // Lo que ya has puesto sale solo del carrito: cada vez que llegan subastas
+    // nuevas (al abrir y al actualizar) se cruza con lo apuntado.
+    LaunchedEffect(cobertura) {
+        val puestos = Compra.yaPuestos(encargos, cobertura)
+        if (puestos.isNotEmpty()) {
+            cambiarEncargos(encargos - puestos.toSet())
+            avisos.showSnackbar(
+                if (puestos.size == 1) "Quitado 1 del carrito: ya lo tienes puesto."
+                else "Quitados ${puestos.size} del carrito: ya los tienes puestos."
+            )
+        }
+    }
+    var menu by remember { mutableStateOf(false) }
+
+    val enInicio = elegido == null && !buscando && !viendoPersonajes && !comprando
 
     BackHandler(enabled = elegido != null) { abierto = null }
     // Lo abierto en el buscador vive aqui y no dentro: la flecha de arriba y el
@@ -305,6 +338,10 @@ private fun App() {
                         IconButton(onClick = { atrasEnBuscador() }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
                         }
+                    } else if (comprando) {
+                        IconButton(onClick = { comprando = false }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
+                        }
                     } else if (viendoPersonajes) {
                         IconButton(onClick = { atrasEnPersonajes() }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
@@ -319,6 +356,7 @@ private fun App() {
                     Text(
                         text = when {
                             buscando -> "Dónde está más barato"
+                            comprando -> "Lista de la compra"
                             viendoPersonajes -> personajeAbierto?.let { mote(it) } ?: "Tus personajes"
                             elegido != null -> elegido.objeto.es
                             else -> "Quién no lo tiene"
@@ -348,33 +386,59 @@ private fun App() {
                         IconButton(onClick = { buscando = true }) {
                             Icon(Icons.Filled.Search, contentDescription = "Buscar precio")
                         }
-                    }
-                    // Sin token no se ofrece: el envio fallaria y el boton solo
-                    // serviria para descubrirlo a base de tocarlo. Y solo en el
-                    // listado: dentro de un objeto no viene a cuento.
-                    if (enInicio && Repositorio.token(context).isNotBlank()) {
-                        IconButton(onClick = { anadiendo = true }) {
-                            Icon(Icons.Filled.Add, contentDescription = "Añadir objeto")
-                        }
-                    }
-                    // El interruptor de avisos, en rojo mientras estan pausados:
-                    // pausarlos y olvidarlo es el fallo facil, asi que se tiene
-                    // que ver desde cualquier pantalla del listado.
-                    if (enInicio && Repositorio.token(context).isNotBlank()) {
-                        IconButton(onClick = { cambiandoAvisos = true }) {
-                            if (pausados == true) {
-                                Icon(
-                                    Icons.Filled.NotificationsOff,
-                                    contentDescription = "Avisos pausados",
-                                    tint = MaterialTheme.colorScheme.error,
-                                )
-                            } else {
-                                Icon(Icons.Filled.Notifications, contentDescription = "Avisos")
+                        IconButton(onClick = { comprando = true }) {
+                            BadgedBox(badge = {
+                                if (encargos.isNotEmpty()) Badge { Text("${encargos.size}") }
+                            }) {
+                                Icon(Icons.Filled.ShoppingCart, contentDescription = "Lista de la compra")
                             }
                         }
-                    }
-                    IconButton(onClick = { ajustes = true }) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Ajustes")
+                        // Lo que menos se usa, en el menu: con todo en la barra
+                        // el titulo no cabe. Los avisos pausados se siguen viendo
+                        // en la franja roja de encima de la lista.
+                        Box {
+                            IconButton(onClick = { menu = true }) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = "Más")
+                            }
+                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                // Sin token no se ofrece: el envio fallaria y el
+                                // boton solo serviria para descubrirlo a base de
+                                // tocarlo.
+                                if (Repositorio.token(context).isNotBlank()) {
+                                    DropdownMenuItem(
+                                        text = { Text("Añadir objeto") },
+                                        leadingIcon = { Icon(Icons.Filled.Add, null) },
+                                        onClick = { menu = false; anadiendo = true },
+                                    )
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(if (pausados == true) "Avisos (pausados)" else "Avisos")
+                                        },
+                                        leadingIcon = {
+                                            if (pausados == true) {
+                                                Icon(
+                                                    Icons.Filled.NotificationsOff,
+                                                    null,
+                                                    tint = MaterialTheme.colorScheme.error,
+                                                )
+                                            } else {
+                                                Icon(Icons.Filled.Notifications, null)
+                                            }
+                                        },
+                                        onClick = { menu = false; cambiandoAvisos = true },
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text("Ajustes") },
+                                    leadingIcon = { Icon(Icons.Filled.Settings, null) },
+                                    onClick = { menu = false; ajustes = true },
+                                )
+                            }
+                        }
+                    } else {
+                        IconButton(onClick = { ajustes = true }) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Ajustes")
+                        }
                     }
                 },
             )
@@ -412,6 +476,32 @@ private fun App() {
                             ?.let { editando = it }
                     }),
                 )
+            } else if (comprando) {
+                ListaCompra(
+                    encargos = encargos,
+                    catalogo = catalogo,
+                    mercado = if (mercadoLeido) mercado ?: Mercado.VACIO else null,
+                    datos = datos,
+                    precios = precios,
+                    // Se quita al momento, pero se puede deshacer: es facil
+                    // tocarlo sin querer y no hay otra forma de recuperarlo.
+                    alComprar = { pedido ->
+                        val antes = encargos
+                        val quitados = Compra.delPedido(antes, pedido)
+                        cambiarEncargos(antes - quitados.toSet())
+                        alcance.launch {
+                            avisos.currentSnackbarData?.dismiss()
+                            val respuesta = avisos.showSnackbar(
+                                message = "Marcado como comprado.",
+                                actionLabel = "Deshacer",
+                                duration = SnackbarDuration.Long,
+                            )
+                            if (respuesta == SnackbarResult.ActionPerformed) {
+                                cambiarEncargos(Compra.devolver(encargos, quitados, antes))
+                            }
+                        }
+                    },
+                )
             } else if (viendoPersonajes) {
                 Personajes(
                     orden = catalogo.orden,
@@ -420,6 +510,8 @@ private fun App() {
                     cobertura = cobertura,
                     abierto = personajeAbierto,
                     alAbrir = { personajeAbierto = it },
+                    encargos = encargos,
+                    alApuntar = alApuntar,
                 )
             } else {
             // La pantalla entra por el lado hacia el que vas, como en cualquier
@@ -461,6 +553,8 @@ private fun App() {
                         // solo serviria para descubrirlo a base de tocarlo.
                         alTocarTope = if (Repositorio.token(context).isBlank()) null
                         else ({ editando = it }),
+                        encargos = encargos,
+                        alApuntar = alApuntar,
                     )
                 }
             }
@@ -674,6 +768,8 @@ private fun Detalle(
     personajes: Int,
     pendientes: Map<String, Long> = emptyMap(),
     alTocarTope: ((Variante) -> Unit)? = null,
+    encargos: List<Encargo> = emptyList(),
+    alApuntar: ((Encargo) -> Unit)? = null,
 ) {
     var variante by remember(cobertura.objeto.id) { mutableStateOf(cobertura.porDefecto) }
 
@@ -743,7 +839,12 @@ private fun Detalle(
                     )
                     Spacer(Modifier.height(8.dp))
                     actual.faltan.forEach { nombre ->
-                        FichaFalta(nombre, datos, precios, cobertura.objeto, actual)
+                        val encargo = Encargo(cobertura.objeto.id, actual.ilvl, nombre)
+                        FichaFalta(
+                            nombre, datos, precios, cobertura.objeto, actual,
+                            apuntado = encargo in encargos,
+                            alApuntar = alApuntar?.let { { it(encargo) } },
+                        )
                     }
                     Spacer(Modifier.height(18.dp))
                 }
@@ -950,6 +1051,8 @@ private fun FichaFalta(
     precios: Precios,
     objeto: Objeto,
     variante: Variante,
+    apuntado: Boolean = false,
+    alApuntar: (() -> Unit)? = null,
 ) {
     var desplegado by remember(nombre, variante.ilvl) { mutableStateOf(false) }
 
@@ -1021,6 +1124,10 @@ private fun FichaFalta(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+            if (alApuntar != null) {
+                Spacer(Modifier.width(4.dp))
+                BotonCompra(apuntado, alApuntar)
             }
         }
 
@@ -1806,19 +1913,7 @@ private fun FichaMercado(
     else producto.variantes.map { it.valor }
     var valor by remember(producto) { mutableStateOf(seleccion.valor ?: opciones.firstOrNull()) }
 
-    // reino -> tus personajes ahi, en el orden de la pantalla principal. Por
-    // slug y ademas por nombre: los reinos rusos vienen en cirilico y su slug
-    // se queda vacio, pero el nombre si coincide con el del grupo.
-    val mios = remember(datos, catalogo) {
-        val orden = catalogo.orden
-        val ordenados = datos.personajes.values
-            .filter { it.reino.isNotBlank() }
-            .sortedBy { orden.indexOf(it.nombre).let { i -> if (i < 0) Int.MAX_VALUE else i } }
-        val porSlug = ordenados.filter { slugDeReino(it.reino).isNotEmpty() }
-            .groupBy { slugDeReino(it.reino) }
-        val porNombre = ordenados.groupBy { claveDeNombre(it.reino) }
-        porSlug + porNombre.mapKeys { "=" + it.key }
-    }
+    val mios = remember(datos, catalogo) { misReinos(datos, catalogo) }
     // El historial guarda el nombre del grupo; con esto se le sacan los slugs.
     val slugsDeGrupo = remember(mercado) { mercado.grupos.associate { it.nombre to it.slugs } }
 
@@ -2082,7 +2177,7 @@ private fun diaCorto(dia: String): String = runCatching {
 }.getOrDefault(dia)
 
 @Composable
-private fun FilaOferta(oferta: Oferta, mios: Map<String, List<Personaje>>, tope: Long?) {
+internal fun FilaOferta(oferta: Oferta, mios: Map<String, List<Personaje>>, tope: Long?) {
     val quien = Entrada.de(oferta.grupo.nombre, oferta.grupo.slugs, mios)
     val tuyos = quien.personajes
     val bajoTope = tope != null && oferta.oro <= tope
@@ -2182,4 +2277,20 @@ private fun fecha(exportado: Long): String {
     if (exportado <= 0L) return "desconocido"
     val formato = java.text.SimpleDateFormat("d MMM HH:mm", Locale("es", "ES"))
     return formato.format(java.util.Date(exportado * 1000))
+}
+
+/**
+ * Reino -> tus personajes ahi, en el orden de la pantalla principal. Por slug y
+ * ademas por nombre: los reinos rusos vienen en cirilico y su slug se queda
+ * vacio, pero el nombre si coincide con el del grupo.
+ */
+internal fun misReinos(datos: Datos, catalogo: Catalogo): Map<String, List<Personaje>> {
+    val orden = catalogo.orden
+    val ordenados = datos.personajes.values
+        .filter { it.reino.isNotBlank() }
+        .sortedBy { orden.indexOf(it.nombre).let { i -> if (i < 0) Int.MAX_VALUE else i } }
+    val porSlug = ordenados.filter { slugDeReino(it.reino).isNotEmpty() }
+        .groupBy { slugDeReino(it.reino) }
+    val porNombre = ordenados.groupBy { claveDeNombre(it.reino) }
+    return porSlug + porNombre.mapKeys { "=" + it.key }
 }
