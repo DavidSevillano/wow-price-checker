@@ -298,7 +298,9 @@ data class Precios(val generado: Long, val reinos: Map<String, ReinoPrecios>) {
      * El ilvl mejor que el tuyo que te deja sin sitio, si lo hay.
      *
      * Un comprador que ve un 298 mas barato que el 295 que hay puesto se lleva
-     * el 298, asi que ese 295 no se vende y meter otro tampoco.
+     * el 298, asi que ese 295 no se vende y meter otro tampoco. Y lo mismo si el
+     * 298 cuesta hasta `MARGEN_PISA_ORO` mas: por esa diferencia tambien se
+     * lleva el mejor.
      *
      * Solo se avisa cuando de tu ilvl hay algo puesto. Con tu ilvl vacio no hay
      * nada que comparar --el precio lo pones tu-- y el aviso saldria en casi
@@ -311,7 +313,7 @@ data class Precios(val generado: Long, val reinos: Map<String, ReinoPrecios>) {
         val mio = escalera.firstOrNull { it.first == ilvl }?.second ?: return null
         val mejor = escalera.filter { it.first > ilvl }.minByOrNull { it.second.minCobre }
             ?: return null
-        if (mio.minCobre <= mejor.second.minCobre) return null
+        if (mejor.second.minCobre > mio.minCobre + MARGEN_PISA_ORO * 10_000) return null
         return mejor
     }
 
@@ -328,6 +330,9 @@ data class Precios(val generado: Long, val reinos: Map<String, ReinoPrecios>) {
     companion object {
         val VACIOS = Precios(0L, emptyMap())
         const val SIN_ILVL = "plano"
+
+        /** Lo que un comprador paga de mas sin pensarlo por el ilvl mejor. */
+        const val MARGEN_PISA_ORO = 10_000L
     }
 }
 
