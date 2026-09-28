@@ -257,6 +257,8 @@ private fun FilaObjeto(fila: ObjetoDelPersonaje, reino: String, precios: Precios
     } else {
         emptyList()
     }
+    // Solo con un ilvl elegido: sin el no hay "tu ilvl" que pueda quedar pisado.
+    val pisa = if (objeto.escala && ilvl != null) precios.pisa(reino, objeto.id, ilvl) else null
 
     Column(
         Modifier
@@ -281,6 +283,15 @@ private fun FilaObjeto(fila: ObjetoDelPersonaje, reino: String, precios: Precios
             }
         }
 
+        if (pisa != null) {
+            Text(
+                text = "te pisa el ${pisa.first} a ${oro(pisa.second.oro)}",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(start = 46.dp, top = 3.dp),
+            )
+        }
+
         AnimatedVisibility(
             visible = desplegado && escalera.isNotEmpty(),
             enter = expandVertically(tween(ENTRADA_MS, easing = FastOutSlowInEasing)) +
@@ -298,7 +309,7 @@ private fun FilaObjeto(fila: ObjetoDelPersonaje, reino: String, precios: Precios
                                 // si no, los que ya tiene puestos.
                                 tuyo = if (ilvl != null) escalon == ilvl
                                 else escalon in fila.puestas,
-                                estorba = false,
+                                estorba = pisa != null && escalon == pisa.first,
                                 tope = topes[escalon],
                             )
                         }
