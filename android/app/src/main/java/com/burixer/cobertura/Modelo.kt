@@ -63,6 +63,18 @@ data class Cobertura(
         get() = variantes.maxByOrNull { it.tienen.size } ?: variantes.first()
 }
 
+/**
+ * Un objeto visto desde un personaje: lo que tiene puesto de cada ilvl.
+ *
+ * Tenerlo a un ilvl ya cuenta como puesto. Contar como hueco cada ilvl que le
+ * falta llenaria la lista de huecos que no piensas cubrir; los ilvl estan
+ * dentro, al desplegar.
+ */
+data class ObjetoDelPersonaje(val cobertura: Cobertura, val puestas: Map<Int?, Puesta>) {
+    val objeto: Objeto get() = cobertura.objeto
+    val puesto: Boolean get() = puestas.isNotEmpty()
+}
+
 object Parser {
 
     fun catalogo(texto: String): Catalogo {
@@ -185,6 +197,27 @@ object Calculo {
             Cobertura(objeto, puestas, conAlgo, variantes)
         }.sortedWith(compareByDescending<Cobertura> { it.puestas }.thenBy { it.objeto.es })
     }
+
+    /**
+     * Todos los objetos que vigilas, con lo que tiene puesto de cada uno `nombre`.
+     *
+     * Con `ilvl`, de lo que escala solo cuenta lo puesto a ese ilvl: es el que
+     * llevas encima y el que quieres saber donde meter. Lo que no escala no
+     * tiene ilvl y sale igual.
+     */
+    fun delPersonaje(
+        cobertura: List<Cobertura>,
+        nombre: String,
+        ilvl: Int? = null,
+    ): List<ObjetoDelPersonaje> =
+        cobertura.map { c ->
+            val puestas = c.variantes
+                .filter { ilvl == null || !c.objeto.escala || it.ilvl == ilvl }
+                .mapNotNull { v ->
+                    v.tienen.firstOrNull { it.personaje == nombre }?.let { v.ilvl to it }
+                }.toMap()
+            ObjetoDelPersonaje(c, puestas)
+        }
 
     private fun variante(
         ilvl: Int?,

@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -102,8 +103,8 @@ import java.util.Locale
 // Cortas a proposito: esto se usa con el juego abierto y a medio repartir un
 // chollo, no es una app de contemplar. Si apagas las animaciones del sistema,
 // Compose las salta solo.
-private const val ENTRADA_MS = 260
-private const val SALIDA_MS = 120
+internal const val ENTRADA_MS = 260
+internal const val SALIDA_MS = 120
 
 private val Oro = Color(0xFF8A6410)
 private val OroOscuro = Color(0xFFDFB349)
@@ -137,13 +138,13 @@ private val EsquemaOscuro = darkColorScheme(
 )
 
 /** '18,6k', '1,2M': lo justo para que quepan tres escalones en una fila. */
-private fun oroCorto(valor: Long): String = when {
+internal fun oroCorto(valor: Long): String = when {
     valor >= 1_000_000 -> String.format(Locale("es", "ES"), "%.1fM", valor / 1_000_000.0)
     valor >= 1_000 -> String.format(Locale("es", "ES"), "%.1fk", valor / 1_000.0)
     else -> "$valor g"
 }
 
-private fun oro(valor: Long): String =
+internal fun oro(valor: Long): String =
     NumberFormat.getIntegerInstance(Locale("es", "ES")).format(valor) + " g"
 
 /**
@@ -163,7 +164,7 @@ internal fun sufijoComun(nombres: List<String>): String {
 
 private var sufijoPersonajes = ""
 
-private fun mote(nombre: String): String =
+internal fun mote(nombre: String): String =
     if (sufijoPersonajes.isNotEmpty() && nombre.length > sufijoPersonajes.length &&
         nombre.endsWith(sufijoPersonajes)
     ) nombre.dropLast(sufijoPersonajes.length) else nombre
@@ -231,6 +232,16 @@ private fun App() {
     val cobertura = remember(datos) { Calculo.cobertura(catalogo, datos) }
     val elegido = cobertura.firstOrNull { it.objeto.id == abierto }
 
+    // La vista por personaje. Atras sale primero del personaje y luego de la
+    // lista, como en el buscador.
+    var viendoPersonajes by remember { mutableStateOf(false) }
+    var personajeAbierto by remember { mutableStateOf<String?>(null) }
+    fun atrasEnPersonajes() {
+        if (personajeAbierto != null) personajeAbierto = null else viendoPersonajes = false
+    }
+    BackHandler(enabled = viendoPersonajes) { atrasEnPersonajes() }
+    val enInicio = elegido == null && !buscando && !viendoPersonajes
+
     BackHandler(enabled = elegido != null) { abierto = null }
     // Lo abierto en el buscador vive aqui y no dentro: la flecha de arriba y el
     // atras del sistema tienen que hacer lo mismo, volver primero a la lista
@@ -294,6 +305,10 @@ private fun App() {
                         IconButton(onClick = { atrasEnBuscador() }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
                         }
+                    } else if (viendoPersonajes) {
+                        IconButton(onClick = { atrasEnPersonajes() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
+                        }
                     } else if (elegido != null) {
                         IconButton(onClick = { abierto = null }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
@@ -304,11 +319,12 @@ private fun App() {
                     Text(
                         text = when {
                             buscando -> "Dónde está más barato"
+                            viendoPersonajes -> personajeAbierto?.let { mote(it) } ?: "Tus personajes"
                             elegido != null -> elegido.objeto.es
                             else -> "Quién no lo tiene"
                         },
                         fontWeight = FontWeight.Medium,
-                        fontSize = if (elegido != null || buscando) 17.sp else 20.sp,
+                        fontSize = if (enInicio) 20.sp else 17.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -325,7 +341,10 @@ private fun App() {
                             Icon(Icons.Filled.Refresh, contentDescription = "Actualizar")
                         }
                     }
-                    if (elegido == null && !buscando) {
+                    if (enInicio) {
+                        IconButton(onClick = { viendoPersonajes = true }) {
+                            Icon(Icons.Filled.Person, contentDescription = "Por personaje")
+                        }
                         IconButton(onClick = { buscando = true }) {
                             Icon(Icons.Filled.Search, contentDescription = "Buscar precio")
                         }
@@ -333,7 +352,7 @@ private fun App() {
                     // Sin token no se ofrece: el envio fallaria y el boton solo
                     // serviria para descubrirlo a base de tocarlo. Y solo en el
                     // listado: dentro de un objeto no viene a cuento.
-                    if (elegido == null && !buscando && Repositorio.token(context).isNotBlank()) {
+                    if (enInicio && Repositorio.token(context).isNotBlank()) {
                         IconButton(onClick = { anadiendo = true }) {
                             Icon(Icons.Filled.Add, contentDescription = "Añadir objeto")
                         }
@@ -341,7 +360,7 @@ private fun App() {
                     // El interruptor de avisos, en rojo mientras estan pausados:
                     // pausarlos y olvidarlo es el fallo facil, asi que se tiene
                     // que ver desde cualquier pantalla del listado.
-                    if (elegido == null && !buscando && Repositorio.token(context).isNotBlank()) {
+                    if (enInicio && Repositorio.token(context).isNotBlank()) {
                         IconButton(onClick = { cambiandoAvisos = true }) {
                             if (pausados == true) {
                                 Icon(
@@ -362,7 +381,7 @@ private fun App() {
         },
     ) { relleno ->
         Column(Modifier.padding(relleno)) {
-            if (pausados == true && elegido == null && !buscando) {
+            if (pausados == true && enInicio) {
                 AvisoPausa(
                     pendiente = avisosPendiente != null,
                     alPulsar = { cambiandoAvisos = true },
@@ -392,6 +411,15 @@ private fun App() {
                             ?.firstOrNull { it.ilvl == ilvl && it.vigilado }
                             ?.let { editando = it }
                     }),
+                )
+            } else if (viendoPersonajes) {
+                Personajes(
+                    orden = catalogo.orden,
+                    datos = datos,
+                    precios = precios,
+                    cobertura = cobertura,
+                    abierto = personajeAbierto,
+                    alAbrir = { personajeAbierto = it },
                 )
             } else {
             // La pantalla entra por el lado hacia el que vas, como en cualquier
@@ -841,7 +869,7 @@ private fun Veredicto(variante: Variante, total: Int) {
 }
 
 @Composable
-private fun Titulo(texto: String, contador: String) {
+internal fun Titulo(texto: String, contador: String) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(
             text = texto.uppercase(),
@@ -1038,7 +1066,13 @@ private fun FichaFalta(
 }
 
 @Composable
-private fun Escalon(ilvl: Int, precio: Precio?, tuyo: Boolean, estorba: Boolean) {
+internal fun Escalon(
+    ilvl: Int,
+    precio: Precio?,
+    tuyo: Boolean,
+    estorba: Boolean,
+    tope: Long? = null,
+) {
     val color = when {
         estorba -> MaterialTheme.colorScheme.error
         tuyo -> MaterialTheme.colorScheme.primary
@@ -1069,11 +1103,18 @@ private fun Escalon(ilvl: Int, precio: Precio?, tuyo: Boolean, estorba: Boolean)
             fontSize = 10.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (tope != null) {
+            Text(
+                text = "tope ${oroCorto(tope)}",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
 @Composable
-private fun Icono(url: String?, tamano: androidx.compose.ui.unit.Dp) {
+internal fun Icono(url: String?, tamano: androidx.compose.ui.unit.Dp) {
     Box(
         Modifier
             .size(tamano)
