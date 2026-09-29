@@ -105,7 +105,7 @@ internal fun Personajes(
 }
 
 @Composable
-private fun FichaIlvl(texto: String, elegida: Boolean, alPulsar: () -> Unit) {
+internal fun FichaIlvl(texto: String, elegida: Boolean, alPulsar: () -> Unit) {
     FilterChip(
         selected = elegida,
         onClick = alPulsar,

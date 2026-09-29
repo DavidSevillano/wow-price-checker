@@ -57,6 +57,13 @@ object Compra {
             variante?.tienen?.any { it.personaje == encargo.personaje } == true
         }
 
+    /**
+     * Solo los pedidos de esos ilvl; sin ninguno elegido, todos. Lo que no
+     * escala no tiene ilvl y solo sale sin filtro.
+     */
+    fun filtrar(pedidos: List<Pedido>, ilvls: Set<Int>): List<Pedido> =
+        if (ilvls.isEmpty()) pedidos else pedidos.filter { it.ilvl in ilvls }
+
     /** En el orden en que los apuntaste. */
     fun agrupar(lista: List<Encargo>): List<Pedido> =
         lista.groupBy { it.itemId to it.ilvl }

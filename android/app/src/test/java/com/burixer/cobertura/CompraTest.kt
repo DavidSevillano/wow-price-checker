@@ -80,6 +80,20 @@ class CompraTest {
     }
 
     @Test
+    fun `filtrar por ilvl deja solo esos, y sin filtro todo`() {
+        val pedidos = Compra.agrupar(
+            listOf(grebas305Sorrow, patronSorrow, Encargo(1, 308, "Azure"))
+        )
+
+        assertEquals(pedidos, Compra.filtrar(pedidos, emptySet()))
+        assertEquals(listOf(305), Compra.filtrar(pedidos, setOf(305)).map { it.ilvl })
+        assertEquals(
+            listOf(305, 308),
+            Compra.filtrar(pedidos, setOf(305, 308)).map { it.ilvl },
+        )
+    }
+
+    @Test
     fun `se agrupa por objeto e ilvl, con sus personajes en orden`() {
         val grupos = Compra.agrupar(listOf(grebas305Sorrow, patronSorrow, grebas305Azure))
 

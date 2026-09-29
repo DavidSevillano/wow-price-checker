@@ -108,7 +108,10 @@ object Repositorio {
      * Se leen las dos carpetas enteras porque cada maquina tuya escribe su
      * propio fichero: quedarse con uno solo perderia los personajes de la otra.
      */
-    suspend fun actualizar(context: Context): Result<Datos> = withContext(Dispatchers.IO) {
+    /** Lo que trae una descarga: tus subastas y lo que se ha vendido desde la anterior. */
+    data class Actualizacion(val datos: Datos, val vendidas: List<Subasta>)
+
+    suspend fun actualizar(context: Context): Result<Actualizacion> = withContext(Dispatchers.IO) {
         val token = token(context)
         if (token.isBlank()) {
             return@withContext Result.failure(
@@ -151,7 +154,32 @@ object Repositorio {
                 .put("auctions", subastas)
                 .put("characters", personajes)
 
-            File(context.filesDir, FICHERO).writeText(fusion.toString())
+            // Lo vendido sale de comparar con la descarga anterior, asi que se
+            // mira antes de pisarla. Con la foto que trae la app no se compara:
+            // es de hace semanas y todo pareceria desaparecido.
+            val cache = File(context.filesDir, FICHERO)
+            val antes = if (cache.isFile) {
+                runCatching { Parser.datos(cache.readText()).subastas }.getOrDefault(emptyList())
+            } else {
+                emptyList()
+            }
+            val nuevos = Parser.datos(fusion.toString())
+
+            cache.writeText(fusion.toString())
+
+            // Opcional, como el catalogo: sin ventas no se sabe que se vendio,
+            // pero las subastas siguen sirviendo. Y sin ellas no se toca el
+            // estado, o la siguiente vez todas las ventas parecerian nuevas.
+            val vendidas = runCatching {
+                val ficheros = listar(repo, "mis_ventas", token, RAMA_SUBASTAS)
+                    .map { leer(repo, "mis_ventas/$it", token, RAMA_SUBASTAS) }
+                val (estado, vendidas) = Ventas.avanzar(
+                    Ventas.estado(context), antes, nuevos.subastas,
+                    Ventas.leer(ficheros), System.currentTimeMillis(),
+                )
+                Ventas.guardar(context, estado)
+                vendidas
+            }.getOrDefault(emptyList())
 
             // El catalogo y los precios viven en otra rama y son opcionales: si
             // el workflow no los ha publicado todavia, las subastas que acabamos
@@ -186,7 +214,7 @@ object Repositorio {
             runCatching { Topes.limpiarConfirmados(context, catalogo(context)) }
 
             prefs(context).edit().putLong(CLAVE_DESCARGA, System.currentTimeMillis()).apply()
-            Parser.datos(fusion.toString())
+            Actualizacion(nuevos, vendidas)
         }
     }
 

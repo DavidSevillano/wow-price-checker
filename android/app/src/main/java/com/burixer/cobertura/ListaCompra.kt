@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -80,6 +82,13 @@ internal fun ListaCompra(
 ) {
     val pedidos = remember(encargos) { Compra.agrupar(encargos) }
     val mios = remember(datos, catalogo) { misReinos(datos, catalogo) }
+    // Los ilvl elegidos en el filtro. Se recortan a los que siguen en la lista:
+    // al comprar lo ultimo de un ilvl, su ficha desaparece y no puede quedarse
+    // filtrando a escondidas.
+    var filtro by remember { mutableStateOf(emptySet<Int>()) }
+    val ilvls = pedidos.mapNotNull { it.ilvl }.distinct().sorted()
+    val activos = filtro intersect ilvls.toSet()
+    val visibles = Compra.filtrar(pedidos, activos)
 
     if (pedidos.isEmpty()) {
         Text(
@@ -102,20 +111,38 @@ internal fun ListaCompra(
     // entraria fuera de la pantalla y pareceria que no ha vuelto: se lleva la
     // lista hasta ella.
     val estado = rememberLazyListState()
-    var vistas by remember { mutableStateOf(pedidos.map { clave(it) }.toSet()) }
-    LaunchedEffect(pedidos) {
-        val nueva = pedidos.indexOfFirst { clave(it) !in vistas }
-        vistas = pedidos.map { clave(it) }.toSet()
+    var vistas by remember { mutableStateOf(visibles.map { clave(it) }.toSet()) }
+    LaunchedEffect(visibles) {
+        val nueva = visibles.indexOfFirst { clave(it) !in vistas }
+        vistas = visibles.map { clave(it) }.toSet()
         if (nueva >= 0) estado.animateScrollToItem(nueva)
     }
 
-    LazyColumn(
-        state = estado,
-        contentPadding = PaddingValues(16.dp, 12.dp, 16.dp, 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        items(pedidos, key = { clave(it) }) { pedido ->
-            TarjetaPedido(pedido, catalogo, mercado, mios, datos, precios) { alComprar(pedido) }
+    Column {
+        // Con un solo ilvl no hay nada que filtrar.
+        if (ilvls.size > 1) {
+            Row(
+                Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                FichaIlvl("Todos", activos.isEmpty()) { filtro = emptySet() }
+                ilvls.forEach { valor ->
+                    FichaIlvl("$valor", valor in activos) {
+                        filtro = if (valor in activos) activos - valor else activos + valor
+                    }
+                }
+            }
+        }
+        LazyColumn(
+            state = estado,
+            contentPadding = PaddingValues(16.dp, 4.dp, 16.dp, 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(visibles, key = { clave(it) }) { pedido ->
+                TarjetaPedido(pedido, catalogo, mercado, mios, datos, precios) { alComprar(pedido) }
+            }
         }
     }
 }

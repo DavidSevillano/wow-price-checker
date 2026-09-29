@@ -294,11 +294,24 @@ private fun App() {
         cargando = true
         alcance.launch {
             Repositorio.actualizar(context)
-                .onSuccess {
-                    datos = it
+                .onSuccess { descarga ->
+                    datos = descarga.datos
                     // La misma descarga trae el catalogo y los precios, asi que
                     // se releen: si has tocado config.yaml, aqui aparece.
                     catalogo = Repositorio.catalogo(context)
+                    // Lo vendido va solo al carrito, para reponerlo.
+                    val porVentas = Ventas.encargos(
+                        descarga.vendidas, catalogo, Calculo.cobertura(catalogo, descarga.datos),
+                    ).filter { it !in encargos }
+                    if (porVentas.isNotEmpty()) {
+                        cambiarEncargos(encargos + porVentas)
+                        alcance.launch {
+                            avisos.showSnackbar(
+                                if (porVentas.size == 1) "Añadido 1 al carrito: lo has vendido."
+                                else "Añadidos ${porVentas.size} al carrito: los has vendido."
+                            )
+                        }
+                    }
                     precios = Repositorio.precios(context)
                     mercadoLeido = false
                     // La descarga ya ha borrado los pendientes que el catalogo

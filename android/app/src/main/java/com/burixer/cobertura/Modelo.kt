@@ -24,7 +24,20 @@ data class Objeto(
 
 data class Catalogo(val orden: List<String>, val objetos: List<Objeto>)
 
-data class Subasta(val itemId: Int, val ilvl: Int, val personaje: String, val buyout: Long)
+/**
+ * Una subasta tuya. `id`, `reino` y `nombre` solo hacen falta para saber si se
+ * ha vendido: el id la sigue de una descarga a otra, y reino y nombre son como
+ * Journalator apunta las ventas.
+ */
+data class Subasta(
+    val itemId: Int,
+    val ilvl: Int,
+    val personaje: String,
+    val buyout: Long,
+    val id: Long = 0L,
+    val reino: String = "",
+    val nombre: String = "",
+)
 
 data class Personaje(val nombre: String, val reino: String, val cuenta: Int?)
 
@@ -118,6 +131,9 @@ object Parser {
                     ilvl = a.optInt("ilvl", 0),
                     personaje = personaje,
                     buyout = a.optLong("buyout", 0L),
+                    id = a.optLong("auctionID", 0L),
+                    reino = a.optString("realm"),
+                    nombre = a.optString("itemName"),
                 )
             }
         } ?: emptyList()

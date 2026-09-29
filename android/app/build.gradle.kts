@@ -47,4 +47,6 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("io.coil-kt:coil-compose:2.6.0")
     testImplementation("junit:junit:4.13.2")
+    // En los tests de JVM, org.json de Android es un esqueleto que no hace nada.
+    testImplementation("org.json:json:20240303")
 }
