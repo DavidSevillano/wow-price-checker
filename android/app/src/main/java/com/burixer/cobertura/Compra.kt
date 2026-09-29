@@ -2,11 +2,31 @@ package com.burixer.cobertura
 
 import android.content.Context
 
-/** Algo que tienes que comprar: un objeto a un ilvl, para ponerlo con un personaje. */
-data class Encargo(val itemId: Int, val ilvl: Int?, val personaje: String)
+/**
+ * Algo que tienes que comprar: un objeto a un ilvl, para ponerlo con un personaje.
+ *
+ * `porVenta` dice si entro solo porque lo vendiste, en vez de apuntarlo tu. No
+ * cambia que encargo es: para saber si algo esta apuntado se mira `clave`.
+ */
+data class Encargo(
+    val itemId: Int,
+    val ilvl: Int?,
+    val personaje: String,
+    val porVenta: Boolean = false,
+) {
+    val clave: Triple<Int, Int?, String> get() = Triple(itemId, ilvl, personaje)
+}
 
-/** Lo apuntado de un mismo objeto e ilvl, que se compra junto. */
-data class Pedido(val itemId: Int, val ilvl: Int?, val personajes: List<String>)
+/**
+ * Lo apuntado de un mismo objeto e ilvl, que se compra junto. `vendidos` son los
+ * personajes que entraron por una venta.
+ */
+data class Pedido(
+    val itemId: Int,
+    val ilvl: Int?,
+    val personajes: List<String>,
+    val vendidos: Set<String> = emptySet(),
+)
 
 /**
  * La lista de la compra.
@@ -26,12 +46,21 @@ object Compra {
         prefs(context).edit().putString(CLAVE, aTexto(lista)).apply()
     }
 
+    /** Si ese objeto, a ese ilvl y para ese personaje, esta apuntado, venga de donde venga. */
+    fun contiene(lista: List<Encargo>, encargo: Encargo): Boolean =
+        lista.any { it.clave == encargo.clave }
+
     fun alternar(lista: List<Encargo>, encargo: Encargo): List<Encargo> =
-        if (encargo in lista) lista - encargo else lista + encargo
+        if (contiene(lista, encargo)) lista.filterNot { it.clave == encargo.clave }
+        else lista + encargo
 
     /** Los encargos que forman `pedido`, que es lo que quita "Comprado". */
     fun delPedido(lista: List<Encargo>, pedido: Pedido): List<Encargo> =
         lista.filter { it.itemId == pedido.itemId && it.ilvl == pedido.ilvl }
+
+    /** El encargo de un solo personaje del pedido, que es lo que quita la ✕. */
+    fun delPersonaje(lista: List<Encargo>, pedido: Pedido, personaje: String): List<Encargo> =
+        delPedido(lista, pedido).filter { it.personaje == personaje }
 
     /**
      * Deshacer: vuelve a poner lo quitado en el sitio que tenia en `antes`, sin
@@ -67,20 +96,30 @@ object Compra {
     /** En el orden en que los apuntaste. */
     fun agrupar(lista: List<Encargo>): List<Pedido> =
         lista.groupBy { it.itemId to it.ilvl }
-            .map { (clave, encargos) -> Pedido(clave.first, clave.second, encargos.map { it.personaje }) }
+            .map { (clave, encargos) ->
+                Pedido(
+                    clave.first,
+                    clave.second,
+                    encargos.map { it.personaje },
+                    encargos.filter { it.porVenta }.map { it.personaje }.toSet(),
+                )
+            }
 
-    // Una linea por encargo, "id|ilvl|personaje". El ilvl va vacio en lo que no
-    // escala. Los nombres de personaje no llevan '|' ni saltos de linea.
+    // Una linea por encargo, "id|ilvl|personaje", y "|v" al final si entro por
+    // una venta. El ilvl va vacio en lo que no escala. Los nombres de personaje
+    // no llevan '|' ni saltos de linea.
     fun aTexto(lista: List<Encargo>): String =
-        lista.joinToString("\n") { "${it.itemId}|${it.ilvl ?: ""}|${it.personaje}" }
+        lista.joinToString("\n") {
+            "${it.itemId}|${it.ilvl ?: ""}|${it.personaje}" + if (it.porVenta) "|v" else ""
+        }
 
     fun deTexto(texto: String): List<Encargo> =
         texto.lines().mapNotNull { linea ->
             val partes = linea.split("|")
-            if (partes.size != 3) return@mapNotNull null
+            if (partes.size !in 3..4) return@mapNotNull null
             val id = partes[0].toIntOrNull() ?: return@mapNotNull null
             if (partes[2].isBlank()) return@mapNotNull null
-            Encargo(id, partes[1].toIntOrNull(), partes[2])
+            Encargo(id, partes[1].toIntOrNull(), partes[2], porVenta = partes.getOrNull(3) == "v")
         }
 
     private fun prefs(context: Context) =

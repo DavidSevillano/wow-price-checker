@@ -91,7 +91,7 @@ object Ventas {
     ): List<Encargo> = vendidas.mapNotNull { venta ->
         val objeto = catalogo.objetos.firstOrNull { it.id == venta.itemId } ?: return@mapNotNull null
         if (venta.personaje !in catalogo.orden) return@mapNotNull null
-        Encargo(venta.itemId, if (objeto.escala) venta.ilvl else null, venta.personaje)
+        Encargo(venta.itemId, if (objeto.escala) venta.ilvl else null, venta.personaje, porVenta = true)
     }.distinct().let { Compra.yaPuestos(it, cobertura).let { puestos -> it - puestos.toSet() } }
 
     /** Ventas por reino y objeto, sumando los ficheros de cada maquina. */

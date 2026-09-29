@@ -236,7 +236,7 @@ private fun FichaDelPersonaje(
             }
             FilaObjeto(
                 fila, reino, precios, ilvl,
-                apuntado = encargo != null && encargo in encargos,
+                apuntado = encargo != null && Compra.contiene(encargos, encargo),
                 alApuntar = encargo?.let { { alApuntar(it) } },
             )
         }

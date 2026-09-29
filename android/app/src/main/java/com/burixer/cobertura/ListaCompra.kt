@@ -7,6 +7,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -28,6 +29,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddShoppingCart
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -79,6 +81,7 @@ internal fun ListaCompra(
     datos: Datos,
     precios: Precios,
     alComprar: (Pedido) -> Unit,
+    alQuitar: (Pedido, String) -> Unit,
 ) {
     val pedidos = remember(encargos) { Compra.agrupar(encargos) }
     val mios = remember(datos, catalogo) { misReinos(datos, catalogo) }
@@ -141,7 +144,11 @@ internal fun ListaCompra(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             items(visibles, key = { clave(it) }) { pedido ->
-                TarjetaPedido(pedido, catalogo, mercado, mios, datos, precios) { alComprar(pedido) }
+                TarjetaPedido(
+                    pedido, catalogo, mercado, mios, datos, precios,
+                    alComprar = { alComprar(pedido) },
+                    alQuitar = { alQuitar(pedido, it) },
+                )
             }
         }
     }
@@ -156,6 +163,7 @@ private fun TarjetaPedido(
     datos: Datos,
     precios: Precios,
     alComprar: () -> Unit,
+    alQuitar: (String) -> Unit,
 ) {
     val objeto = catalogo.objetos.firstOrNull { it.id == pedido.itemId }
     val producto = mercado.productos.firstOrNull { !it.mascota && it.id == pedido.itemId }
@@ -201,7 +209,11 @@ private fun TarjetaPedido(
             Spacer(Modifier.height(10.dp))
             Titulo("Para", "${pedido.personajes.size}")
             pedido.personajes.forEach { nombre ->
-                FilaPara(nombre, datos.personajes[nombre], objeto, pedido.ilvl, precios)
+                FilaPara(
+                    nombre, datos.personajes[nombre], objeto, pedido.ilvl, precios,
+                    vendido = nombre in pedido.vendidos,
+                    alQuitar = { alQuitar(nombre) },
+                )
             }
 
             Spacer(Modifier.height(10.dp))
@@ -233,6 +245,8 @@ private fun FilaPara(
     objeto: Objeto?,
     ilvl: Int?,
     precios: Precios,
+    vendido: Boolean,
+    alQuitar: () -> Unit,
 ) {
     var desplegado by remember(nombre, ilvl) { mutableStateOf(false) }
     val reino = ficha?.reino.orEmpty()
@@ -255,7 +269,21 @@ private fun FilaPara(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(mote(nombre), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(mote(nombre), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    // Lo que entro solo, por una venta, frente a lo que apuntaste tu.
+                    if (vendido) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "vendido",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
+                                .padding(horizontal = 5.dp, vertical = 1.dp),
+                        )
+                    }
+                }
                 Text(
                     text = donde(ficha),
                     fontSize = 12.sp,
@@ -266,6 +294,14 @@ private fun FilaPara(
                 Column(horizontalAlignment = Alignment.End) {
                     DelReino(objeto, reino, precios, ilvl)
                 }
+            }
+            IconButton(onClick = alQuitar, modifier = Modifier.size(36.dp)) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Quitar a ${mote(nombre)}",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
 

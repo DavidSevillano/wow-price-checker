@@ -24,6 +24,38 @@ class CompraTest {
     }
 
     @Test
+    fun `lo vendido se guarda como vendido, y lo de antes sigue leyendose`() {
+        val vendido = grebas305Sorrow.copy(porVenta = true)
+        assertEquals(listOf(vendido), Compra.deTexto(Compra.aTexto(listOf(vendido))))
+        // El formato de antes, sin la marca: apuntado a mano.
+        assertEquals(listOf(grebas305Sorrow), Compra.deTexto("1|305|Sorrow"))
+    }
+
+    @Test
+    fun `lo vendido cuenta como apuntado, el carrito lo quita y no lo repite`() {
+        val vendido = grebas305Sorrow.copy(porVenta = true)
+        assertTrue(Compra.contiene(listOf(vendido), grebas305Sorrow))
+        assertTrue(Compra.alternar(listOf(vendido), grebas305Sorrow).isEmpty())
+    }
+
+    @Test
+    fun `quitar un personaje deja el resto del pedido`() {
+        val lista = listOf(grebas305Sorrow, patronSorrow, grebas305Azure)
+        assertEquals(
+            listOf(grebas305Sorrow),
+            Compra.delPersonaje(lista, Compra.agrupar(lista).first(), "Sorrow"),
+        )
+    }
+
+    @Test
+    fun `el pedido sabe que personajes entraron por una venta`() {
+        val pedido = Compra.agrupar(
+            listOf(grebas305Sorrow.copy(porVenta = true), grebas305Azure)
+        ).single()
+        assertEquals(setOf("Sorrow"), pedido.vendidos)
+    }
+
+    @Test
     fun `texto vacio o roto no da nada`() {
         assertTrue(Compra.deTexto("").isEmpty())
         assertTrue(Compra.deTexto("basura").isEmpty())

@@ -133,7 +133,7 @@ class VentasTest {
         )
 
         assertEquals(
-            listOf(Encargo(1, 305, "Sorrow")),
+            listOf(Encargo(1, 305, "Sorrow", porVenta = true)),
             Ventas.encargos(vendidas, catalogo, cobertura),
         )
     }

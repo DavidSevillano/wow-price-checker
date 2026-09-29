@@ -258,6 +258,24 @@ private fun App() {
         Compra.guardar(context, nuevos)
     }
     val alApuntar: (Encargo) -> Unit = { cambiarEncargos(Compra.alternar(encargos, it)) }
+    // Quitar del carrito (comprado o descartado) con un aviso para deshacerlo:
+    // vuelve cada encargo a su sitio, con su marca de vendido.
+    fun quitarConDeshacer(quitados: List<Encargo>, mensaje: String) {
+        if (quitados.isEmpty()) return
+        val antes = encargos
+        cambiarEncargos(antes - quitados.toSet())
+        alcance.launch {
+            avisos.currentSnackbarData?.dismiss()
+            val respuesta = avisos.showSnackbar(
+                message = mensaje,
+                actionLabel = "Deshacer",
+                duration = SnackbarDuration.Long,
+            )
+            if (respuesta == SnackbarResult.ActionPerformed) {
+                cambiarEncargos(Compra.devolver(encargos, quitados, antes))
+            }
+        }
+    }
     BackHandler(enabled = comprando) { comprando = false }
     // Lo que ya has puesto sale solo del carrito: cada vez que llegan subastas
     // nuevas (al abrir y al actualizar) se cruza con lo apuntado.
@@ -302,7 +320,7 @@ private fun App() {
                     // Lo vendido va solo al carrito, para reponerlo.
                     val porVentas = Ventas.encargos(
                         descarga.vendidas, catalogo, Calculo.cobertura(catalogo, descarga.datos),
-                    ).filter { it !in encargos }
+                    ).filterNot { Compra.contiene(encargos, it) }
                     if (porVentas.isNotEmpty()) {
                         cambiarEncargos(encargos + porVentas)
                         alcance.launch {
@@ -499,20 +517,13 @@ private fun App() {
                     // Se quita al momento, pero se puede deshacer: es facil
                     // tocarlo sin querer y no hay otra forma de recuperarlo.
                     alComprar = { pedido ->
-                        val antes = encargos
-                        val quitados = Compra.delPedido(antes, pedido)
-                        cambiarEncargos(antes - quitados.toSet())
-                        alcance.launch {
-                            avisos.currentSnackbarData?.dismiss()
-                            val respuesta = avisos.showSnackbar(
-                                message = "Marcado como comprado.",
-                                actionLabel = "Deshacer",
-                                duration = SnackbarDuration.Long,
-                            )
-                            if (respuesta == SnackbarResult.ActionPerformed) {
-                                cambiarEncargos(Compra.devolver(encargos, quitados, antes))
-                            }
-                        }
+                        quitarConDeshacer(Compra.delPedido(encargos, pedido), "Marcado como comprado.")
+                    },
+                    alQuitar = { pedido, personaje ->
+                        quitarConDeshacer(
+                            Compra.delPersonaje(encargos, pedido, personaje),
+                            "Quitado ${mote(personaje)} del carrito.",
+                        )
                     },
                 )
             } else if (viendoPersonajes) {
@@ -855,7 +866,7 @@ private fun Detalle(
                         val encargo = Encargo(cobertura.objeto.id, actual.ilvl, nombre)
                         FichaFalta(
                             nombre, datos, precios, cobertura.objeto, actual,
-                            apuntado = encargo in encargos,
+                            apuntado = Compra.contiene(encargos, encargo),
                             alApuntar = alApuntar?.let { { it(encargo) } },
                         )
                     }
