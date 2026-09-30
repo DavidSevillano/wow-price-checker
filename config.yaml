@@ -70,7 +70,7 @@ items:
 
   - name: "Bound Serpent's Jade Eye"
     max_price_by_ilvl:
-      { 295: 9000, 298: 12000, 305: 60000, 308: 60000, 311: 100000,
+      { 295: 9000, 298: 12000, 305: 60000, 308: 50000, 311: 100000,
         318: 200000, 321: 250000, 324: 300000, 328: 500000 }
 
   # Los patrones no escalan: no hay ilvl que valga mas o menos, asi que llevan
